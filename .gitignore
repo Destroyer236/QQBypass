@@ -44,3 +44,4 @@ fastlane/readme.md
 *.swp
 *~
 .DS_Store
+app/release_dexkit_1.0.9_backup/

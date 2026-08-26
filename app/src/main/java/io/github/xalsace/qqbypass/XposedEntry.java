@@ -1,12 +1,12 @@
-package io.github.qqenhanced.bypass;
+package io.github.xalsace.qqbypass;
 
 import android.util.Log;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-import io.github.qqenhanced.bypass.config.HookConfig;
-import io.github.qqenhanced.bypass.hooks.*;
+import io.github.xalsace.qqbypass.config.HookConfig;
+import io.github.xalsace.qqbypass.hooks.*;
 
 /**
  * QQ Enhanced Bypass - Comprehensive Detection Bypass Module
