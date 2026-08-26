@@ -229,7 +229,7 @@ lsposed, libriru, zygisk, frida, libsubstrate...
 ### 2. 内核层隐藏
 - Magisk Zygisk：进程隔离
 - KernelSU：内核级权限管理
-- Shamiko：隐藏 Magisk 自身
+- Zygisk-Next:匿名内存，挂载还原
 
 ### 3. 虚拟化方案
 - VirtualXposed（已过时）
