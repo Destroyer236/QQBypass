@@ -388,15 +388,14 @@ public class DynamicXposedDetectionHook {
             || lower.startsWith("top.canyie.pine.")
             || lower.startsWith("lab.galaxy.yahfa.")
             || lower.startsWith("me.ele.epic.")
-            || lower.startsWith("me.weishu.exposed.")
-            || lower.startsWith("io.github.xalsace.")
-            || lower.startsWith("org.luckypray.dexkit.");
+            || lower.startsWith("me.weishu.exposed.");
     }
 
     private static boolean isCallerWhitelisted() {
         try {
             bypassStackFilter.set(true);
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            boolean hasTencentCaller = false;
             for (StackTraceElement elem : stack) {
                 String cls = elem.getClassName();
                 if (cls == null) continue;
@@ -409,14 +408,20 @@ public class DynamicXposedDetectionHook {
                     continue;
                 }
                 if (cls.startsWith("io.github.xalsace.")
-                    || cls.startsWith("org.luckypray.dexkit.")
+                    || cls.startsWith("io.github.qauxv.")
                     || cls.startsWith("de.robv.android.xposed.")
                     || cls.startsWith("org.lsposed.")) {
                     return true;
                 }
-                break;
+                if (cls.startsWith("com.tencent.") || cls.startsWith("oicq.") || cls.startsWith("mqq.")) {
+                    hasTencentCaller = true;
+                    break;
+                }
             }
-            return false;
+            if (hasTencentCaller) {
+                return false;
+            }
+            return true;
         } finally {
             bypassStackFilter.set(false);
         }
