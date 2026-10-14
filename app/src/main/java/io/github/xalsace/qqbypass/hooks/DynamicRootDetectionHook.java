@@ -67,7 +67,7 @@ public class DynamicRootDetectionHook {
                 hookSuPathCheckers(lpparam);
                 hookPackageQueries(lpparam);
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 XposedEntry.log("Dynamic root detection hook failed: " + e.getMessage());
             }
         }).start();

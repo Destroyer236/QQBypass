@@ -45,7 +45,7 @@ public class DynamicDeviceInfoHook {
                 }
                 hookDeviceInfoReaders(lpparam);
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 XposedEntry.log("Dynamic device info hook failed: " + e.getMessage());
             }
         }).start();

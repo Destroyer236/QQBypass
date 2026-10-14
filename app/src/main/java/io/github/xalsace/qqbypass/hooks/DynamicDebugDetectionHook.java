@@ -41,7 +41,7 @@ public class DynamicDebugDetectionHook {
                 hookDebugCheckers(lpparam);
                 hookEmulatorCheckers(lpparam);
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 XposedEntry.log("Dynamic debug detection hook failed: " + e.getMessage());
             }
         }).start();

@@ -44,7 +44,7 @@ public class DynamicRuntimeMonitorHook {
                 }
                 hookRuntimeExecCallers(lpparam);
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 XposedEntry.log("Dynamic runtime hook setup failed: " + e.getMessage());
             }
         }).start();

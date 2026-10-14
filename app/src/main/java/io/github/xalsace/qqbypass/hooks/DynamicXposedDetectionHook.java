@@ -47,7 +47,7 @@ public class DynamicXposedDetectionHook {
                 hookMapsReaders(lpparam);
                 hookQSecDetectors(lpparam);
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 XposedEntry.log("Dynamic Xposed detection hook failed: " + e.getMessage());
             }
         }).start();
@@ -263,6 +263,9 @@ public class DynamicXposedDetectionHook {
 
     private static StackTraceElement[] filterStackTrace(StackTraceElement[] traces) {
         if (traces == null) return null;
+        if (Boolean.TRUE.equals(bypassStackFilter.get())) {
+            return traces;
+        }
         java.util.List<StackTraceElement> clean = new java.util.ArrayList<>();
         for (StackTraceElement element : traces) {
             String cls = element.getClassName();
@@ -361,6 +364,13 @@ public class DynamicXposedDetectionHook {
         }
     }
 
+    private static final ThreadLocal<Boolean> bypassStackFilter = new ThreadLocal<Boolean>() {
+        @Override
+        protected Boolean initialValue() {
+            return false;
+        }
+    };
+
     private static final ThreadLocal<Boolean> inReflectionHook = new ThreadLocal<Boolean>() {
         @Override
         protected Boolean initialValue() {
@@ -384,32 +394,43 @@ public class DynamicXposedDetectionHook {
     }
 
     private static boolean isCallerWhitelisted() {
-        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-        for (StackTraceElement elem : stack) {
-            String cls = elem.getClassName();
-            if (cls == null) continue;
-            if (cls.equals(DynamicXposedDetectionHook.class.getName())
-                || cls.equals("java.lang.Thread")
-                || cls.equals("java.lang.Class")
-                || cls.equals("java.lang.ClassLoader")) {
-                continue;
+        try {
+            bypassStackFilter.set(true);
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            for (StackTraceElement elem : stack) {
+                String cls = elem.getClassName();
+                if (cls == null) continue;
+                if (cls.equals(DynamicXposedDetectionHook.class.getName())
+                    || cls.equals("java.lang.Thread")
+                    || cls.equals("java.lang.Class")
+                    || cls.equals("java.lang.ClassLoader")
+                    || cls.startsWith("de.robv.android.xposed.XC_MethodHook")
+                    || cls.startsWith("de.robv.android.xposed.XposedBridge")) {
+                    continue;
+                }
+                if (cls.startsWith("io.github.xalsace.")
+                    || cls.startsWith("org.luckypray.dexkit.")
+                    || cls.startsWith("de.robv.android.xposed.")
+                    || cls.startsWith("org.lsposed.")) {
+                    return true;
+                }
+                break;
             }
-            if (cls.startsWith("io.github.xalsace.")
-                || cls.startsWith("de.robv.android.xposed.")
-                || cls.startsWith("org.lsposed.")) {
-                return true;
-            }
-            break;
+            return false;
+        } finally {
+            bypassStackFilter.set(false);
         }
-        return false;
     }
 
     private static void hookClassLoaderAndReflection(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            final ClassLoader moduleLoader = DynamicXposedDetectionHook.class.getClassLoader();
+
             XC_MethodHook loadClassHook = new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (inReflectionHook.get()) return;
+                    if (param.thisObject == moduleLoader) return;
                     try {
                         inReflectionHook.set(true);
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
@@ -431,6 +452,7 @@ public class DynamicXposedDetectionHook {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (inReflectionHook.get()) return;
+                    if (param.args != null && param.args.length > 2 && param.args[2] == moduleLoader) return;
                     try {
                         inReflectionHook.set(true);
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
