@@ -136,7 +136,7 @@ public class RuntimeMonitorHook {
                         // returns for `type su` / `which su` (su not found). We let the
                         // real start() proceed with the neutralized command, so there is
                         // no fake Process object and no recursion into this hook.
-                        pb.command("/system/bin/sh", "-c", "exit 1");
+                        pb.command("/system/bin/sh", "-c", "echo 'sh: type: su: not found'; exit 127");
                         XposedEntry.log("Neutralized ProcessBuilder root probe: " + joined);
                     } else if (isMonitoredCommand(joined)) {
                         // Non-root monitored command: observe only, don't break it.

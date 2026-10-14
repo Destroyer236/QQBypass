@@ -38,6 +38,7 @@ public class QQ950PatchHook {
         hookChannelReport();
         hookTuringFDBridge();
         hookSignatureAndIntegrity();
+        hookTroopSecurityTipsBannerCrash(lpparam);
 
         // Tier 2: object-return risk-detection blocks (Dynamic Proxy safe, zero NPE risk)
         hookTuringRiskDetect();
@@ -362,6 +363,90 @@ public class QQ950PatchHook {
             });
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /**
+     * Suppress TroopSecurityTipsBanner crash caused by uninitialized lateinit property aioContext.
+     * When top banner notifications arrive while AIO is not active or closing,
+     * accessing aioContext or curTroopUin throws kotlin.UninitializedPropertyAccessException.
+     */
+    private static void hookTroopSecurityTipsBannerCrash(XC_LoadPackage.LoadPackageParam lpparam) {
+        ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
+        if (cl == null) return;
+
+        // 1. Guard TroopSecurityTipsBanner methods
+        final String bannerCls = "com.tencent.mobileqq.troop.tipsbar.TroopSecurityTipsBanner";
+        Class<?> bannerClass = XposedHelpers.findClassIfExists(bannerCls, cl);
+        if (bannerClass != null) {
+            // Hook method 'm' directly
+            HookUtils.hookAllMethods(bannerClass, "m", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    try {
+                        Object aioContext = XposedHelpers.getObjectField(param.thisObject, "e");
+                        Object curTroopUin = XposedHelpers.getObjectField(param.thisObject, "d");
+                        if (aioContext == null || curTroopUin == null) {
+                            param.setResult(null);
+                            XposedEntry.log("[CrashFix] Preempted TroopSecurityTipsBanner.m (uninitialized aioContext/curTroopUin)");
+                        }
+                    } catch (Throwable t) {
+                        param.setResult(null);
+                    }
+                }
+
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.getThrowable() != null) {
+                        XposedEntry.log("[CrashFix] Caught exception in TroopSecurityTipsBanner.m: " + param.getThrowable().getMessage());
+                        param.setResult(null);
+                    }
+                }
+            });
+
+            // Guard all other methods in TroopSecurityTipsBanner against UninitializedPropertyAccessException
+            for (Method method : bannerClass.getDeclaredMethods()) {
+                if ("m".equals(method.getName())) continue;
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        Throwable t = param.getThrowable();
+                        if (t != null && (t.getClass().getName().contains("UninitializedPropertyAccessException")
+                                || (t.getMessage() != null && (t.getMessage().contains("aioContext") || t.getMessage().contains("curTroopUin"))))) {
+                            XposedEntry.log("[CrashFix] Suppressed " + t.getClass().getSimpleName() + " in " + param.method.getName());
+                            Class<?> ret = ((Method) param.method).getReturnType();
+                            if (ret == void.class) {
+                                param.setResult(null);
+                            } else if (ret == boolean.class) {
+                                param.setResult(false);
+                            } else if (ret == int.class) {
+                                param.setResult(0);
+                            } else if (ret == long.class) {
+                                param.setResult(0L);
+                            } else {
+                                param.setResult(null);
+                            }
+                        }
+                    }
+                });
+            }
+            XposedEntry.log("[CrashFix] Hooked TroopSecurityTipsBanner for aioContext crash protection");
+        }
+
+        // 2. Guard the calling notification listener lambda
+        final String lambdaCls = "com.tencent.mobileqq.aio.notification.impl.AIONotificationManager$groupListener$1$onGroupTopBannerDataNotify$4$uiModel$1";
+        Class<?> lambdaClass = XposedHelpers.findClassIfExists(lambdaCls, cl);
+        if (lambdaClass != null) {
+            HookUtils.hookAllMethods(lambdaClass, "invoke", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.getThrowable() != null) {
+                        XposedEntry.log("[CrashFix] Suppressed exception in onGroupTopBannerDataNotify lambda: " + param.getThrowable().getMessage());
+                        param.setResult(null);
+                    }
+                }
+            });
+            XposedEntry.log("[CrashFix] Hooked AIONotificationManager banner lambda for exception isolation");
         }
     }
 }

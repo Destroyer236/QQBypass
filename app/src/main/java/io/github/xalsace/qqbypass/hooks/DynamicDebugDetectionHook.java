@@ -135,6 +135,21 @@ public class DynamicDebugDetectionHook {
                 String className = methodData.getClassName();
                 String methodName = methodData.getMethodName();
 
+                // Exclude static initializers, constructors, and object life-cycle methods
+                if ("<clinit>".equals(methodName) || "<init>".equals(methodName)) {
+                    continue;
+                }
+
+                // Exclude non-security framework, UI, and threading classes
+                if (className.contains("DisplayUtil") || className.contains("ScreenUtil")
+                        || className.contains("SystemBar") || className.contains("DimensionsUtil")
+                        || className.contains("richframework") || className.contains("RFWThread")
+                        || className.contains("GameActivity") || className.contains("MsgRespHandler")
+                        || className.contains("PushSvc") || className.contains("SLAReporter")
+                        || className.contains("LagObserver") || className.contains("DeviceInfo")) {
+                    continue;
+                }
+
                 Member method;
                 try {
                     method = methodData.getMethodInstance(lpparam.classLoader);

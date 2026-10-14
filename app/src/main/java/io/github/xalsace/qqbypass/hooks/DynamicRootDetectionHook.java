@@ -53,6 +53,9 @@ public class DynamicRootDetectionHook {
         // Gatherer SDK root detection hook
         hookGathererRootCheck(lpparam);
 
+        // Tencent Beacon root detection & device info hooks
+        hookBeaconRootCheck(lpparam);
+
         // Dynamic hooks: DexKit-discovered su path checkers
         new Thread(() -> {
             try {
@@ -141,6 +144,69 @@ public class DynamicRootDetectionHook {
             }
         } catch (Throwable t) {
             XposedEntry.log("[GathererPatch] Failed to hook UserInfoImpl.isRooted: " + t.getMessage());
+        }
+    }
+
+    /**
+     * Intercept Tencent Beacon Root Detection:
+     * com.tencent.beacon.base.util.d:
+     * - d(): overall root status (returns false)
+     * - a(): su command execution probe (returns false)
+     * - b(): /system/app/Superuser.apk probe (returns false)
+     * - c(): Build.TAGS test-keys probe (returns false)
+     * - e(): executes "/system/bin/sh -c type su" via RuntimeMonitor.exec (neutralized to return empty list)
+     * - static boolean a: latched root flag (force to false)
+     *
+     * com.tencent.beacon.a.c.e:
+     * - m(): device hardware provider root check (returns false)
+     */
+    private static void hookBeaconRootCheck(XC_LoadPackage.LoadPackageParam lpparam) {
+        ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
+        if (cl == null) return;
+
+        // 1. Hook com.tencent.beacon.base.util.d
+        Class<?> beaconUtilD = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+            "com.tencent.beacon.base.util.d", cl);
+        if (beaconUtilD != null) {
+            XC_MethodHook falseHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(false);
+                }
+            };
+
+            HookUtils.hookAllMethods(beaconUtilD, "d", falseHook);
+            HookUtils.hookAllMethods(beaconUtilD, "a", falseHook);
+            HookUtils.hookAllMethods(beaconUtilD, "b", falseHook);
+            HookUtils.hookAllMethods(beaconUtilD, "c", falseHook);
+
+            // Neutralize e() so it never forks shell commands
+            HookUtils.hookAllMethods(beaconUtilD, "e", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(new java.util.ArrayList<String>());
+                }
+            });
+
+            // Reset static latched flag 'a'
+            try {
+                de.robv.android.xposed.XposedHelpers.setStaticBooleanField(beaconUtilD, "a", false);
+            } catch (Throwable ignored) {}
+
+            XposedEntry.log("[BeaconRoot] Fully neutralized com.tencent.beacon.base.util.d root probes");
+        }
+
+        // 2. Hook com.tencent.beacon.a.c.e
+        Class<?> beaconDevInfo = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+            "com.tencent.beacon.a.c.e", cl);
+        if (beaconDevInfo != null) {
+            HookUtils.hookAllMethods(beaconDevInfo, "m", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(false);
+                }
+            });
+            XposedEntry.log("[BeaconRoot] Neutralized com.tencent.beacon.a.c.e.m root check");
         }
     }
 

@@ -43,7 +43,6 @@ public class DynamicRuntimeMonitorHook {
                     return;
                 }
                 hookRuntimeExecCallers(lpparam);
-                hookProcessBuilderCallers(lpparam);
 
             } catch (Exception e) {
                 XposedEntry.log("Dynamic runtime hook setup failed: " + e.getMessage());
@@ -64,8 +63,8 @@ public class DynamicRuntimeMonitorHook {
                     String joined = joinCommand(command);
 
                     if (isRootProbe(joined)) {
-                        // Rewrite to harmless no-op: exit 1 (non-zero = su not found)
-                        pb.command("/system/bin/sh", "-c", "exit 1");
+                        // Rewrite to harmless no-op: return non-zero code AND standard shell 'not found' message
+                        pb.command("/system/bin/sh", "-c", "echo 'sh: type: su: not found'; exit 127");
                         XposedEntry.log("Neutralized ProcessBuilder root probe: " + joined);
                     } else if (isMonitoredCommand(joined)) {
                         XposedEntry.log("ProcessBuilder command intercepted: " + joined);
@@ -107,42 +106,6 @@ public class DynamicRuntimeMonitorHook {
 
             } catch (Exception e) {
                 XposedEntry.log("Failed to hook Runtime.exec caller: " + e.getMessage());
-            }
-        }
-    }
-
-    private static void hookProcessBuilderCallers(XC_LoadPackage.LoadPackageParam lpparam) {
-        List<DexMethodData> pbCallers = DexKitDetector.findProcessBuilderCallers();
-        if (pbCallers.isEmpty()) {
-            XposedEntry.log("DynamicRuntime: No ProcessBuilder callers found by DexKit");
-            return;
-        }
-
-        XposedEntry.log("DynamicRuntime: Hooking " + pbCallers.size() + " ProcessBuilder callers");
-
-        for (DexMethodData methodData : pbCallers) {
-            try {
-                String className = methodData.getClassName();
-                String methodName = methodData.getMethodName();
-
-                Member method;
-                try {
-                    method = methodData.getMethodInstance(lpparam.classLoader);
-                } catch (Throwable t) {
-                    continue;
-                }
-
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        logCommandArgs("ProcessBuilder caller: " + className, param.args);
-                    }
-                });
-
-                XposedEntry.log("Hooked ProcessBuilder caller: " + className + "." + methodName);
-
-            } catch (Exception e) {
-                XposedEntry.log("Failed to hook ProcessBuilder caller: " + e.getMessage());
             }
         }
     }

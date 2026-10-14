@@ -13,7 +13,7 @@ public class HookConfig {
     // Module version info & cache schema
     public static final int MODULE_VERSION_CODE = 1;
     public static final String MODULE_VERSION_NAME = "1.0.9";
-    public static final int CACHE_SCHEMA_VERSION = 1;
+    public static final int CACHE_SCHEMA_VERSION = 2;
 
     // Feature toggles
     public static boolean ENABLE_NATIVE_HOOKS = true;        // Native layer hooks (70% coverage)

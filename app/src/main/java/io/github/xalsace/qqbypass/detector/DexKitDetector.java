@@ -396,7 +396,7 @@ public class DexKitDetector {
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for Debug.isDebuggerConnected callers...");
-            List<MethodData> raw = dexKitBridge.findMethod(
+            List<MethodData> rawMethodData = dexKitBridge.findMethod(
                 FindMethod.create()
                     .matcher(MethodMatcher.create()
                         .addInvoke(MethodMatcher.create()
@@ -404,7 +404,17 @@ public class DexKitDetector {
                             .name("isDebuggerConnected"))
                     )
             );
-            List<DexMethodData> results = toDexMethodList(raw);
+            List<DexMethodData> raw = toDexMethodList(rawMethodData);
+            List<DexMethodData> results = new ArrayList<>();
+            for (DexMethodData m : raw) {
+                String name = m.getMethodName();
+                String cls = m.getClassName();
+                if ("<clinit>".equals(name) || "<init>".equals(name)) continue;
+                if (cls.contains("richframework") || cls.contains("RFWThread")
+                    || cls.contains("GameActivity") || cls.contains("MsgRespHandler")
+                    || cls.contains("SLAReporter") || cls.contains("LagObserver")) continue;
+                results.add(m);
+            }
             detectionCache.put("debug_checker", results);
             return results;
         } catch (Exception e) {
@@ -443,8 +453,18 @@ public class DexKitDetector {
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for emulator checkers...");
-            List<DexMethodData> results = findMethodsUsingAnyString(
+            List<DexMethodData> raw = findMethodsUsingAnyString(
                 "goldfish", "ranchu", "qemu", "vbox", "genymotion");
+            List<DexMethodData> results = new ArrayList<>();
+            for (DexMethodData m : raw) {
+                String name = m.getMethodName();
+                String cls = m.getClassName();
+                if ("<clinit>".equals(name) || "<init>".equals(name)) continue;
+                if (cls.contains("DisplayUtil") || cls.contains("ScreenUtil")
+                    || cls.contains("SystemBar") || cls.contains("DimensionsUtil")
+                    || cls.contains("PushSvc") || cls.contains("DeviceInfo")) continue;
+                results.add(m);
+            }
             detectionCache.put("emulator_checker", results);
             return results;
         } catch (Exception e) {
