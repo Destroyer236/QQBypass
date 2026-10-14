@@ -45,64 +45,39 @@ public class XposedEntry implements IXposedHookLoadPackage {
         DexKitDetector.setEnabled(isMainProcess);
         log("DexKit enabled for this process: " + isMainProcess);
 
-        // === DexKit Dynamic Detection (Background Thread) ===
-        // Scan for obfuscated detection points to avoid version-specific hardcoding
-        if (isMainProcess) new Thread(() -> {
-            try {
-                log("=== DexKit: Starting dynamic scan ===");
-                Thread.sleep(3000); // Wait for app context
+        // === DexKit Disk Cache Check (< 5ms) ===
+        // If app and module versions are unchanged, load cached method signatures from disk directly
+        boolean cacheHit = DexKitDetector.tryInitWithCache(lpparam);
+        if (cacheHit) {
+            log("=== DexKit: Disk cache HIT! Restored " + DexKitDetector.getCachedCount() + " detection points from disk, DexKit scan skipped ===");
+        } else if (isMainProcess) {
+            // === DexKit Dynamic Detection (Background Thread) on Cache Miss ===
+            new Thread(() -> {
+                try {
+                    log("=== DexKit: Disk cache MISS or EXPIRED, starting dynamic scan ===");
+                    String apkPath = lpparam.appInfo != null ? lpparam.appInfo.sourceDir : null;
+                    if (apkPath == null) {
+                        try {
+                            android.content.Context context = (android.content.Context)
+                                de.robv.android.xposed.XposedHelpers.callStaticMethod(
+                                    de.robv.android.xposed.XposedHelpers.findClass(
+                                        "android.app.ActivityThread", null),
+                                    "currentApplication");
+                            if (context != null && context.getApplicationInfo() != null) {
+                                apkPath = context.getApplicationInfo().sourceDir;
+                            }
+                        } catch (Throwable ignored) { }
+                    }
 
-                android.content.Context context = (android.content.Context)
-                    de.robv.android.xposed.XposedHelpers.callStaticMethod(
-                        de.robv.android.xposed.XposedHelpers.findClass(
-                            "android.app.ActivityThread", lpparam.classLoader),
-                        "currentApplication");
-
-                if (context != null) {
-                    DexKitDetector.init(context);
-
-                    // Scan all detection points
-                    log("DexKit: Scanning Runtime.exec callers...");
-                    int runtimeExec = DexKitDetector.findRuntimeExecCallers().size();
-
-                    log("DexKit: Scanning ProcessBuilder callers...");
-                    int processBuilder = DexKitDetector.findProcessBuilderCallers().size();
-
-                    log("DexKit: Scanning su path checkers...");
-                    int suPath = DexKitDetector.findSuPathCheckers().size();
-
-                    log("DexKit: Scanning package queries...");
-                    int packageQuery = DexKitDetector.findSuspiciousPackageQueries().size();
-
-                    log("DexKit: Scanning ArtMethod hook detectors...");
-                    int artHook = DexKitDetector.findArtHookDetectors().size();
-
-                    log("DexKit: Scanning /proc/self/maps readers...");
-                    int mapsReader = DexKitDetector.findMapsReaders().size();
-
-                    log("DexKit: Scanning wtlogin error handlers...");
-                    int wtlogin = DexKitDetector.findWtloginErrorHandlers().size();
-
-                    log("DexKit: Scanning QSec hook detectors...");
-                    int qsec = DexKitDetector.findQSecHookDetectors().size();
-
-                    log("=== DexKit Scan Complete ===");
-                    log("  Runtime.exec callers: " + runtimeExec);
-                    log("  ProcessBuilder callers: " + processBuilder);
-                    log("  Su path checkers: " + suPath);
-                    log("  Package queries: " + packageQuery);
-                    log("  ArtMethod detectors: " + artHook);
-                    log("  Maps readers: " + mapsReader);
-                    log("  Wtlogin handlers: " + wtlogin);
-                    log("  QSec detectors: " + qsec);
-
-                    // Keep DexKit alive for runtime queries
-                    // DexKitDetector.release(); // Don't release yet - hooks may need it
+                    if (apkPath != null) {
+                        DexKitDetector.scanAndCache(apkPath, lpparam);
+                        log("=== DexKit Scan & Disk Caching Complete (" + DexKitDetector.getCachedCount() + " points cached) ===");
+                    }
+                } catch (Throwable e) {
+                    log("DexKit scan failed: " + e.getMessage());
                 }
-            } catch (Exception e) {
-                log("DexKit scan failed: " + e.getMessage());
-            }
-        }).start();
+            }).start();
+        }
 
         try {
             // === Initialize Unified Hook Coordinator ===

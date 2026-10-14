@@ -16,7 +16,9 @@ static int fake_system(const char* command) {
     BYTEHOOK_STACK_SCOPE();
 
     if (command && (strstr(command, "magisk") || strstr(command, "su") ||
-                    strstr(command, "mount") || strstr(command, "/proc/mounts"))) {
+                    strstr(command, "mount") || strstr(command, "/proc/mounts") ||
+                    strstr(command, "which") || strstr(command, "getprop") ||
+                    strstr(command, "ksu") || strstr(command, "apatch"))) {
         LOGI("Blocked system command: %s", command);
         return 0;
     }
@@ -28,7 +30,10 @@ static FILE* fake_popen(const char* command, const char* type) {
     BYTEHOOK_STACK_SCOPE();
 
     if (command && (strstr(command, "magisk") || strstr(command, "su") ||
-                    strstr(command, "grep") || strstr(command, "/proc/mounts"))) {
+                    strstr(command, "grep") || strstr(command, "/proc/mounts") ||
+                    strstr(command, "mount") || strstr(command, "which") ||
+                    strstr(command, "getprop") || strstr(command, "ksu") ||
+                    strstr(command, "apatch") || strstr(command, "/data/adb"))) {
         LOGI("Blocked popen command: %s", command);
         return tmpfile();
     }
@@ -42,10 +47,10 @@ static char* fake_strstr(const char* haystack, const char* needle) {
     char* result = BYTEHOOK_CALL_PREV(fake_strstr, haystack, needle);
     if (result && needle) {
         const char* sensitive[] = {
-            "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", nullptr
+            "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", "ksu", "apatch", "shamiko", nullptr
         };
         for (int i = 0; sensitive[i]; i++) {
-            if (strcmp(needle, sensitive[i]) == 0) {
+            if (strcasecmp(needle, sensitive[i]) == 0 || strstr(needle, sensitive[i])) {
                 LOGD("Blocked strstr match: %s", needle);
                 return nullptr;
             }

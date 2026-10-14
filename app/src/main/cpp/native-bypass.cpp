@@ -36,6 +36,7 @@ static pthread_mutex_t g_init_mutex = PTHREAD_MUTEX_INITIALIZER;
  * Install all hooks in a background thread
  */
 static void* install_hooks_thread(void* arg) {
+    (void)arg;
     LOGI("=== Native Bypass Module Starting ===");
     LOGI("Process: %d", getpid());
 
@@ -75,8 +76,8 @@ static void* install_hooks_thread(void* arg) {
     install_msfkernel_hooks();   // qimei36 fingerprint injection
     install_turingmfa_hooks();   // Risk reporting channel
 
-    // 5. libMSF hooks (signature verification - experimental, disabled for stability)
-    // hook_libmsf::install_hooks();
+    // 5. libMSF hooks (signature verification bypass)
+    hook_libmsf::install_hooks();
 
     g_hooks_installed = true;
     LOGI("=== All Native Hooks Installed Successfully ===");
@@ -91,6 +92,8 @@ static void* install_hooks_thread(void* arg) {
  */
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_initNativeHooksNative(JNIEnv* env, jclass clazz) {
+    (void)env;
+    (void)clazz;
     LOGI("initNativeHooks called");
 
     if (g_hooks_installed) {
@@ -113,6 +116,8 @@ Java_io_github_xalsace_qqbypass_NativeBypass_initNativeHooksNative(JNIEnv* env, 
  */
 extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_isHooksInstalledNative(JNIEnv* env, jclass clazz) {
+    (void)env;
+    (void)clazz;
     return g_hooks_installed;
 }
 
@@ -121,6 +126,7 @@ Java_io_github_xalsace_qqbypass_NativeBypass_isHooksInstalledNative(JNIEnv* env,
  */
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_getHookStatusNative(JNIEnv* env, jclass clazz) {
+    (void)clazz;
     if (g_hooks_installed) {
         return env->NewStringUTF("Native hooks installed successfully");
     } else {
@@ -134,6 +140,7 @@ Java_io_github_xalsace_qqbypass_NativeBypass_getHookStatusNative(JNIEnv* env, jc
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_notifyDetectionNative(
     JNIEnv* env, jclass clazz, jstring event, jstring data) {
+    (void)clazz;
 
     const char* event_str = env->GetStringUTFChars(event, nullptr);
     const char* data_str = env->GetStringUTFChars(data, nullptr);
@@ -157,6 +164,7 @@ Java_io_github_xalsace_qqbypass_NativeBypass_notifyDetectionNative(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_isHookActiveNative(
     JNIEnv* env, jclass clazz, jstring hookName) {
+    (void)clazz;
 
     const char* hook_name = env->GetStringUTFChars(hookName, nullptr);
     bool is_active = false;
@@ -182,6 +190,7 @@ static int g_system_blocks = 0;
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_getHookStatisticsNative(
     JNIEnv* env, jclass clazz) {
+    (void)clazz;
 
     char stats[512];
     snprintf(stats, sizeof(stats),
@@ -204,6 +213,7 @@ Java_io_github_xalsace_qqbypass_NativeBypass_getHookStatisticsNative(
  * JNI_OnLoad - called when library is loaded
  */
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    (void)reserved;
     LOGI("=== Native Bypass Library Loaded ===");
 
     JNIEnv* env;

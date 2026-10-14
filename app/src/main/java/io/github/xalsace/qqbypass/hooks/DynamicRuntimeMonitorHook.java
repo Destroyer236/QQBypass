@@ -4,7 +4,7 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-import org.luckypray.dexkit.result.MethodData;
+import io.github.xalsace.qqbypass.detector.DexMethodData;
 
 import java.lang.reflect.Member;
 import java.util.List;
@@ -75,7 +75,7 @@ public class DynamicRuntimeMonitorHook {
     }
 
     private static void hookRuntimeExecCallers(XC_LoadPackage.LoadPackageParam lpparam) {
-        List<MethodData> execCallers = DexKitDetector.findRuntimeExecCallers();
+        List<DexMethodData> execCallers = DexKitDetector.findRuntimeExecCallers();
         if (execCallers.isEmpty()) {
             XposedEntry.log("DynamicRuntime: No Runtime.exec callers found by DexKit");
             return;
@@ -83,7 +83,7 @@ public class DynamicRuntimeMonitorHook {
 
         XposedEntry.log("DynamicRuntime: Hooking " + execCallers.size() + " Runtime.exec callers");
 
-        for (MethodData methodData : execCallers) {
+        for (DexMethodData methodData : execCallers) {
             try {
                 String className = methodData.getClassName();
                 String methodName = methodData.getMethodName();
@@ -112,7 +112,7 @@ public class DynamicRuntimeMonitorHook {
     }
 
     private static void hookProcessBuilderCallers(XC_LoadPackage.LoadPackageParam lpparam) {
-        List<MethodData> pbCallers = DexKitDetector.findProcessBuilderCallers();
+        List<DexMethodData> pbCallers = DexKitDetector.findProcessBuilderCallers();
         if (pbCallers.isEmpty()) {
             XposedEntry.log("DynamicRuntime: No ProcessBuilder callers found by DexKit");
             return;
@@ -120,7 +120,7 @@ public class DynamicRuntimeMonitorHook {
 
         XposedEntry.log("DynamicRuntime: Hooking " + pbCallers.size() + " ProcessBuilder callers");
 
-        for (MethodData methodData : pbCallers) {
+        for (DexMethodData methodData : pbCallers) {
             try {
                 String className = methodData.getClassName();
                 String methodName = methodData.getMethodName();
@@ -178,7 +178,8 @@ public class DynamicRuntimeMonitorHook {
         String s = joined.toLowerCase();
 
         if (s.contains("magisk") || s.contains("supersu") || s.contains("superuser")
-                || s.contains("busybox") || s.contains("ksud")
+                || s.contains("busybox") || s.contains("ksud") || s.contains("ksu")
+                || s.contains("apatch") || s.contains("shamiko")
                 || s.contains("which su") || s.contains("type su") || s.contains("command -v su")
                 || s.contains("/system/bin/su") || s.contains("/system/xbin/su")
                 || s.contains("/sbin/su") || s.contains("/su/bin")
@@ -187,7 +188,7 @@ public class DynamicRuntimeMonitorHook {
         }
 
         for (String tok : s.split("\\s+")) {
-            if (tok.equals("su")) return true;
+            if (tok.equals("su") || tok.equals("ksud") || tok.equals("magisk")) return true;
         }
         return false;
     }

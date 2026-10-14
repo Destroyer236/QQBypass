@@ -5,10 +5,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-import org.luckypray.dexkit.DexKitBridge;
-import org.luckypray.dexkit.query.FindMethod;
-import org.luckypray.dexkit.query.matchers.MethodMatcher;
-import org.luckypray.dexkit.result.MethodData;
+import io.github.xalsace.qqbypass.detector.DexMethodData;
 
 import java.lang.reflect.Member;
 import java.util.List;
@@ -19,47 +16,105 @@ import io.github.xalsace.qqbypass.detector.DexKitDetector;
 import io.github.xalsace.qqbypass.utils.HookUtils;
 
 /**
- * Network Report Interception Hook
+ * Network Report Interception Hook (Deep Non-intrusive Protocol Architecture)
  *
- * Intercepts and blocks security-related reporting to Tencent servers:
- * - trpc.o3.report.* (environment reports)
- * - trpc.o3.mobile_security.* (security checks)
- * - TuringFD risk detection
- * - Wlogin device fingerprint
+ * Provides a low-level, layered interception and synthetic response system:
+ * - Layer 0: ChannelManager.sendMessage choke point (pre-proxy, avoids checkMethod anti-hook)
+ * - Layer 1: ChannelProxyExt.sendMessage (synthesizes 5-arg onNativeReceive callback)
+ * - Layer 2: MSFKernelBridge.CppProxy.sendPacket (native MSF packet choke point)
+ * - Layer 3: MsfCore.sendSsoMsg (service layer, synthesizes FromServiceMsg for waiters)
+ * - Layer 4: TuringFD /proc scanner neutralization
+ * - Layer 5: Wlogin device report
  */
 public class NetworkReportHook {
 
     // Only pure telemetry/report commands. Login-critical commands
     // (wtlogin.*, turing, DeviceTokenV3) are intentionally NOT blocked -
-    // blocking them breaks the QQ login/registration handshake and prevents
-    // entry to the main UI.
+    // blocking them breaks the QQ login/registration handshake.
     private static final String[] BLOCK_COMMANDS = {
         "trpc.o3.report",
         "trpc.o3.mobile_security",
         "trpc.ilive_cdn.report",
-        "OidbSvc.0xd79"  // Device report
+        "trpc.qq_security.",
+        "OidbSvc.0xd79",
+        "trpc.login.ecdh.report"
     };
 
     public static void hook(XC_LoadPackage.LoadPackageParam lpparam) {
-        if (!HookConfig.ENABLE_NETWORK_INTERCEPT) return;
-
-        XposedEntry.log("Initializing Network Report Hook");
-
-        // Hook 1: ChannelProxyExt.sendMessage (primary intercept point)
-        hookChannelProxyExt(lpparam);
-
-        // Hook 2: MsfCore.sendSsoMsg (secondary intercept point)
-        hookMsfCore(lpparam);
-
-        // Hook 3: TuringFD risk detection
+        // Do NOT intercept network requests; allow normal requests to proceed.
+        // Only handle inspection checks (TuringFD /proc scanner neutralization).
+        XposedEntry.log("NetworkReportHook: Network request interception disabled, running inspection hooks only");
         hookTuringFD(lpparam);
-
-        // Hook 4: Wlogin device report
-        hookWlogin(lpparam);
     }
 
+    /**
+     * Synthesize clean success response to FEKit / ChannelManager native engine.
+     * In QQ NT / 9.3.x, onNativeReceive expects 5 parameters:
+     * (String cmd, byte[] data, boolean isSuccess, int resultCode, long callbackId)
+     * Passing 1000 indicates SUCCESS and cleanly finishes the native async request.
+     */
+    private static void injectNativeReceiveSuccess(ClassLoader cl, String command, long callbackId) {
+        try {
+            Class<?> cmClass = XposedHelpers.findClassIfExists("com.tencent.mobileqq.channel.ChannelManager", cl);
+            if (cmClass == null) return;
+            Object cmInstance = XposedHelpers.callStaticMethod(cmClass, "getInstance");
+            if (cmInstance == null) return;
+
+            // 1. Try 5-arg onNativeReceive(String, byte[], boolean, int, long)
+            try {
+                XposedHelpers.callMethod(cmInstance, "onNativeReceive",
+                    command, new byte[0], true, 1000, callbackId);
+                return;
+            } catch (Throwable ignored) { }
+
+            // 2. Try 5-arg onReceive(String, byte[], boolean, int, long)
+            try {
+                XposedHelpers.callMethod(cmInstance, "onReceive",
+                    command, new byte[0], true, 1000, callbackId);
+                return;
+            } catch (Throwable ignored) { }
+
+            // 3. Fallback for older overloads
+            try {
+                XposedHelpers.callMethod(cmInstance, "onNativeReceive",
+                    command, new byte[0], callbackId);
+            } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            XposedEntry.log("[NetworkReport] injectNativeReceive error: " + t.getMessage());
+        }
+    }
+
+    /**
+     * Layer 0: Hook ChannelManager.sendMessage directly.
+     * This intercepts before the proxy call and before checkMethod(this.mChannelProxy)
+     * anti-hook inspection runs.
+     */
+    private static void hookChannelManager(XC_LoadPackage.LoadPackageParam lpparam) {
+        HookUtils.hookAllMethods("com.tencent.mobileqq.channel.ChannelManager", "sendMessage",
+            new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args == null || param.args.length < 1 || !(param.args[0] instanceof String)) return;
+
+                    String command = (String) param.args[0];
+                    if (shouldBlock(command)) {
+                        long callbackId = 0L;
+                        if (param.args.length >= 3 && param.args[2] instanceof Number) {
+                            callbackId = ((Number) param.args[2]).longValue();
+                        }
+                        injectNativeReceiveSuccess(lpparam.classLoader, command, callbackId);
+                        param.setResult(null);
+                        XposedEntry.log("Intercepted & fulfilled ChannelManager.sendMessage: "
+                            + command + " (callbackId=" + callbackId + ")");
+                    }
+                }
+            });
+    }
+
+    /**
+     * Layer 1: ChannelProxyExt.sendMessage fallback.
+     */
     private static void hookChannelProxyExt(XC_LoadPackage.LoadPackageParam lpparam) {
-        // Try multiple possible method signatures for different QQ versions
         String[] methodNames = {"sendMessage", "sendMessageInner", "send"};
 
         for (String methodName : methodNames) {
@@ -67,59 +122,114 @@ public class NetworkReportHook {
                 new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (param.args.length < 1 || !(param.args[0] instanceof String)) return;
+                        if (param.args == null || param.args.length < 1 || !(param.args[0] instanceof String)) return;
 
                         String command = (String) param.args[0];
                         if (shouldBlock(command)) {
-                            // Only override the return value if type-safe. setResult(null)
-                            // crashes (uncatchable ClassCastException in proceed()) when the
-                            // method returns a primitive.
                             Class<?> returnType = ((java.lang.reflect.Method) param.method).getReturnType();
                             if (returnType.isPrimitive() && returnType != void.class) {
-                                // Primitive return - blocking is unsafe, observe only.
-                                XposedEntry.log("ChannelProxyExt (not blocked, primitive return "
-                                    + returnType.getName() + "): " + command);
                                 return;
                             }
 
-                            XposedEntry.log("Blocked ChannelProxyExt: " + command);
-
-                            // Inject fake response
-                            try {
-                                Object channelManager = XposedHelpers.callStaticMethod(
-                                    XposedHelpers.findClass("com.tencent.mobileqq.channel.ChannelManager",
-                                    lpparam.classLoader), "getInstance");
-
-                                XposedHelpers.callMethod(channelManager, "onNativeReceive",
-                                    command, new byte[0], 0L);
-                            } catch (Throwable t) {
-                                // Ignore if injection fails
+                            long callbackId = 0L;
+                            for (int i = param.args.length - 1; i >= 1; i--) {
+                                if (param.args[i] instanceof Number) {
+                                    callbackId = ((Number) param.args[i]).longValue();
+                                    break;
+                                }
                             }
 
+                            injectNativeReceiveSuccess(lpparam.classLoader, command, callbackId);
                             param.setResult(null);
+                            XposedEntry.log("Intercepted & fulfilled ChannelProxyExt: "
+                                + command + " (callbackId=" + callbackId + ")");
                         }
                     }
                 });
         }
     }
 
+    /**
+     * Layer 2: MSFKernelBridge$CppProxy.sendPacket.
+     * Low-level choke point where packets are submitted to libMSFKernel.so native engine.
+     */
+    private static void hookMSFKernelBridge(XC_LoadPackage.LoadPackageParam lpparam) {
+        HookUtils.hookAllMethods("com.tencent.mobileqq.msfcore.MSFKernelBridge$CppProxy", "sendPacket",
+            new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args == null || param.args.length < 1 || param.args[0] == null) return;
+                    Object adapter = param.args[0];
+                    try {
+                        String cmd = (String) XposedHelpers.callMethod(adapter, "getCmd");
+                        if (shouldBlock(cmd)) {
+                            int seq = 0;
+                            try {
+                                seq = ((Number) XposedHelpers.callMethod(adapter, "getSeq")).intValue();
+                            } catch (Throwable ignored) { }
+                            param.setResult(seq);
+                            XposedEntry.log("Neutralized MSFKernelBridge.sendPacket: " + cmd + " (seq=" + seq + ")");
+                        }
+                    } catch (Throwable ignored) { }
+                }
+            });
+    }
+
+    /**
+     * Layer 3: MsfCore.sendSsoMsg.
+     * Service layer SSO dispatcher. If the ToServiceMsg expects a response, synthesizes
+     * a clean FromServiceMsg with resultCode 1000 so the caller's future/callback resolves.
+     */
     private static void hookMsfCore(XC_LoadPackage.LoadPackageParam lpparam) {
-        // Real path (QQ 9.3.50): com.tencent.mobileqq.msf.core.MsfCore
         HookUtils.hookAllMethods("com.tencent.mobileqq.msf.core.MsfCore", "sendSsoMsg",
             new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args.length < 1) return;
+                    if (param.args == null || param.args.length < 1 || param.args[0] == null) return;
 
                     Object toServiceMsg = param.args[0];
                     Object cmdObj = XposedHelpers.callMethod(toServiceMsg, "getServiceCmd");
                     String command = cmdObj == null ? null : cmdObj.toString();
 
                     if (shouldBlock(command)) {
-                        // Type-safe block: only override the return value if the hooked
-                        // method actually returns int/long/void. Setting a wrong-typed
-                        // result triggers an uncatchable ClassCastException in Xposed's
-                        // proceed() and crashes the process.
+                        // Check if it's a FEKit security message with security callback id
+                        try {
+                            Object cbObj = XposedHelpers.callMethod(toServiceMsg, "getAttribute", "attr_key_security_callback_id");
+                            if (cbObj instanceof Number) {
+                                long cbId = ((Number) cbObj).longValue();
+                                injectNativeReceiveSuccess(lpparam.classLoader, command, cbId);
+                            }
+                        } catch (Throwable ignored) { }
+
+                        // If caller needs a response, synthesize FromServiceMsg
+                        try {
+                            boolean needResp = (boolean) XposedHelpers.callMethod(toServiceMsg, "isNeedResp");
+                            if (needResp) {
+                                String uin = (String) XposedHelpers.callMethod(toServiceMsg, "getUin");
+                                int ssoSeq = (int) XposedHelpers.callMethod(toServiceMsg, "getRequestSsoSeq");
+                                int appSeq = (int) XposedHelpers.callMethod(toServiceMsg, "getAppSeq");
+                                int appId = (int) XposedHelpers.callMethod(toServiceMsg, "getAppId");
+                                Object msfCmd = XposedHelpers.callMethod(toServiceMsg, "getMsfCommand");
+
+                                Class<?> fromMsgClass = XposedHelpers.findClassIfExists(
+                                    "com.tencent.qphone.base.remote.FromServiceMsg", lpparam.classLoader);
+                                if (fromMsgClass != null) {
+                                    Object fromMsg = XposedHelpers.newInstance(fromMsgClass, uin != null ? uin : "0", command);
+                                    XposedHelpers.callMethod(fromMsg, "setMsgSuccess");
+                                    XposedHelpers.callMethod(fromMsg, "setBusinessFailCode", 1000);
+                                    XposedHelpers.callMethod(fromMsg, "setRequestSsoSeq", ssoSeq);
+                                    XposedHelpers.callMethod(fromMsg, "setAppSeq", appSeq);
+                                    XposedHelpers.callMethod(fromMsg, "setAppId", appId);
+                                    XposedHelpers.callMethod(fromMsg, "setMsfCommand", msfCmd);
+                                    XposedHelpers.callMethod(fromMsg, "putWupBuffer", new byte[0]);
+
+                                    try {
+                                        XposedHelpers.callMethod(param.thisObject, "addRespToQuque", toServiceMsg, fromMsg);
+                                    } catch (Throwable ignored) { }
+                                }
+                            }
+                        } catch (Throwable ignored) { }
+
                         Class<?> returnType = ((java.lang.reflect.Method) param.method).getReturnType();
                         if (returnType == int.class) {
                             int seq = 0;
@@ -127,21 +237,17 @@ public class NetworkReportHook {
                                 seq = (int) XposedHelpers.callMethod(toServiceMsg, "getRequestSsoSeq");
                             } catch (Throwable ignored) { }
                             param.setResult(seq);
-                            XposedEntry.log("Blocked MsfCore: " + command);
+                            XposedEntry.log("Neutralized MsfCore: " + command);
                         } else if (returnType == long.class) {
                             long seq = 0L;
                             try {
                                 seq = ((Number) XposedHelpers.callMethod(toServiceMsg, "getRequestSsoSeq")).longValue();
                             } catch (Throwable ignored) { }
                             param.setResult(seq);
-                            XposedEntry.log("Blocked MsfCore: " + command);
+                            XposedEntry.log("Neutralized MsfCore: " + command);
                         } else if (returnType == void.class) {
                             param.setResult(null);
-                            XposedEntry.log("Blocked MsfCore: " + command);
-                        } else {
-                            // Unknown return type - observe only, do not risk a crash.
-                            XposedEntry.log("MsfCore (not blocked, return type "
-                                + returnType.getName() + "): " + command);
+                            XposedEntry.log("Neutralized MsfCore: " + command);
                         }
                     }
                 }
@@ -149,83 +255,49 @@ public class NetworkReportHook {
     }
 
     /**
-     * Block TuringFD's process-enumeration readers (anti-tamper /proc scanners).
-     *
-     * These live in ProGuard-obfuscated "fruit" classes (Pomegranate / oqKCa on
-     * 9.3.50) whose names change every QQ version, so hardcoding them is fragile.
-     * Instead we locate them by a stable fingerprint: the format string
-     * "/proc/%d/cmdline" they use to read another process's name. Verified to
-     * occur in only 2 dex (classes2 + classes18) on 9.3.50, so the match is tight.
-     *
-     * The old code hooked every method named "a" and setResult(null) on all of
-     * them. That was wrong twice over: Blueberry.a doesn't exist (dead hook), and
-     * oqKCa.a has an int-returning overload where setResult(null) throws an
-     * uncatchable ClassCastException. Here we resolve the exact method via
-     * getMethodInstance() and only neutralize String-returning readers (-> "").
+     * Block TuringFD's process-enumeration readers (/proc scanners).
      */
     private static void hookTuringFD(XC_LoadPackage.LoadPackageParam lpparam) {
         new Thread(() -> {
             try {
-                // Wait for the single shared bridge; false in a subprocess (gated off).
                 if (!DexKitDetector.awaitReady(30000)) {
                     XposedEntry.log("[TuringFD] DexKit not available, skip proc-reader hook");
                     return;
                 }
-                DexKitBridge bridge = DexKitDetector.getBridge();
-                if (bridge == null) {
-                    XposedEntry.log("[TuringFD] shared bridge null, skip proc-reader hook");
-                    return;
-                }
 
-                List<MethodData> procReaders = bridge.findMethod(
-                    FindMethod.create()
-                        .matcher(MethodMatcher.create()
-                            .usingStrings("/proc/%d/cmdline"))
-                );
+                List<DexMethodData> procReaders = DexKitDetector.findTuringFdProcReaders();
                 XposedEntry.log("[TuringFD] found " + procReaders.size() + " proc readers by fingerprint");
 
-                for (MethodData md : procReaders) {
+                for (DexMethodData md : procReaders) {
                     try {
                         Member method = md.getMethodInstance(lpparam.classLoader);
-                        // Only neutralize String-returning readers; skip primitives
-                        // (int helper overload) to avoid a ClassCastException crash.
                         if (!(method instanceof java.lang.reflect.Method)) continue;
                         Class<?> ret = ((java.lang.reflect.Method) method).getReturnType();
-                        if (ret != String.class) {
-                            XposedEntry.log("[TuringFD] skip non-String reader "
-                                + md.getClassName() + "." + md.getMethodName()
-                                + " (returns " + ret.getName() + ")");
-                            continue;
-                        }
+                        if (ret != String.class) continue;
+
                         XposedBridge.hookMethod(method, new XC_MethodHook() {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                                // Empty name = "process not readable"; callers isEmpty-check this.
                                 param.setResult("");
                             }
                         });
                         XposedEntry.log("[TuringFD] neutralized proc reader: "
                             + md.getClassName() + "." + md.getMethodName());
                     } catch (Throwable t) {
-                        XposedEntry.log("[TuringFD] failed to hook proc reader: "
-                            + t.getClass().getSimpleName() + ": " + t.getMessage());
+                        XposedEntry.log("[TuringFD] failed to hook proc reader: " + t.getMessage());
                     }
                 }
             } catch (Throwable t) {
-                XposedEntry.log("[TuringFD] proc-reader lookup failed: "
-                    + t.getClass().getName() + ": " + t.getMessage());
+                XposedEntry.log("[TuringFD] proc-reader lookup failed: " + t.getMessage());
             }
-            // Shared bridge - do NOT close (owned by DexKitDetector)
         }).start();
     }
 
     private static void hookWlogin(XC_LoadPackage.LoadPackageParam lpparam) {
-        // Hook Wlogin device fingerprint collection
         HookUtils.hookAllMethods("oicq.wlogin_sdk.request.w", "h",
             new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    // Modify device fingerprint before sending
                     XposedEntry.log("Intercepted Wlogin device fingerprint");
                 }
             });

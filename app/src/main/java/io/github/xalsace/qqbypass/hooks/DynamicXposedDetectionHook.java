@@ -4,7 +4,7 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-import org.luckypray.dexkit.result.MethodData;
+import io.github.xalsace.qqbypass.detector.DexMethodData;
 
 import java.lang.reflect.Member;
 import java.util.List;
@@ -12,6 +12,7 @@ import java.util.List;
 import io.github.xalsace.qqbypass.XposedEntry;
 import io.github.xalsace.qqbypass.config.HookConfig;
 import io.github.xalsace.qqbypass.detector.DexKitDetector;
+import io.github.xalsace.qqbypass.utils.HookUtils;
 
 /**
  * DexKit-based Xposed/LSPosed Detection Bypass
@@ -23,6 +24,9 @@ public class DynamicXposedDetectionHook {
         if (!HookConfig.ENABLE_XPOSED_BYPASS) return;
 
         XposedEntry.log("Initializing DexKit-based Xposed Detection Bypass");
+
+        // Universal hook: Stack trace sanitization (removes xposed/lsposed/qb frames)
+        hookStackTrace();
 
         // Dynamic hooks: DexKit-discovered detection points
         new Thread(() -> {
@@ -44,7 +48,7 @@ public class DynamicXposedDetectionHook {
     }
 
     private static void hookArtMethodDetectors(XC_LoadPackage.LoadPackageParam lpparam) {
-        List<MethodData> artDetectors = DexKitDetector.findArtHookDetectors();
+        List<DexMethodData> artDetectors = DexKitDetector.findArtHookDetectors();
         if (artDetectors.isEmpty()) {
             XposedEntry.log("DynamicXposed: No ArtMethod detectors found by DexKit");
             return;
@@ -52,7 +56,7 @@ public class DynamicXposedDetectionHook {
 
         XposedEntry.log("DynamicXposed: Hooking " + artDetectors.size() + " ArtMethod detectors");
 
-        for (MethodData methodData : artDetectors) {
+        for (DexMethodData methodData : artDetectors) {
             try {
                 String className = methodData.getClassName();
                 String methodName = methodData.getMethodName();
@@ -98,7 +102,7 @@ public class DynamicXposedDetectionHook {
     }
 
     private static void hookMapsReaders(XC_LoadPackage.LoadPackageParam lpparam) {
-        List<MethodData> mapsReaders = DexKitDetector.findMapsReaders();
+        List<DexMethodData> mapsReaders = DexKitDetector.findMapsReaders();
         if (mapsReaders.isEmpty()) {
             XposedEntry.log("DynamicXposed: No maps readers found by DexKit");
             return;
@@ -106,7 +110,7 @@ public class DynamicXposedDetectionHook {
 
         XposedEntry.log("DynamicXposed: Hooking " + mapsReaders.size() + " /proc/self/maps readers");
 
-        for (MethodData methodData : mapsReaders) {
+        for (DexMethodData methodData : mapsReaders) {
             try {
                 String className = methodData.getClassName();
                 String methodName = methodData.getMethodName();
@@ -157,7 +161,7 @@ public class DynamicXposedDetectionHook {
     }
 
     private static void hookQSecDetectors(XC_LoadPackage.LoadPackageParam lpparam) {
-        List<MethodData> qsecDetectors = DexKitDetector.findQSecHookDetectors();
+        List<DexMethodData> qsecDetectors = DexKitDetector.findQSecHookDetectors();
         if (qsecDetectors.isEmpty()) {
             XposedEntry.log("DynamicXposed: No QSec detectors found by DexKit");
             return;
@@ -165,7 +169,7 @@ public class DynamicXposedDetectionHook {
 
         XposedEntry.log("DynamicXposed: Hooking " + qsecDetectors.size() + " QSec hook detectors");
 
-        for (MethodData methodData : qsecDetectors) {
+        for (DexMethodData methodData : qsecDetectors) {
             try {
                 String className = methodData.getClassName();
                 String methodName = methodData.getMethodName();
@@ -185,12 +189,18 @@ public class DynamicXposedDetectionHook {
                         // Neutralize positive detection results
                         if (result instanceof Boolean && (Boolean) result) {
                             param.setResult(false);
-                            XposedEntry.log("QSec detector neutralized: " + className);
+                            XposedEntry.log("QSec detector neutralized: " + className + "." + methodName);
                         }
 
                         if (result instanceof Integer && (Integer) result != 0) {
-                            param.setResult(0);
-                            XposedEntry.log("QSec detection code zeroed: " + className);
+                            String mLower = methodName.toLowerCase();
+                            if (mLower.contains("check") || mLower.contains("detect")
+                                    || mLower.contains("hook") || mLower.contains("is")
+                                    || mLower.contains("verify") || mLower.contains("status")
+                                    || mLower.contains("scan") || mLower.contains("count")) {
+                                param.setResult(0);
+                                XposedEntry.log("QSec detection code zeroed: " + className + "." + methodName);
+                            }
                         }
                     }
                 });
@@ -237,5 +247,67 @@ public class DynamicXposedDetectionHook {
             // Filter our own module
             || lower.contains("xalsace") || lower.contains("bypass")
             || lower.contains("libnative-bypass.so");
+    }
+
+    private static void hookStackTrace() {
+        try {
+            HookUtils.hookMethod(Throwable.class, "getStackTrace", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof StackTraceElement[]) {
+                        StackTraceElement[] traces = (StackTraceElement[]) res;
+                        java.util.List<StackTraceElement> clean = new java.util.ArrayList<>();
+                        for (StackTraceElement element : traces) {
+                            String cls = element.getClassName();
+                            if (cls == null) continue;
+                            if (cls.contains("de.robv.android.xposed") ||
+                                cls.contains("org.lsposed") ||
+                                cls.contains("io.github.xalsace") ||
+                                cls.contains("edxposed") ||
+                                cls.contains("sandhook") ||
+                                cls.contains("epic") ||
+                                cls.contains("com.elderdrivers.riru")) {
+                                continue;
+                            }
+                            clean.add(element);
+                        }
+                        if (clean.size() != traces.length) {
+                            param.setResult(clean.toArray(new StackTraceElement[0]));
+                        }
+                    }
+                }
+            });
+
+            HookUtils.hookMethod(Thread.class, "getStackTrace", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof StackTraceElement[]) {
+                        StackTraceElement[] traces = (StackTraceElement[]) res;
+                        java.util.List<StackTraceElement> clean = new java.util.ArrayList<>();
+                        for (StackTraceElement element : traces) {
+                            String cls = element.getClassName();
+                            if (cls == null) continue;
+                            if (cls.contains("de.robv.android.xposed") ||
+                                cls.contains("org.lsposed") ||
+                                cls.contains("io.github.xalsace") ||
+                                cls.contains("edxposed") ||
+                                cls.contains("sandhook") ||
+                                cls.contains("epic") ||
+                                cls.contains("com.elderdrivers.riru")) {
+                                continue;
+                            }
+                            clean.add(element);
+                        }
+                        if (clean.size() != traces.length) {
+                            param.setResult(clean.toArray(new StackTraceElement[0]));
+                        }
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook StackTrace: " + t.getMessage());
+        }
     }
 }

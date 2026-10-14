@@ -32,10 +32,14 @@ static void* hooked_dlopen(const char* filename, int flag) {
 static void* hooked_dlsym(void* handle, const char* symbol) {
     if (symbol) {
         std::string sym(symbol);
-        // 拦截对 hook 相关符号的查询
+        // 拦截对 hook 相关符号的查询（指定精确框架名，避免误杀正常函数）
         if (sym.find("bytehook") != std::string::npos ||
             sym.find("xposed") != std::string::npos ||
-            sym.find("hook") != std::string::npos) {
+            sym.find("sandhook") != std::string::npos ||
+            sym.find("epic") != std::string::npos ||
+            sym.find("dobby") != std::string::npos ||
+            sym.find("riru") != std::string::npos ||
+            sym.find("zygisk") != std::string::npos) {
             LOGI("QSec dlsym blocked: %s", symbol);
             return nullptr;
         }

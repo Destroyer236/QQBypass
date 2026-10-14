@@ -6,10 +6,7 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-import org.luckypray.dexkit.DexKitBridge;
-import org.luckypray.dexkit.query.FindMethod;
-import org.luckypray.dexkit.query.matchers.MethodMatcher;
-import org.luckypray.dexkit.result.MethodData;
+import io.github.xalsace.qqbypass.detector.DexMethodData;
 
 import java.lang.reflect.Member;
 import java.util.ArrayList;
@@ -56,47 +53,11 @@ public class DynamicDeviceInfoHook {
 
     private static void hookDeviceInfoReaders(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedEntry.log("DynamicDevice: Searching for device info readers...");
+            XposedEntry.log("DynamicDevice: Querying device info readers from DexKitDetector...");
 
-            // Reuse the shared bridge (owned by DexKitDetector); do NOT close it here.
-            DexKitBridge bridge = DexKitDetector.getBridge();
-            if (bridge == null) {
-                XposedEntry.log("DynamicDevice: shared bridge null, skipping");
-                return;
-            }
-
-            // Find methods calling TelephonyManager.getDeviceId (IMEI)
-            List<MethodData> imeiReaders = bridge.findMethod(
-                FindMethod.create()
-                    .matcher(MethodMatcher.create()
-                        .addInvoke(MethodMatcher.create()
-                            .declaredClass("android.telephony.TelephonyManager")
-                            .name("getDeviceId"))
-                    )
-            );
-
-            // Find methods calling Settings.Secure.getString(ANDROID_ID)
-            List<MethodData> androidIdReaders = bridge.findMethod(
-                FindMethod.create()
-                    .matcher(MethodMatcher.create()
-                        .addInvoke(MethodMatcher.create()
-                            .declaredClass("android.provider.Settings$Secure")
-                            .name("getString"))
-                        .usingStrings("android_id")
-                    )
-            );
-
-            // Find methods calling Build.getSerial()
-            List<MethodData> serialReaders = bridge.findMethod(
-                FindMethod.create()
-                    .matcher(MethodMatcher.create()
-                        .addInvoke(MethodMatcher.create()
-                            .declaredClass("android.os.Build")
-                            .name("getSerial"))
-                    )
-            );
-
-            // Shared bridge - do NOT close (owned by DexKitDetector)
+            List<DexMethodData> imeiReaders = DexKitDetector.findImeiReaders();
+            List<DexMethodData> androidIdReaders = DexKitDetector.findAndroidIdReaders();
+            List<DexMethodData> serialReaders = DexKitDetector.findSerialReaders();
 
             XposedEntry.log("DynamicDevice: Found " + imeiReaders.size() + " IMEI readers");
             XposedEntry.log("DynamicDevice: Found " + androidIdReaders.size() + " Android ID readers");
@@ -114,8 +75,8 @@ public class DynamicDeviceInfoHook {
     }
 
     private static void hookDeviceReaderList(XC_LoadPackage.LoadPackageParam lpparam,
-                                             List<MethodData> readers, String type) {
-        for (MethodData methodData : readers) {
+                                             List<DexMethodData> readers, String type) {
+        for (DexMethodData methodData : readers) {
             try {
                 String className = methodData.getClassName();
                 String methodName = methodData.getMethodName();

@@ -62,6 +62,21 @@ public class HookUtils {
     }
 
     /**
+     * Hook all methods with specific name on Class object
+     */
+    public static void hookAllMethods(Class<?> clazz, String methodName, XC_MethodHook callback) {
+        if (clazz == null) return;
+        try {
+            XposedBridge.hookAllMethods(clazz, methodName, callback);
+            log("Hooked all methods: " + clazz.getName() + "." + methodName);
+        } catch (Throwable t) {
+            if (HookConfig.VERBOSE_LOGGING) {
+                log("Failed to hook all methods: " + clazz.getName() + "." + methodName + " - " + t.getMessage());
+            }
+        }
+    }
+
+    /**
      * Hook constructor
      */
     public static void hookConstructor(String className, Object... parameterTypesAndCallback) {

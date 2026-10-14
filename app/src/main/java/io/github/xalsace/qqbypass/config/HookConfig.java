@@ -10,13 +10,18 @@ public class HookConfig {
     public static XC_LoadPackage.LoadPackageParam loadPackageParam;
     public static ClassLoader classLoader;
 
+    // Module version info & cache schema
+    public static final int MODULE_VERSION_CODE = 1;
+    public static final String MODULE_VERSION_NAME = "1.0.9";
+    public static final int CACHE_SCHEMA_VERSION = 1;
+
     // Feature toggles
     public static boolean ENABLE_NATIVE_HOOKS = true;        // Native layer hooks (70% coverage)
     public static boolean ENABLE_ROOT_BYPASS = true;
     public static boolean ENABLE_XPOSED_BYPASS = true;
     public static boolean ENABLE_DEBUG_BYPASS = true;
     public static boolean ENABLE_DEVICE_SPOOF = true;
-    public static boolean ENABLE_NETWORK_INTERCEPT = true;
+    public static boolean ENABLE_NETWORK_INTERCEPT = false;  // Disabled: allow normal requests to proceed
     public static boolean ENABLE_RUNTIME_BYPASS = true;
     public static boolean ENABLE_QQ950_PATCH = true;        // QQ 9.3.50 detection-point completion
     public static boolean ENABLE_QQ950_RISK_BLOCK = true;   // Tier 2: object-return risk blocks (NPE-caveat; disable if NPE appears)

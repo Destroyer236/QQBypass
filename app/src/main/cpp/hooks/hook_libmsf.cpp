@@ -1,21 +1,84 @@
 #include "hook_libmsf.h"
 #include "../utils/log.h"
 #include <bytehook.h>
+#include <jni.h>
 
 namespace hook_libmsf {
 
 /**
- * libMSFKernel.so / libmsfbootV2.so 负责签名校验（阻断型）。
+ * 逆向分析成果：
+ * 1. libmsfbootV2.so 导出 _ZN12CMSFJavaUtil16IsSignatureValidEP7_JNIEnvP8_jobject
+ *    内部调用 getPackagesForUid -> getPackageInfo(..., 64) -> toCharsString() -> QSCrypt::Md5Hash
+ *    校验哈希是否匹配腾讯官方签名哈希。
+ *    hook 点：拦截该函数，强制返回 JNI_TRUE (1)。
  *
- * 警告：签名校验绕过风险极高，且校验函数符号被剥离、逻辑在 native 内部完成，
- * 单纯的 PLT hook 无法安全绕过。这里默认不做任何 hook，避免导致 QQ 启动崩溃。
- *
- * 如需研究签名绕过，应使用 IDA 定位 IsSignatureValid 的实际偏移后做 inline hook，
- * 那超出了 ByteHook（PLT hook）的能力范围。
+ * 2. libcodecwrapperV2.so 在 CCodecWarpper::encodeRequest 中通过 PLT 调用：
+ *    _Z12GetSignatureP7_JNIEnvP8_jobjectRNSt6__ndk16vectorINS3_12basic_stringIcNS3_11char_traitsIcEENS3_9allocatorIcEEEENS8_ISA_EEEE
+ *    （PLT 偏移 0x5c9c0，GOT 偏移 0x61e80，R_AARCH64_JUMP_SLOT）。
+ *    hook 点：通过 ByteHook 单库 PLT hook 挂接。
  */
 
+typedef jboolean (*IsSignatureValid_t)(JNIEnv*, jobject);
+static IsSignatureValid_t original_IsSignatureValid = nullptr;
+
+static jboolean hooked_IsSignatureValid(JNIEnv* env, jobject context) {
+    (void)env;
+    (void)context;
+    LOGI("CMSFJavaUtil::IsSignatureValid intercepted! Bypassing signature verification (returning JNI_TRUE)");
+    return JNI_TRUE;
+}
+
+typedef void (*GetSignature_t)(JNIEnv*, jobject, void*);
+static GetSignature_t original_GetSignature = nullptr;
+
+static void hooked_GetSignature(JNIEnv* env, jobject context, void* vec) {
+    LOGI("libcodecwrapperV2 GetSignature intercepted, executing with spoofed Java PackageManager signatures");
+    if (original_GetSignature) {
+        original_GetSignature(env, context, vec);
+    }
+}
+
 void install_hooks() {
-    LOGI("libMSF hooks skipped (signature bypass disabled for stability)");
+    LOGI("Installing libmsf & libcodecwrapper signature bypass hooks (ByteHook)...");
+
+    // 1. Hook CMSFJavaUtil::IsSignatureValid
+    bytehook_hook_single(
+        "libmsfbootV2.so",
+        nullptr,
+        "_ZN12CMSFJavaUtil16IsSignatureValidEP7_JNIEnvP8_jobject",
+        (void*)hooked_IsSignatureValid,
+        nullptr,
+        (void**)&original_IsSignatureValid
+    );
+
+    bytehook_hook_single(
+        "libMSFKernel.so",
+        nullptr,
+        "_ZN12CMSFJavaUtil16IsSignatureValidEP7_JNIEnvP8_jobject",
+        (void*)hooked_IsSignatureValid,
+        nullptr,
+        (void**)&original_IsSignatureValid
+    );
+
+    bytehook_hook_all(
+        nullptr,
+        "_ZN12CMSFJavaUtil16IsSignatureValidEP7_JNIEnvP8_jobject",
+        (void*)hooked_IsSignatureValid,
+        nullptr,
+        (void**)&original_IsSignatureValid
+    );
+
+    // 2. Hook GetSignature in libcodecwrapperV2.so (PLT hook)
+    bytehook_hook_single(
+        "libcodecwrapperV2.so",
+        nullptr,
+        "_Z12GetSignatureP7_JNIEnvP8_jobjectRNSt6__ndk16vectorINS3_12basic_stringIcNS3_11char_traitsIcEENS3_9allocatorIcEEEENS8_ISA_EEEE",
+        (void*)hooked_GetSignature,
+        nullptr,
+        (void**)&original_GetSignature
+    );
+
+    LOGI("libmsf signature hooks installed successfully");
 }
 
 } // namespace hook_libmsf

@@ -64,40 +64,13 @@ public class UnifiedHookCoordinator {
      * Install hooks with Java/Native coordination
      */
     private static void installCoordinatedHooks(XC_LoadPackage.LoadPackageParam lpparam) {
-        // Hook critical detection points with fallback
-        hookWithFallback(lpparam);
-
         // Setup bidirectional communication
         setupCommunicationChannel(lpparam);
     }
 
-    /**
-     * Hook with Java → Native fallback
-     */
-    private static void hookWithFallback(XC_LoadPackage.LoadPackageParam lpparam) {
-        // Example: File existence check
-        // Java layer hooks File.exists()
-        // If it fails, Native layer hooks access()
-
-        HookUtils.hookMethod(java.io.File.class, "exists",
-            new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    java.io.File file = (java.io.File) param.thisObject;
-                    String path = file.getAbsolutePath();
-
-                    // Check if this is a sensitive path
-                    if (isSensitivePath(path)) {
-                        param.setResult(false);
-                        XposedEntry.log("[Java] Blocked file check: " + path);
-
-                        // Notify Native layer (if available)
-                        if (nativeLayerAvailable) {
-                            notifyNativeLayer("file_blocked", path);
-                        }
-                    }
-                }
-            });
+    public static void notifyNativeIfAvailable(String event, String data) {
+        if (!nativeLayerAvailable) return;
+        notifyNativeLayer(event, data);
     }
 
     /**

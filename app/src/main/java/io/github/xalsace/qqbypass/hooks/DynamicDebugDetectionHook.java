@@ -6,10 +6,7 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-import org.luckypray.dexkit.DexKitBridge;
-import org.luckypray.dexkit.query.FindMethod;
-import org.luckypray.dexkit.query.matchers.MethodMatcher;
-import org.luckypray.dexkit.result.MethodData;
+import io.github.xalsace.qqbypass.detector.DexMethodData;
 
 import java.lang.reflect.Member;
 import java.util.List;
@@ -60,40 +57,50 @@ public class DynamicDebugDetectionHook {
                 }
             });
 
-        // ApplicationInfo.FLAG_DEBUGGABLE check is handled at native layer
+        // Debug.waitingForDebugger()
+        HookUtils.hookMethod(Debug.class, "waitingForDebugger",
+            new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(false);
+                }
+            });
+
+        // Settings.Global & Settings.Secure adb_enabled / development_settings_enabled
+        try {
+            HookUtils.hookAllMethods("android.provider.Settings$Global", "getInt", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                        String name = (String) param.args[1];
+                        if ("adb_enabled".equals(name) || "development_settings_enabled".equals(name)) {
+                            param.setResult(0);
+                        }
+                    }
+                }
+            });
+
+            HookUtils.hookAllMethods("android.provider.Settings$Secure", "getInt", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                        String name = (String) param.args[1];
+                        if ("adb_enabled".equals(name) || "development_settings_enabled".equals(name)) {
+                            param.setResult(0);
+                        }
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook Settings debug properties: " + t.getMessage());
+        }
     }
 
     private static void hookDebugCheckers(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedEntry.log("DynamicDebug: Searching for debug checkers...");
-
-            // Reuse the shared bridge (owned by DexKitDetector); do NOT close it here.
-            DexKitBridge bridge = DexKitDetector.getBridge();
-            if (bridge == null) {
-                XposedEntry.log("DynamicDebug: shared bridge null, skipping");
-                return;
-            }
-
-            // Find methods calling Debug.isDebuggerConnected()
-            List<MethodData> debugCheckers = bridge.findMethod(
-                FindMethod.create()
-                    .matcher(MethodMatcher.create()
-                        .addInvoke(MethodMatcher.create()
-                            .declaredClass("android.os.Debug")
-                            .name("isDebuggerConnected"))
-                    )
-            );
-
-            // Find methods reading TracerPid from /proc/self/status.
-            // usingStrings(vararg) is AND, so keep to the single strongest marker.
-            List<MethodData> tracerPidReaders = bridge.findMethod(
-                FindMethod.create()
-                    .matcher(MethodMatcher.create()
-                        .usingStrings("TracerPid")
-                    )
-            );
-
-            // Shared bridge - do NOT close (owned by DexKitDetector)
+            XposedEntry.log("DynamicDebug: Querying debug checkers from DexKitDetector...");
+            List<DexMethodData> debugCheckers = DexKitDetector.findDebugCheckers();
+            List<DexMethodData> tracerPidReaders = DexKitDetector.findTracerPidReaders();
 
             XposedEntry.log("DynamicDebug: Found " + debugCheckers.size() + " debug checkers");
             XposedEntry.log("DynamicDebug: Found " + tracerPidReaders.size() + " TracerPid readers");
@@ -109,24 +116,8 @@ public class DynamicDebugDetectionHook {
 
     private static void hookEmulatorCheckers(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedEntry.log("DynamicDebug: Searching for emulator checkers...");
-
-            // Reuse the shared bridge (owned by DexKitDetector); do NOT close it here.
-            DexKitBridge bridge = DexKitDetector.getBridge();
-            if (bridge == null) {
-                XposedEntry.log("DynamicDebug: shared bridge null, skipping");
-                return;
-            }
-
-            // Find methods checking emulator markers
-            List<MethodData> emulatorCheckers = bridge.findMethod(
-                FindMethod.create()
-                    .matcher(MethodMatcher.create()
-                        .usingStrings("goldfish", "ranchu", "qemu", "vbox", "genymotion")
-                    )
-            );
-
-            // Shared bridge - do NOT close (owned by DexKitDetector)
+            XposedEntry.log("DynamicDebug: Querying emulator checkers from DexKitDetector...");
+            List<DexMethodData> emulatorCheckers = DexKitDetector.findEmulatorCheckers();
 
             XposedEntry.log("DynamicDebug: Found " + emulatorCheckers.size() + " emulator checkers");
 
@@ -138,8 +129,8 @@ public class DynamicDebugDetectionHook {
     }
 
     private static void hookCheckerList(XC_LoadPackage.LoadPackageParam lpparam,
-                                        List<MethodData> checkers, String type) {
-        for (MethodData methodData : checkers) {
+                                        List<DexMethodData> checkers, String type) {
+        for (DexMethodData methodData : checkers) {
             try {
                 String className = methodData.getClassName();
                 String methodName = methodData.getMethodName();

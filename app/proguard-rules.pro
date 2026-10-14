@@ -37,8 +37,11 @@
 
 # 7. Xposed API（由运行时的 Xposed/LSPosed 宿主环境提供，仅编译期依赖）
 -dontwarn de.robv.android.xposed.**
--keep class de.robv.android.xposed.** { *; }
 
 # 8. 保留反射相关注解与调试信息
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,SourceFile,LineNumberTable
+
+# 9. 保留 FlatBuffers 相关类（DexKit 序列化依赖）
+-keep class com.google.flatbuffers.** { *; }
+-dontwarn com.google.flatbuffers.**
 

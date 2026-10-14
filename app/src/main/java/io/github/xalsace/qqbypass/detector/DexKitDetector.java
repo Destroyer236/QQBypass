@@ -1,7 +1,6 @@
 package io.github.xalsace.qqbypass.detector;
 
 import android.content.Context;
-import android.content.pm.ApplicationInfo;
 
 import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindMethod;
@@ -17,31 +16,23 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import de.robv.android.xposed.XposedBridge;
+import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
  * DexKit-based detector for dynamically locating obfuscated detection points in QQ.
- * Eliminates hardcoded class/method names to survive version updates.
- *
- * Single shared bridge: DexKitBridge.create() parses the whole APK (~112MB on
- * 9.3.50), so creating one per hook meant 5 full parses per process and, across
- * QQ's several processes, a memory/CPU spike that could get the process killed on
- * cold start. This class now owns ONE bridge; all hooks reuse it via getBridge()
- * after awaitReady(). The bridge is thread-safe (ReentrantReadWriteLock + shared
- * query scheduler), so concurrent findMethod() from multiple hook threads is fine.
- *
- * Process gate: only the process that calls setEnabled(true) (the main QQ process)
- * builds a bridge; subprocesses skip DexKit entirely (awaitReady returns false
- * immediately), keeping the universal framework hooks but paying no parse cost.
+ * Supports persistent disk caching so DexKit and multi-DEX parsing are skipped on subsequent runs
+ * as long as the application and module versions remain unchanged.
  */
 public class DexKitDetector {
     private static final String TAG = "DexKitDetector";
     private static volatile DexKitBridge dexKitBridge;
     private static volatile boolean enabled = false; // set true only in the gated (main) process
-    private static volatile boolean ready = false;   // bridge created and usable
+    private static volatile boolean ready = false;   // cache loaded or bridge created and usable
     private static final Object initLock = new Object();
     private static final CountDownLatch readyLatch = new CountDownLatch(1);
-    // ConcurrentHashMap: findXxx() may now run from multiple hook threads at once.
-    private static final Map<String, List<MethodData>> detectionCache = new ConcurrentHashMap<>();
+
+    // Cache of discovered method metadata across all categories
+    private static final Map<String, List<DexMethodData>> detectionCache = new ConcurrentHashMap<>();
 
     /** Enable DexKit for this process. Call only in the main process. */
     public static void setEnabled(boolean value) { enabled = value; }
@@ -50,9 +41,28 @@ public class DexKitDetector {
     public static DexKitBridge getBridge() { return dexKitBridge; }
 
     /**
-     * Block until the shared bridge is ready, up to timeoutMs.
-     * Returns false immediately in a non-enabled (sub)process so callers skip
-     * DexKit work instead of blocking for the full timeout.
+     * Attempts to initialize from persistent disk cache.
+     * Returns true if valid cache was hit and loaded in <5ms.
+     */
+    public static boolean tryInitWithCache(XC_LoadPackage.LoadPackageParam lpparam) {
+        if (ready) return true;
+        synchronized (initLock) {
+            if (ready) return true;
+            Map<String, List<DexMethodData>> cached = DexKitCacheManager.loadCache(lpparam);
+            if (cached != null && !cached.isEmpty()) {
+                detectionCache.putAll(cached);
+                ready = true;
+                readyLatch.countDown();
+                XposedBridge.log("[" + TAG + "] Initialized via disk cache! Total cached categories: " + cached.size());
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Block until the shared bridge or cache is ready, up to timeoutMs.
+     * Returns false immediately in a non-enabled (sub)process if cache is not present.
      */
     public static boolean awaitReady(long timeoutMs) {
         if (ready) return true;
@@ -66,23 +76,15 @@ public class DexKitDetector {
     }
 
     /**
-     * Initialize the single shared DexKit bridge (idempotent). Only the first
-     * caller creates it; the readyLatch is always released so awaitReady() waiters
-     * wake even if creation fails.
+     * Initialize DexKit native bridge if cache was missed.
      */
-    public static void init(Context context) {
-        if (ready) return;
+    public static void init(String apkPath) {
+        if (ready && dexKitBridge != null) return;
         synchronized (initLock) {
-            if (ready) return;
+            if (dexKitBridge != null) return;
             try {
-                ApplicationInfo appInfo = context.getApplicationInfo();
-                String apkPath = appInfo.sourceDir;
-
                 XposedBridge.log("[" + TAG + "] Initializing DexKit with APK: " + apkPath);
-                // Explicitly load libdexkit.so before create(). In an LSPosed host
-                // process System.loadLibrary("dexkit") (what create() calls) can fail
-                // to find the module's native lib on the host path -> UnsatisfiedLinkError.
-                loadDexKitNativeLib(context);
+                loadDexKitNativeLib();
                 dexKitBridge = DexKitBridge.create(apkPath);
                 ready = true;
                 XposedBridge.log("[" + TAG + "] DexKit initialized successfully");
@@ -96,35 +98,82 @@ public class DexKitDetector {
     }
 
     /**
-     * Try to load libdexkit.so from the module's own native library directory.
-     * Falls back to System.loadLibrary if the explicit path isn't resolvable.
+     * Full scan and cache generation workflow on cache miss.
      */
-    private static void loadDexKitNativeLib(Context context) {
+    public static void scanAndCache(String apkPath, XC_LoadPackage.LoadPackageParam lpparam) {
+        init(apkPath);
+        if (dexKitBridge == null) {
+            XposedBridge.log("[" + TAG + "] DexKit bridge unavailable, scan aborted");
+            return;
+        }
+
+        try {
+            XposedBridge.log("[" + TAG + "] === Starting dynamic DexKit scan for all categories ===");
+            findRuntimeExecCallers();
+            findProcessBuilderCallers();
+            findSuPathCheckers();
+            findSuspiciousPackageQueries();
+            findArtHookDetectors();
+            findMapsReaders();
+            findWtloginErrorHandlers();
+            findQSecHookDetectors();
+            findDebugCheckers();
+            findTracerPidReaders();
+            findEmulatorCheckers();
+            findImeiReaders();
+            findAndroidIdReaders();
+            findSerialReaders();
+            findTuringFdProcReaders();
+
+            XposedBridge.log("[" + TAG + "] === Dynamic scan complete, writing to disk cache ===");
+            DexKitCacheManager.saveCache(lpparam, detectionCache);
+
+        } catch (Throwable t) {
+            XposedBridge.log("[" + TAG + "] Error during scanAndCache: " + t.getMessage());
+        }
+    }
+
+    public static void init(Context context) {
+        if (context != null && context.getApplicationInfo() != null) {
+            init(context.getApplicationInfo().sourceDir);
+        } else {
+            readyLatch.countDown();
+        }
+    }
+
+    private static void loadDexKitNativeLib() {
         try {
             System.loadLibrary("dexkit");
             XposedBridge.log("[" + TAG + "] loadLibrary(dexkit) OK");
         } catch (Throwable t) {
-            XposedBridge.log("[" + TAG + "] loadLibrary(dexkit) failed ("
-                + t.getClass().getSimpleName() + "), trying explicit path...");
-            throw t; // surfaced by caller; explicit-path loading added once confirmed
+            XposedBridge.log("[" + TAG + "] loadLibrary(dexkit) failed: " + t.getMessage());
+            throw t;
         }
     }
 
-    /**
-     * Find ArtMethod hook detection methods (QSec ArtTiHookTask / all_so_hook)
-     * Target: methods checking ArtMethod structure modification
-     */
-    public static List<MethodData> findArtHookDetectors() {
+    private static List<DexMethodData> toDexMethodList(List<MethodData> list) {
+        List<DexMethodData> result = new ArrayList<>();
+        if (list != null) {
+            for (MethodData md : list) {
+                result.add(DexMethodData.from(md));
+            }
+        }
+        return result;
+    }
+
+    // =========================================================================
+    // Category Finders
+    // =========================================================================
+
+    public static List<DexMethodData> findArtHookDetectors() {
         if (detectionCache.containsKey("art_hook")) {
             return detectionCache.get("art_hook");
         }
+        if (dexKitBridge == null) return new ArrayList<>();
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for ArtMethod hook detectors...");
-
-            // OR-semantics: usingStrings(...) is AND within one query, so we union
-            // separate single-string queries to catch methods referencing ANY marker.
-            List<MethodData> results = findMethodsUsingAnyString(
+            List<DexMethodData> results = findMethodsUsingAnyString(
                 "ArtMethod", "art_quick", "entry_point", "jni_code",
                 "instrumentationExit", "quick_to_interpreter");
 
@@ -137,21 +186,15 @@ public class DexKitDetector {
         }
     }
 
-    /**
-     * Find /proc/self/maps readers (detecting injected .so files)
-     * Target: methods reading maps file to detect LSPosed/Magisk/Zygisk/our module
-     */
-    public static List<MethodData> findMapsReaders() {
+    public static List<DexMethodData> findMapsReaders() {
         if (detectionCache.containsKey("maps_reader")) {
             return detectionCache.get("maps_reader");
         }
+        if (dexKitBridge == null) return new ArrayList<>();
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for /proc/self/maps readers...");
-
-            // "/proc/self/maps" is the strong signal; "/proc/self/task" and "/proc/"
-            // catch variants. OR-union so a method needs only one of them.
-            List<MethodData> results = findMethodsUsingAnyString(
+            List<DexMethodData> results = findMethodsUsingAnyString(
                 "/proc/self/maps", "/proc/self/task", "/proc/%d/maps");
 
             detectionCache.put("maps_reader", results);
@@ -163,22 +206,17 @@ public class DexKitDetector {
         }
     }
 
-    /**
-     * Find wtlogin error handlers (w21 "device invalid" logic)
-     * Target: methods processing wtlogin error codes from server
-     */
-    public static List<MethodData> findWtloginErrorHandlers() {
+    public static List<DexMethodData> findWtloginErrorHandlers() {
         if (detectionCache.containsKey("wtlogin_error")) {
             return detectionCache.get("wtlogin_error");
         }
+        if (dexKitBridge == null) return new ArrayList<>();
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for wtlogin error handlers...");
+            List<MethodData> raw = new ArrayList<>();
 
-            List<MethodData> results = new ArrayList<>();
-
-            // Pattern 1: Methods in wtlogin packages
-            results.addAll(dexKitBridge.findMethod(
+            raw.addAll(dexKitBridge.findMethod(
                 FindMethod.create()
                     .matcher(MethodMatcher.create()
                         .declaredClass("com.tencent.mobileqq.msf.core.wtlogin.*")
@@ -186,14 +224,14 @@ public class DexKitDetector {
                     )
             ));
 
-            // Pattern 2: Methods handling ErrMsg objects
-            results.addAll(dexKitBridge.findMethod(
+            raw.addAll(dexKitBridge.findMethod(
                 FindMethod.create()
                     .matcher(MethodMatcher.create()
                         .paramTypes("oicq.wlogin_sdk.tools.ErrMsg")
                     )
             ));
 
+            List<DexMethodData> results = toDexMethodList(raw);
             detectionCache.put("wtlogin_error", results);
             XposedBridge.log("[" + TAG + "] Found " + results.size() + " wtlogin error handlers");
             return results;
@@ -203,20 +241,15 @@ public class DexKitDetector {
         }
     }
 
-    /**
-     * Find QSec hook detection methods (registerHookSo / nativeFileHook)
-     * Target: QSec's native hook detection framework
-     */
-    public static List<MethodData> findQSecHookDetectors() {
+    public static List<DexMethodData> findQSecHookDetectors() {
         if (detectionCache.containsKey("qsec_hook")) {
             return detectionCache.get("qsec_hook");
         }
+        if (dexKitBridge == null) return new ArrayList<>();
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for QSec hook detectors...");
-
-            // OR-semantics: these markers live in different methods, so union them.
-            List<MethodData> results = findMethodsUsingAnyString(
+            List<DexMethodData> results = findMethodsUsingAnyString(
                 "registerHookSo", "nativeFileHook", "isHookedSoLoad", "QSecConfig",
                 "all_so_hook", "ArtTiHookTask");
 
@@ -229,29 +262,25 @@ public class DexKitDetector {
         }
     }
 
-    /**
-     * Find Runtime.exec callers (root detection via "type su" / "which su")
-     * Target: methods calling Runtime.exec() with su-related commands
-     */
-    public static List<MethodData> findRuntimeExecCallers() {
+    public static List<DexMethodData> findRuntimeExecCallers() {
         if (detectionCache.containsKey("runtime_exec")) {
             return detectionCache.get("runtime_exec");
         }
+        if (dexKitBridge == null) return new ArrayList<>();
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for Runtime.exec callers...");
-
-            List<MethodData> results = dexKitBridge.findMethod(
+            List<MethodData> raw = dexKitBridge.findMethod(
                 FindMethod.create()
                     .matcher(MethodMatcher.create()
                         .addInvoke(MethodMatcher.create()
                             .declaredClass("java.lang.Runtime")
                             .name("exec"))
-                        // single string = "contains"; multiple would be AND and over-narrow
                         .usingStrings("su")
                     )
             );
 
+            List<DexMethodData> results = toDexMethodList(raw);
             detectionCache.put("runtime_exec", results);
             XposedBridge.log("[" + TAG + "] Found " + results.size() + " Runtime.exec callers");
             return results;
@@ -261,18 +290,15 @@ public class DexKitDetector {
         }
     }
 
-    /**
-     * Find ProcessBuilder constructors/start callers (alternative to Runtime.exec)
-     */
-    public static List<MethodData> findProcessBuilderCallers() {
+    public static List<DexMethodData> findProcessBuilderCallers() {
         if (detectionCache.containsKey("process_builder")) {
             return detectionCache.get("process_builder");
         }
+        if (dexKitBridge == null) return new ArrayList<>();
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for ProcessBuilder callers...");
-
-            List<MethodData> results = dexKitBridge.findMethod(
+            List<MethodData> raw = dexKitBridge.findMethod(
                 FindMethod.create()
                     .matcher(MethodMatcher.create()
                         .addInvoke(MethodMatcher.create()
@@ -281,6 +307,7 @@ public class DexKitDetector {
                     )
             );
 
+            List<DexMethodData> results = toDexMethodList(raw);
             detectionCache.put("process_builder", results);
             XposedBridge.log("[" + TAG + "] Found " + results.size() + " ProcessBuilder callers");
             return results;
@@ -290,30 +317,21 @@ public class DexKitDetector {
         }
     }
 
-    /**
-     * Find File.exists callers checking su paths
-     */
-    public static List<MethodData> findSuPathCheckers() {
+    public static List<DexMethodData> findSuPathCheckers() {
         if (detectionCache.containsKey("su_path")) {
             return detectionCache.get("su_path");
         }
+        if (dexKitBridge == null) return new ArrayList<>();
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for su path checkers...");
-
-            // Tight fingerprint: a method that references a LITERAL su binary path
-            // AND calls File.exists is almost certainly a real root checker.
-            // The old bare "su" substring matched 903 innocent methods on 9.3.50
-            // (result/measure/issue/... all contain "su"), each then hooked and its
-            // boolean flipped -> startup cost + correctness hazard. The universal
-            // File.exists hook is the runtime safety net for anything this misses.
             String[] suPaths = {
                 "/system/bin/su", "/system/xbin/su", "/sbin/su",
                 "/su/bin/su", "/system/sd/xbin/su", "/system/bin/failsafe/su",
                 "/data/local/su", "/data/local/xbin/su", "/data/local/bin/su",
                 "/data/adb/magisk"
             };
-            Map<String, MethodData> unique = new HashMap<>();
+            Map<String, DexMethodData> unique = new HashMap<>();
             for (String p : suPaths) {
                 try {
                     List<MethodData> found = dexKitBridge.findMethod(
@@ -324,13 +342,15 @@ public class DexKitDetector {
                                     .name("exists"))
                                 .usingStrings(p))
                     );
-                    for (MethodData m : found) unique.put(m.getDescriptor(), m);
+                    for (MethodData m : found) {
+                        DexMethodData dmd = DexMethodData.from(m);
+                        unique.put(dmd.getDescriptor(), dmd);
+                    }
                 } catch (Exception e) {
                     XposedBridge.log("[" + TAG + "] su-path query failed for '" + p + "': " + e.getMessage());
                 }
             }
-            List<MethodData> results = new ArrayList<>(unique.values());
-
+            List<DexMethodData> results = new ArrayList<>(unique.values());
             detectionCache.put("su_path", results);
             XposedBridge.log("[" + TAG + "] Found " + results.size() + " su path checkers");
             return results;
@@ -340,28 +360,25 @@ public class DexKitDetector {
         }
     }
 
-    /**
-     * Find PackageManager queries for Magisk/LSPosed packages
-     */
-    public static List<MethodData> findSuspiciousPackageQueries() {
+    public static List<DexMethodData> findSuspiciousPackageQueries() {
         if (detectionCache.containsKey("package_query")) {
             return detectionCache.get("package_query");
         }
+        if (dexKitBridge == null) return new ArrayList<>();
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for suspicious package queries...");
-
-            List<MethodData> results = dexKitBridge.findMethod(
+            List<MethodData> raw = dexKitBridge.findMethod(
                 FindMethod.create()
                     .matcher(MethodMatcher.create()
                         .addInvoke(MethodMatcher.create()
                             .declaredClass("android.content.pm.PackageManager")
                             .name("getPackageInfo"))
-                        // single "contains" marker; runtime isSuspiciousPackage() does the rest
                         .usingStrings("magisk")
                     )
             );
 
+            List<DexMethodData> results = toDexMethodList(raw);
             detectionCache.put("package_query", results);
             XposedBridge.log("[" + TAG + "] Found " + results.size() + " package query methods");
             return results;
@@ -371,13 +388,163 @@ public class DexKitDetector {
         }
     }
 
-    /**
-     * Run one findMethod query per string (OR-semantics) and union the results,
-     * de-duplicating by DEX descriptor. DexKit's usingStrings(vararg) is AND within
-     * a single query, which is wrong when markers live in different methods.
-     */
-    private static List<MethodData> findMethodsUsingAnyString(String... markers) {
-        Map<String, MethodData> unique = new HashMap<>();
+    public static List<DexMethodData> findDebugCheckers() {
+        if (detectionCache.containsKey("debug_checker")) {
+            return detectionCache.get("debug_checker");
+        }
+        if (dexKitBridge == null) return new ArrayList<>();
+
+        try {
+            XposedBridge.log("[" + TAG + "] Searching for Debug.isDebuggerConnected callers...");
+            List<MethodData> raw = dexKitBridge.findMethod(
+                FindMethod.create()
+                    .matcher(MethodMatcher.create()
+                        .addInvoke(MethodMatcher.create()
+                            .declaredClass("android.os.Debug")
+                            .name("isDebuggerConnected"))
+                    )
+            );
+            List<DexMethodData> results = toDexMethodList(raw);
+            detectionCache.put("debug_checker", results);
+            return results;
+        } catch (Exception e) {
+            XposedBridge.log("[" + TAG + "] Error finding debug checkers: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    public static List<DexMethodData> findTracerPidReaders() {
+        if (detectionCache.containsKey("tracerpid_reader")) {
+            return detectionCache.get("tracerpid_reader");
+        }
+        if (dexKitBridge == null) return new ArrayList<>();
+
+        try {
+            XposedBridge.log("[" + TAG + "] Searching for TracerPid readers...");
+            List<MethodData> raw = dexKitBridge.findMethod(
+                FindMethod.create()
+                    .matcher(MethodMatcher.create()
+                        .usingStrings("TracerPid"))
+            );
+            List<DexMethodData> results = toDexMethodList(raw);
+            detectionCache.put("tracerpid_reader", results);
+            return results;
+        } catch (Exception e) {
+            XposedBridge.log("[" + TAG + "] Error finding TracerPid readers: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    public static List<DexMethodData> findEmulatorCheckers() {
+        if (detectionCache.containsKey("emulator_checker")) {
+            return detectionCache.get("emulator_checker");
+        }
+        if (dexKitBridge == null) return new ArrayList<>();
+
+        try {
+            XposedBridge.log("[" + TAG + "] Searching for emulator checkers...");
+            List<DexMethodData> results = findMethodsUsingAnyString(
+                "goldfish", "ranchu", "qemu", "vbox", "genymotion");
+            detectionCache.put("emulator_checker", results);
+            return results;
+        } catch (Exception e) {
+            XposedBridge.log("[" + TAG + "] Error finding emulator checkers: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    public static List<DexMethodData> findImeiReaders() {
+        if (detectionCache.containsKey("imei_reader")) {
+            return detectionCache.get("imei_reader");
+        }
+        if (dexKitBridge == null) return new ArrayList<>();
+
+        try {
+            List<MethodData> raw = dexKitBridge.findMethod(
+                FindMethod.create()
+                    .matcher(MethodMatcher.create()
+                        .addInvoke(MethodMatcher.create()
+                            .declaredClass("android.telephony.TelephonyManager")
+                            .name("getDeviceId"))
+                    )
+            );
+            List<DexMethodData> results = toDexMethodList(raw);
+            detectionCache.put("imei_reader", results);
+            return results;
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+    public static List<DexMethodData> findAndroidIdReaders() {
+        if (detectionCache.containsKey("android_id_reader")) {
+            return detectionCache.get("android_id_reader");
+        }
+        if (dexKitBridge == null) return new ArrayList<>();
+
+        try {
+            List<MethodData> raw = dexKitBridge.findMethod(
+                FindMethod.create()
+                    .matcher(MethodMatcher.create()
+                        .addInvoke(MethodMatcher.create()
+                            .declaredClass("android.provider.Settings$Secure")
+                            .name("getString"))
+                        .usingStrings("android_id")
+                    )
+            );
+            List<DexMethodData> results = toDexMethodList(raw);
+            detectionCache.put("android_id_reader", results);
+            return results;
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+    public static List<DexMethodData> findSerialReaders() {
+        if (detectionCache.containsKey("serial_reader")) {
+            return detectionCache.get("serial_reader");
+        }
+        if (dexKitBridge == null) return new ArrayList<>();
+
+        try {
+            List<MethodData> raw = dexKitBridge.findMethod(
+                FindMethod.create()
+                    .matcher(MethodMatcher.create()
+                        .addInvoke(MethodMatcher.create()
+                            .declaredClass("android.os.Build")
+                            .name("getSerial"))
+                    )
+            );
+            List<DexMethodData> results = toDexMethodList(raw);
+            detectionCache.put("serial_reader", results);
+            return results;
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+    public static List<DexMethodData> findTuringFdProcReaders() {
+        if (detectionCache.containsKey("turingfd_proc")) {
+            return detectionCache.get("turingfd_proc");
+        }
+        if (dexKitBridge == null) return new ArrayList<>();
+
+        try {
+            List<MethodData> raw = dexKitBridge.findMethod(
+                FindMethod.create()
+                    .matcher(MethodMatcher.create()
+                        .usingStrings("/proc/%d/cmdline"))
+            );
+            List<DexMethodData> results = toDexMethodList(raw);
+            detectionCache.put("turingfd_proc", results);
+            return results;
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static List<DexMethodData> findMethodsUsingAnyString(String... markers) {
+        Map<String, DexMethodData> unique = new HashMap<>();
         for (String marker : markers) {
             try {
                 List<MethodData> found = dexKitBridge.findMethod(
@@ -385,7 +552,8 @@ public class DexKitDetector {
                         .matcher(MethodMatcher.create().usingStrings(marker))
                 );
                 for (MethodData m : found) {
-                    unique.put(m.getDescriptor(), m);
+                    DexMethodData dmd = DexMethodData.from(m);
+                    unique.put(dmd.getDescriptor(), dmd);
                 }
             } catch (Exception e) {
                 XposedBridge.log("[" + TAG + "] query failed for '" + marker + "': " + e.getMessage());
@@ -394,22 +562,20 @@ public class DexKitDetector {
         return new ArrayList<>(unique.values());
     }
 
-    /**
-     * Get all cached detection results
-     */
-    public static Map<String, List<MethodData>> getAllDetectionResults() {
+    public static int getCachedCount() {
+        int count = 0;
+        for (List<DexMethodData> list : detectionCache.values()) {
+            count += list.size();
+        }
+        return count;
+    }
+
+    public static Map<String, List<DexMethodData>> getAllDetectionResults() {
         return new HashMap<>(detectionCache);
     }
 
-    /**
-     * Release DexKit resources. Note: hooks resolve their target Members during
-     * the scan and don't need the bridge afterward, but we keep it alive by
-     * default (release not called from XposedEntry) so late/lazy findXxx() calls
-     * still work. Call explicitly only when you know no more queries will run.
-     */
     public static void release() {
         synchronized (initLock) {
-            ready = false;
             if (dexKitBridge != null) {
                 try {
                     dexKitBridge.close();
