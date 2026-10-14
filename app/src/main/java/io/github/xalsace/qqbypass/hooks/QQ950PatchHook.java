@@ -43,6 +43,9 @@ public class QQ950PatchHook {
         // Tier 2: object-return risk-detection blocks (Dynamic Proxy safe, zero NPE risk)
         hookTuringRiskDetect();
         hookTuringDID();
+
+        // Tier 3: Face ID & Multi-Factor Authentication (HuiYan SDK & TuringFaceDefender)
+        hookFaceRecognitionAndMFA(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -447,6 +450,116 @@ public class QQ950PatchHook {
                 }
             });
             XposedEntry.log("[CrashFix] Hooked AIONotificationManager banner lambda for exception isolation");
+        }
+    }
+
+    /**
+     * QQ 人脸识别核身与多因子认证（HuiYan SDK & TuringFaceDefender）专项防护：
+     *
+     * 1. TuringFaceDefender (com.tencent.turingcam.TuringFaceDefender):
+     *    - init(TuringFaceBuilder): 确保初始化返回 0（成功）；
+     *    - signData(String): 挂钩返回值，确保 SignResult.code == 0（成功验签，无环境异常码）；
+     *
+     * 2. TuringSdkImp 回调分发 (com.tencent.could.huiyansdk.turingmodule.TuringSdkImp$a):
+     *    - onException(Throwable): 静默抑制异常，防止触发 GetTuringTokenError 错误埋点与环境污染；
+     *
+     * 3. Turing 结果消费与状态机 (com.tencent.could.huiyansdk.turing.d):
+     *    - a(long j, byte[] bArr): 若底层由于环境波动传出非 0 状态码，前置修正 j = 0L，并确保 bArr 有效，使核身状态机无缝跃迁至 START_GET_LIVE_TYPE；
+     *
+     * 4. Turing 结果缓存实体 (com.tencent.could.huiyansdk.entity.TuringResultCacheEntity):
+     *    - setTuringEnvErrorStr(String): 过滤错误特征字符串，防止上报环境异常至人脸核验服务端。
+     */
+    private static void hookFaceRecognitionAndMFA(XC_LoadPackage.LoadPackageParam lpparam) {
+        ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
+        if (cl == null) return;
+
+        // 1. TuringFaceDefender: init & signData
+        final String tfdCls = "com.tencent.turingcam.TuringFaceDefender";
+        Class<?> tfdClass = XposedHelpers.findClassIfExists(tfdCls, cl);
+        if (tfdClass != null) {
+            HookUtils.hookAllMethods(tfdClass, "init", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(0);
+                    XposedEntry.log("[FacePatch] Preempted TuringFaceDefender.init -> 0");
+                }
+            });
+
+            HookUtils.hookAllMethods(tfdClass, "signData", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object result = param.getResult();
+                    if (result != null) {
+                        try {
+                            long code = XposedHelpers.getLongField(result, "code");
+                            if (code != 0) {
+                                XposedHelpers.setLongField(result, "code", 0L);
+                                XposedEntry.log("[FacePatch] Sanitized TuringFaceDefender.signData code: " + code + " -> 0");
+                            }
+                        } catch (Throwable t) {
+                            try {
+                                int codeInt = XposedHelpers.getIntField(result, "code");
+                                if (codeInt != 0) {
+                                    XposedHelpers.setIntField(result, "code", 0);
+                                    XposedEntry.log("[FacePatch] Sanitized TuringFaceDefender.signData code: " + codeInt + " -> 0");
+                                }
+                            } catch (Throwable ignored) {}
+                        }
+                    }
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked TuringFaceDefender for face recognition safety");
+        }
+
+        // 2. TuringSdkImp$a: onException
+        final String callbackCls = "com.tencent.could.huiyansdk.turingmodule.TuringSdkImp$a";
+        Class<?> cbClass = XposedHelpers.findClassIfExists(callbackCls, cl);
+        if (cbClass != null) {
+            HookUtils.hookAllMethods(cbClass, "onException", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(null); // void, suppress exception
+                    XposedEntry.log("[FacePatch] Suppressed TuringSdkImp onException callback");
+                }
+            });
+        }
+
+        // 3. Turing helper: com.tencent.could.huiyansdk.turing.d.a(long, byte[])
+        final String dCls = "com.tencent.could.huiyansdk.turing.d";
+        Class<?> dClass = XposedHelpers.findClassIfExists(dCls, cl);
+        if (dClass != null) {
+            HookUtils.hookAllMethods(dClass, "a", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length >= 2) {
+                        if (param.args[0] instanceof Number) {
+                            long code = ((Number) param.args[0]).longValue();
+                            if (code != 0) {
+                                param.args[0] = 0L;
+                                XposedEntry.log("[FacePatch] Sanitized HuiYan Turing retCode: " + code + " -> 0");
+                            }
+                        }
+                        if (param.args[1] == null) {
+                            param.args[1] = new byte[32];
+                            XposedEntry.log("[FacePatch] Provided fallback non-null Turing face token buffer");
+                        }
+                    }
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked HuiYan turing.d result consumer");
+        }
+
+        // 4. TuringResultCacheEntity: setTuringEnvErrorStr
+        final String cacheCls = "com.tencent.could.huiyansdk.entity.TuringResultCacheEntity";
+        Class<?> cacheClass = XposedHelpers.findClassIfExists(cacheCls, cl);
+        if (cacheClass != null) {
+            HookUtils.hookAllMethods(cacheClass, "setTuringEnvErrorStr", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.args[0] = ""; // Neutralize environment error string
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked TuringResultCacheEntity.setTuringEnvErrorStr");
         }
     }
 }

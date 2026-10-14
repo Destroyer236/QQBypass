@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <sys/system_properties.h>
+#include <link.h>
 
 namespace hook_libc {
 
@@ -318,6 +319,28 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
     return ret;
 }
 
+struct dl_phdr_callback_ctx {
+    int (*real_cb)(struct dl_phdr_info*, size_t, void*);
+    void* real_data;
+};
+
+static int fake_dl_phdr_cb(struct dl_phdr_info* info, size_t size, void* data) {
+    auto* ctx = reinterpret_cast<dl_phdr_callback_ctx*>(data);
+    if (info && info->dlpi_name && is_sensitive_path(info->dlpi_name)) {
+        LOGD("Hidden library in dl_iterate_phdr: %s", info->dlpi_name);
+        return 0; // Skip reporting this library
+    }
+    return ctx->real_cb(info, size, ctx->real_data);
+}
+
+// dl_iterate_phdr 代理：遍历已加载 SO 列表时剔除 Hook 框架动态库
+static int fake_dl_iterate_phdr(int (*callback)(struct dl_phdr_info*, size_t, void*), void* data) {
+    BYTEHOOK_STACK_SCOPE();
+    if (!callback) return 0;
+    dl_phdr_callback_ctx ctx = { callback, data };
+    return BYTEHOOK_CALL_PREV(fake_dl_iterate_phdr, fake_dl_phdr_cb, &ctx);
+}
+
 // access 代理：隐藏敏感文件
 static int fake_access(const char* pathname, int mode) {
     BYTEHOOK_STACK_SCOPE();
@@ -431,6 +454,7 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "readlink", (void*)fake_readlink, nullptr, nullptr);
     bytehook_hook_all(nullptr, "readlinkat", (void*)fake_readlinkat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "dladdr", (void*)fake_dladdr, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "dl_iterate_phdr", (void*)fake_dl_iterate_phdr, nullptr, nullptr);
     bytehook_hook_all(nullptr, "access", (void*)fake_access, nullptr, nullptr);
     bytehook_hook_all(nullptr, "faccessat", (void*)fake_faccessat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "stat", (void*)fake_stat, nullptr, nullptr);
