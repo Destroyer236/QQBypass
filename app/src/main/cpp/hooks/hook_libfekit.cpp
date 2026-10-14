@@ -47,7 +47,9 @@ static char* fake_strstr(const char* haystack, const char* needle) {
     char* result = BYTEHOOK_CALL_PREV(fake_strstr, haystack, needle);
     if (result && needle) {
         const char* sensitive[] = {
-            "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", "ksu", "apatch", "shamiko", nullptr
+            "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", "ksu", "apatch", "shamiko",
+            "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa", "epic", "pine", "taichi", "liblspd",
+            "qqbypass", "xalsace", nullptr
         };
         for (int i = 0; sensitive[i]; i++) {
             if (strcasecmp(needle, sensitive[i]) == 0 || strstr(needle, sensitive[i])) {

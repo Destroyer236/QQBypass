@@ -378,8 +378,18 @@ public class DynamicRootDetectionHook {
                 }
             });
 
-            // Hook getPackageInfo & getPackageInfoAsUser: 注入官方签名，满足 Native 与 Java 签名完整性校验
+            // Hook getPackageInfo & getPackageInfoAsUser: 拦截敏感包查询，注入官方签名
             XC_MethodHook packageInfoHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                        String pkg = (String) param.args[0];
+                        if (isSuspiciousPackage(pkg)) {
+                            throw new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg);
+                        }
+                    }
+                }
+
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     Object res = param.getResult();
@@ -414,6 +424,40 @@ public class DynamicRootDetectionHook {
             };
             HookUtils.hookAllMethods(pmsClass, "getPackageInfo", packageInfoHook);
             HookUtils.hookAllMethods(pmsClass, "getPackageInfoAsUser", packageInfoHook);
+
+            // Hook getApplicationInfo & getPackageUid: 隐藏敏感包
+            XC_MethodHook appInfoHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                        String pkg = (String) param.args[0];
+                        if (isSuspiciousPackage(pkg)) {
+                            throw new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg);
+                        }
+                    }
+                }
+            };
+            HookUtils.hookAllMethods(pmsClass, "getApplicationInfo", appInfoHook);
+            HookUtils.hookAllMethods(pmsClass, "getApplicationInfoAsUser", appInfoHook);
+            HookUtils.hookAllMethods(pmsClass, "getPackageUid", appInfoHook);
+            HookUtils.hookAllMethods(pmsClass, "getPackageUidAsUser", appInfoHook);
+
+            // Hook QQ 内部 PackageUtil.isAppInstalled，防止 Bugly 等探测
+            Class<?> pkgUtilClass = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                "com.tencent.mobileqq.utils.PackageUtil", lpparam.classLoader);
+            if (pkgUtilClass != null) {
+                HookUtils.hookAllMethods(pkgUtilClass, "isAppInstalled", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                            String pkg = (String) param.args[1];
+                            if (isSuspiciousPackage(pkg)) {
+                                param.setResult(false);
+                            }
+                        }
+                    }
+                });
+            }
         } catch (Throwable t) {
             XposedEntry.log("Failed to hook getInstalledPackages: " + t.getMessage());
         }
@@ -518,7 +562,9 @@ public class DynamicRootDetectionHook {
             || lower.contains("superuser") || lower.contains("ksu")
             || lower.contains("apatch") || lower.contains("shamiko")
             || lower.contains("xposed") || lower.contains("lsposed")
-            || lower.contains("frida") || lower.contains("/data/adb");
+            || lower.contains("frida") || lower.contains("/data/adb")
+            || lower.contains("dexkit") || lower.contains("sandhook")
+            || lower.contains("yahfa") || lower.contains("liblspd");
     }
 
     private static boolean isSuspiciousPackage(String pkg) {
@@ -530,6 +576,9 @@ public class DynamicRootDetectionHook {
             || lower.contains("lsposed") || lower.contains("edxposed")
             || lower.contains("kernelsu") || lower.contains("apatch")
             || lower.contains("shamiko") || lower.contains("frida")
-            || lower.contains("me.weishu") || lower.contains("me.bmax");
+            || lower.contains("me.weishu") || lower.contains("me.bmax")
+            || lower.contains("sandhook") || lower.contains("taichi")
+            || lower.contains("top.canyie") || lower.contains("xalsace")
+            || lower.contains("qqbypass") || lower.contains("dexkit");
     }
 }

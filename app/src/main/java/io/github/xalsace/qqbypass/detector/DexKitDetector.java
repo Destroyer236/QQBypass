@@ -329,7 +329,8 @@ public class DexKitDetector {
                 "/system/bin/su", "/system/xbin/su", "/sbin/su",
                 "/su/bin/su", "/system/sd/xbin/su", "/system/bin/failsafe/su",
                 "/data/local/su", "/data/local/xbin/su", "/data/local/bin/su",
-                "/data/adb/magisk"
+                "/data/adb/magisk", "/system/app/Superuser.apk",
+                "/data/adb/modules", "/data/adb/lsposed", "/data/adb/ksu", "/data/adb/ap"
             };
             Map<String, DexMethodData> unique = new HashMap<>();
             for (String p : suPaths) {
@@ -368,17 +369,30 @@ public class DexKitDetector {
 
         try {
             XposedBridge.log("[" + TAG + "] Searching for suspicious package queries...");
-            List<MethodData> raw = dexKitBridge.findMethod(
-                FindMethod.create()
-                    .matcher(MethodMatcher.create()
-                        .addInvoke(MethodMatcher.create()
-                            .declaredClass("android.content.pm.PackageManager")
-                            .name("getPackageInfo"))
-                        .usingStrings("magisk")
-                    )
-            );
-
-            List<DexMethodData> results = toDexMethodList(raw);
+            String[] suspiciousPatterns = {
+                "magisk", "xposed", "de.robv.android.xposed", "lsposed", "edxposed",
+                "kernelsu", "apatch", "shamiko", "frida", "sandhook"
+            };
+            Map<String, DexMethodData> unique = new HashMap<>();
+            for (String pattern : suspiciousPatterns) {
+                try {
+                    List<MethodData> found = dexKitBridge.findMethod(
+                        FindMethod.create()
+                            .matcher(MethodMatcher.create()
+                                .addInvoke(MethodMatcher.create()
+                                    .declaredClass("android.content.pm.PackageManager")
+                                    .name("getPackageInfo"))
+                                .usingStrings(pattern))
+                    );
+                    for (MethodData m : found) {
+                        DexMethodData dmd = DexMethodData.from(m);
+                        unique.put(dmd.getDescriptor(), dmd);
+                    }
+                } catch (Exception e) {
+                    XposedBridge.log("[" + TAG + "] package-query failed for '" + pattern + "': " + e.getMessage());
+                }
+            }
+            List<DexMethodData> results = new ArrayList<>(unique.values());
             detectionCache.put("package_query", results);
             XposedBridge.log("[" + TAG + "] Found " + results.size() + " package query methods");
             return results;

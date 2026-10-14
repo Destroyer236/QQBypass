@@ -37,10 +37,13 @@ bool is_sensitive_path(const char* path) {
         "/data/adb/magisk", "/data/adb/ksu", "/data/adb/ap",
         "/data/adb/shamiko", "libriru", "libzygisk",
         "Superuser.apk", "SuperSU.apk", "Magisk.apk",
+        "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
+        "epic", "pine", "taichi", "liblspd", "lsposed", "edxposed",
+        "qqbypass", "libnative-bypass", "libbytehook", "xalsace",
         nullptr
     };
     for (int i = 0; hidden[i]; i++) {
-        if (strstr(path, hidden[i])) return true;
+        if (strcasestr(path, hidden[i])) return true;
     }
     return false;
 }
@@ -59,19 +62,21 @@ FILE* build_filtered_maps() {
         return nullptr;
     }
 
-    char line[512];
+    char line[2048];
     const char* blacklist[] = {
         "lsposed", "xposed", "riru", "zygisk", "edxposed",
         "frida", "substrate", "libDalvikLoader", "libAndroidCydia",
         "magisk", "ksu", "kernelsu", "supersu", "superuser",
         "libnative-bypass", "libbytehook", "xalsace", "qq_hook",
+        "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
+        "epic", "pine", "taichi", "top.canyie", "liblspd", "qqbypass",
         nullptr
     };
 
     while (real_fgets(line, sizeof(line), real)) {
         bool filter = false;
         for (int i = 0; blacklist[i]; i++) {
-            if (strstr(line, blacklist[i])) { filter = true; break; }
+            if (strcasestr(line, blacklist[i])) { filter = true; break; }
         }
         if (!filter) fputs(line, fake);
     }
@@ -228,7 +233,7 @@ static char* fake_fgets(char* s, int size, FILE* stream) {
     return result;
 }
 
-// readlink 代理：隐藏进程真实路径
+// readlink 代理：隐藏进程真实路径与敏感 open fd 目标
 static ssize_t fake_readlink(const char* path, char* buf, size_t bufsiz) {
     BYTEHOOK_STACK_SCOPE();
 
@@ -239,7 +244,78 @@ static ssize_t fake_readlink(const char* path, char* buf, size_t bufsiz) {
         memcpy(buf, fake_path, len);
         return (ssize_t)len;
     }
-    return BYTEHOOK_CALL_PREV(fake_readlink, path, buf, bufsiz);
+
+    ssize_t ret = BYTEHOOK_CALL_PREV(fake_readlink, path, buf, bufsiz);
+    if (ret > 0 && buf) {
+        char saved = (ret < (ssize_t)bufsiz) ? buf[ret] : '\0';
+        if (ret < (ssize_t)bufsiz) buf[ret] = '\0';
+
+        if (is_sensitive_path(buf)) {
+            const char* fake_target = "/dev/null";
+            size_t fake_len = strlen(fake_target);
+            if (fake_len > bufsiz) fake_len = bufsiz;
+            memcpy(buf, fake_target, fake_len);
+            return (ssize_t)fake_len;
+        } else if (ret < (ssize_t)bufsiz) {
+            buf[ret] = saved;
+        }
+    }
+    return ret;
+}
+
+static ssize_t fake_readlinkat(int dirfd, const char* pathname, char* buf, size_t bufsiz) {
+    BYTEHOOK_STACK_SCOPE();
+
+    ssize_t ret = BYTEHOOK_CALL_PREV(fake_readlinkat, dirfd, pathname, buf, bufsiz);
+    if (ret > 0 && buf) {
+        char saved = (ret < (ssize_t)bufsiz) ? buf[ret] : '\0';
+        if (ret < (ssize_t)bufsiz) buf[ret] = '\0';
+
+        if (is_sensitive_path(buf)) {
+            const char* fake_target = "/dev/null";
+            size_t fake_len = strlen(fake_target);
+            if (fake_len > bufsiz) fake_len = bufsiz;
+            memcpy(buf, fake_target, fake_len);
+            return (ssize_t)fake_len;
+        } else if (ret < (ssize_t)bufsiz) {
+            buf[ret] = saved;
+        }
+    }
+    return ret;
+}
+
+// dladdr 代理：当安全库反查 hook 替换函数地址时，伪装为系统 libc 函数
+static int fake_dladdr(const void* addr, Dl_info* info) {
+    BYTEHOOK_STACK_SCOPE();
+    int ret = BYTEHOOK_CALL_PREV(fake_dladdr, addr, info);
+    if (ret != 0 && info && info->dli_fname) {
+        const char* fname = info->dli_fname;
+        const char* hook_libs[] = {
+            "bytehook", "native-bypass", "xposed", "lsposed", "liblspd",
+            "dexkit", "sandhook", "yahfa", "epic", "pine", "taichi",
+            "dobby", "riru", "zygisk", "qqbypass", "xalsace",
+            nullptr
+        };
+        bool is_hook = false;
+        for (int i = 0; hook_libs[i]; i++) {
+            if (strcasestr(fname, hook_libs[i])) {
+                is_hook = true;
+                break;
+            }
+        }
+        if (is_hook) {
+            LOGI("dladdr spoofed: %s -> libc.so", fname);
+#if defined(__aarch64__) || defined(__x86_64__)
+            info->dli_fname = "/system/lib64/libc.so";
+#else
+            info->dli_fname = "/system/lib/libc.so";
+#endif
+            info->dli_fbase = nullptr;
+            info->dli_sname = nullptr;
+            info->dli_saddr = nullptr;
+        }
+    }
+    return ret;
 }
 
 // access 代理：隐藏敏感文件
@@ -353,6 +429,8 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "openat64", (void*)fake_openat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "fgets", (void*)fake_fgets, nullptr, nullptr);
     bytehook_hook_all(nullptr, "readlink", (void*)fake_readlink, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "readlinkat", (void*)fake_readlinkat, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "dladdr", (void*)fake_dladdr, nullptr, nullptr);
     bytehook_hook_all(nullptr, "access", (void*)fake_access, nullptr, nullptr);
     bytehook_hook_all(nullptr, "faccessat", (void*)fake_faccessat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "stat", (void*)fake_stat, nullptr, nullptr);

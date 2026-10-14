@@ -40,8 +40,7 @@ static void* install_hooks_thread(void* arg) {
     LOGI("=== Native Bypass Module Starting ===");
     LOGI("Process: %d", getpid());
 
-    // Wait a bit for QQ libraries to load
-    sleep(2);
+    // Immediate installation to eliminate cold-start blind spot (ByteHook AUTOMATIC mode handles future dlopened libs)
 
     pthread_mutex_lock(&g_init_mutex);
 
