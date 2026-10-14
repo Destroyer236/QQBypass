@@ -302,8 +302,9 @@ public class DynamicRootDetectionHook {
                                             }
                                         }
                                         if (canThrow) {
-                                            throw new android.content.pm.PackageManager.NameNotFoundException(
-                                                "Package not found: " + pkg);
+                                            param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException(
+                                                "Package not found: " + pkg));
+                                            return;
                                         } else {
                                             param.setResult(null);
                                             return;
@@ -385,7 +386,8 @@ public class DynamicRootDetectionHook {
                     if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String pkg = (String) param.args[0];
                         if (isSuspiciousPackage(pkg)) {
-                            throw new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg);
+                            param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg));
+                            return;
                         }
                     }
                 }
@@ -432,7 +434,8 @@ public class DynamicRootDetectionHook {
                     if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String pkg = (String) param.args[0];
                         if (isSuspiciousPackage(pkg)) {
-                            throw new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg);
+                            param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg));
+                            return;
                         }
                     }
                 }

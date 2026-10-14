@@ -75,7 +75,8 @@ public class XposedDetectionHook {
                         String packageName = (String) param.args[0];
                         if (isXposedPackage(packageName)) {
                             XposedEntry.log("Blocked PackageManager query for: " + packageName);
-                            throw new android.content.pm.PackageManager.NameNotFoundException();
+                            param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException());
+                            return;
                         }
                     }
                 }
@@ -88,7 +89,8 @@ public class XposedDetectionHook {
                     if (param.args.length > 0) {
                         String packageName = (String) param.args[0];
                         if (isXposedPackage(packageName)) {
-                            throw new android.content.pm.PackageManager.NameNotFoundException();
+                            param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException());
+                            return;
                         }
                     }
                 }
