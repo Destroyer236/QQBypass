@@ -258,7 +258,11 @@ public class DynamicXposedDetectionHook {
             // Filter our own module and native dependencies
             || lower.contains("xalsace") || lower.contains("qqbypass")
             || lower.contains("bypass") || lower.contains("libnative-bypass")
-            || lower.contains("bytehook") || lower.contains("libbytehook");
+            || lower.contains("bytehook") || lower.contains("libbytehook")
+            // Filter QAuxv and related
+            || lower.contains("qauxv") || lower.contains("io.github.qauxv")
+            || lower.contains("libqauxv") || lower.contains("libqauxv-core0")
+            || lower.contains("cc.ioctl") || lower.contains("qnotified");
     }
 
     private static StackTraceElement[] filterStackTrace(StackTraceElement[] traces) {
@@ -287,7 +291,11 @@ public class DynamicXposedDetectionHook {
                 lower.contains("org.luckypray.dexkit") ||
                 lower.contains("com.google.flatbuffers") ||
                 lower.contains("com.elderdrivers.riru") ||
-                lower.contains("bytehook")) {
+                lower.contains("bytehook") ||
+                lower.contains("io.github.qauxv") ||
+                lower.contains("qauxv") ||
+                lower.contains("cc.ioctl") ||
+                lower.contains("qnotified")) {
                 continue;
             }
             if (method != null) {
@@ -347,7 +355,8 @@ public class DynamicXposedDetectionHook {
                                 String name = thread.getName();
                                 if (name != null) {
                                     String nameLower = name.toLowerCase();
-                                    if (nameLower.contains("dexkit") || nameLower.contains("qqbypass") || nameLower.contains("xalsace")) {
+                                    if (nameLower.contains("dexkit") || nameLower.contains("qqbypass") || nameLower.contains("xalsace")
+                                            || nameLower.contains("qauxv") || nameLower.contains("qnotified") || nameLower.contains("cc.ioctl")) {
                                         continue;
                                     }
                                 }
@@ -388,7 +397,10 @@ public class DynamicXposedDetectionHook {
             || lower.startsWith("top.canyie.pine.")
             || lower.startsWith("lab.galaxy.yahfa.")
             || lower.startsWith("me.ele.epic.")
-            || lower.startsWith("me.weishu.exposed.");
+            || lower.startsWith("me.weishu.exposed.")
+            || lower.startsWith("io.github.qauxv.")
+            || lower.startsWith("cc.ioctl.")
+            || lower.contains("qnotified");
     }
 
     private static boolean isCallerWhitelisted() {
@@ -409,6 +421,7 @@ public class DynamicXposedDetectionHook {
                 }
                 if (cls.startsWith("io.github.xalsace.")
                     || cls.startsWith("io.github.qauxv.")
+                    || cls.startsWith("cc.ioctl.")
                     || cls.startsWith("de.robv.android.xposed.")
                     || cls.startsWith("org.lsposed.")) {
                     return true;

@@ -1022,7 +1022,8 @@ public class QQ950PatchHook {
 
         // 5. Accessibility Services & Dtc Telemetry Sanitization (prevents bin.mt.plus / todesk / uuremote detection)
         final String[] suspiciousAssistKeywords = {
-            "bin.mt.plus", "todesk", "uuremote", "xposed", "lsposed", "magisk", "xalsace", "qqbypass", "dexkit"
+            "bin.mt.plus", "todesk", "uuremote", "xposed", "lsposed", "magisk", "xalsace", "qqbypass", "dexkit",
+            "qauxv", "io.github.qauxv", "qnotified", "cc.ioctl"
         };
 
         HookUtils.hookAllMethods("android.view.accessibility.AccessibilityManager", "getInstalledAccessibilityServiceList", new XC_MethodHook() {

@@ -85,7 +85,8 @@ static char* fake_mfa_strstr(const char* haystack, const char* needle) {
         const char* sensitive[] = {
             "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", "ksu", "apatch", "shamiko",
             "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa", "epic", "pine", "taichi", "liblspd",
-            "qqbypass", "xalsace", "libnative-bypass", "libbytehook", nullptr
+            "qqbypass", "xalsace", "libnative-bypass", "libbytehook",
+            "qauxv", "io.github.qauxv", "libqauxv", "cc.ioctl", "qnotified", nullptr
         };
         for (int i = 0; sensitive[i]; i++) {
             if (strcasecmp(needle, sensitive[i]) == 0 || strstr(needle, sensitive[i])) {

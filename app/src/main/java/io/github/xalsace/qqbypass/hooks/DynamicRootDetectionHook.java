@@ -567,7 +567,9 @@ public class DynamicRootDetectionHook {
             || lower.contains("xposed") || lower.contains("lsposed")
             || lower.contains("frida") || lower.contains("/data/adb")
             || lower.contains("dexkit") || lower.contains("sandhook")
-            || lower.contains("yahfa") || lower.contains("liblspd");
+            || lower.contains("yahfa") || lower.contains("liblspd")
+            || lower.contains("qauxv") || lower.contains("qnotified")
+            || lower.contains("cc.ioctl") || lower.contains("libqauxv");
     }
 
     private static boolean isSuspiciousPackage(String pkg) {
@@ -584,6 +586,8 @@ public class DynamicRootDetectionHook {
             || lower.contains("top.canyie") || lower.contains("xalsace")
             || lower.contains("qqbypass") || lower.contains("dexkit")
             || lower.contains("bin.mt.plus") || lower.contains("youqu.android.todesk")
-            || lower.contains("com.netease.uuremote") || lower.contains("com.topjohnwu.magisk");
+            || lower.contains("com.netease.uuremote") || lower.contains("com.topjohnwu.magisk")
+            || lower.contains("io.github.qauxv") || lower.contains("qauxv")
+            || lower.contains("qnotified") || lower.contains("cc.ioctl");
     }
 }
