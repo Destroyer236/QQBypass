@@ -67,8 +67,8 @@ public class QQ950PatchHook {
      *
      * Tackles the root cause of kick/force-offline at all protocol & UI levels:
      * 1. MSF Process (com.tencent.mobileqq:MSF):
-     *    - SSORespHandler (t.a): drops MessageSvc.PushForceOffline, StatSvc.ReqMSFOffline, KickNT;
-     *      neutralizes fatal failCodes (-10103, -10104, -10105, -10005, -10106, -10135, -10136, 210, etc.)
+     *    - SSORespHandler (t.a): drops server push kicks (MessageSvc.PushForceOffline, StatSvc.ReqMSFOffline, KickNT)
+     *      without mutating normal SSO responses or breaking D2 session ticket refresh.
      *    - AccountCenter.p (b.p): blocks setAccountNoLogin to prevent deleting session key from memory.
      *    - PushManager.d (h.d): blocks unregistering push listeners for kicked UIN.
      *    - MsfSdkUtils.updateSimpleAccount: prevents writing logged-out status (_f) to disk.
@@ -76,7 +76,7 @@ public class QQ950PatchHook {
      * 2. Main Process (com.tencent.mobileqq):
      *    - MainService$MyErrorHandler: suppresses onKicked, onKickedAndClearToken, onKickedInternal, popupNotification.
      *    - MainService.kick: suppresses AppRuntime.KickParams dispatch.
-     *    - KickApiImpl: neutralizes NT kernel kick and forces shouldIgnoreNotifyMsfStatusChanged to true.
+     *    - KickApiImpl: neutralizes NT kernel kick while preserving normal onMsfStatusChanged notifications for message sync.
      *    - NTKickProcessor: suppresses entry a, worker b, and notification launch unconditionally.
      *    - UidServiceImpl: blocks kickToLoginPage and logoutWhenReqUidFail.
      *    - AppRuntime: blocks ntTriggerLogout, setKickIntent, setAutoLogin(false), and marks onReceiveUnhandledKickedMsg true.
@@ -86,7 +86,7 @@ public class QQ950PatchHook {
 
         // === Layer 1: MSF Network Protocol & Token Protection ===
 
-        // 1.1 MSF SSORespHandler (com.tencent.mobileqq.msf.core.t.a)
+        // 1.1 MSF SSORespHandler (com.tencent.mobileqq.msf.core.t.a): Drop server push kicks cleanly
         hookSafe("com.tencent.mobileqq.msf.core.t", "a", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -101,25 +101,19 @@ public class QQ950PatchHook {
                 if (fromServiceMsg == null) return;
                 try {
                     String cmd = (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd");
-                    int failCode = ((Number) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailCode")).intValue();
+                    if (cmd == null) return;
 
-                    // Drop push kicks completely
+                    // Drop server push kick commands cleanly without interfering with normal SSO responses or ticket reload
                     if ("MessageSvc.PushForceOffline".equals(cmd) ||
                         "StatSvc.ReqMSFOffline".equals(cmd) ||
                         "trpc.qq_new_tech.status_svc.StatusService.KickNT".equals(cmd)) {
-                        p.setResult(true);
+                        Class<?> ret = ((java.lang.reflect.Method) p.method).getReturnType();
+                        if (ret == boolean.class) {
+                            p.setResult(true);
+                        } else {
+                            p.setResult(null);
+                        }
                         XposedEntry.log("[MSFKickPatch] Dropped server push force-offline: " + cmd);
-                        return;
-                    }
-
-                    // Neutralize fatal SSO failCodes that purge credentials or trigger killProcess
-                    if (failCode == -10103 || failCode == -10104 || failCode == -10105 ||
-                        failCode == -10005 || failCode == -10106 || failCode == -10135 ||
-                        failCode == -10136 || failCode == -10001 || failCode == -10003 ||
-                        failCode == -10004 || failCode == -10006 || failCode == -12003 || failCode == 210) {
-                        XposedHelpers.callMethod(fromServiceMsg, "setBusinessFailCode", 1000);
-                        XposedHelpers.callMethod(fromServiceMsg, "setMsgSuccess");
-                        XposedEntry.log("[MSFKickPatch] Neutralized fatal SSO failCode " + failCode + " for cmd: " + cmd);
                     }
                 } catch (Throwable t) {
                     XposedEntry.log("[MSFKickPatch] Error inspecting MSF message: " + t.getMessage());
@@ -142,9 +136,12 @@ public class QQ950PatchHook {
         hookSafe("com.tencent.mobileqq.msf.core.push.h", "d", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length == 1 && p.args[0] instanceof String) {
-                    p.setResult(null);
-                    XposedEntry.log("[MSFKickPatch] Suppressed PushManager.d(unregister on kick) for UIN: " + p.args[0]);
+                if (p.method instanceof java.lang.reflect.Method) {
+                    Class<?>[] paramTypes = ((java.lang.reflect.Method) p.method).getParameterTypes();
+                    if (paramTypes.length == 1 && paramTypes[0] == String.class && p.args != null && p.args[0] instanceof String) {
+                        p.setResult(null);
+                        XposedEntry.log("[MSFKickPatch] Suppressed PushManager.d(unregister on kick) for UIN: " + p.args[0]);
+                    }
                 }
             }
         });
@@ -215,25 +212,13 @@ public class QQ950PatchHook {
             }
         });
 
-        // 2.3 KickApiImpl: Suppress NT Kernel kick listener and ignore MSF status offline changes
+        // 2.3 KickApiImpl: Suppress NT Kernel kick listener (preserve normal MsfStatusChanged notifications for message sync)
         final String kickApiCls = "com.tencent.qqnt.kernel.api.impl.KickApiImpl";
         hookSafe(kickApiCls, "kick", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 p.setResult(null);
                 XposedEntry.log("[KickPatch] Suppressed KickApiImpl.kick");
-            }
-        });
-        hookSafe(kickApiCls, "shouldIgnoreNotifyMsfStatusChanged", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(true);
-            }
-        });
-        hookSafe(kickApiCls, "isOpenIgnoreNotifyMsfStatusChanged", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(true);
             }
         });
 

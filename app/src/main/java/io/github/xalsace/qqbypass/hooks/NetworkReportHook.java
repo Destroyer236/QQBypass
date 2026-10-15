@@ -35,7 +35,7 @@ public class NetworkReportHook {
         "trpc.o3.mobile_security."
     };
 
-    // Targeted block: only pure telemetry, security scans, and risk-detection push commands
+    // Targeted block: only pure telemetry and security report commands
     private static final String[] TELEMETRY_BLOCK_COMMANDS = {
         "trpc.o3.report.Report.SsoReport",
         "trpc.o3.report.Report.SsoEventReport",
@@ -43,9 +43,6 @@ public class NetworkReportHook {
         "trpc.qq_security.",
         "OidbSvc.0xd79",
         "trpc.login.ecdh.report",
-        "trpc.qq_new_tech.status_svc.StatusService.KickNT",
-        "MessageSvc.PushForceOffline",
-        "StatSvc.ReqMSFOffline",
         "QQProtect.SecReport",
         "SecCheck.Report",
         "DevLockAuth.SecReport",
@@ -58,12 +55,18 @@ public class NetworkReportHook {
         XposedEntry.log("NetworkReportHook: Initializing targeted network telemetry and inspection hooks");
         // Layer 0: Targeted ChannelManager report interception with synthetic 1000 ACK
         hookChannelManager(lpparam);
-        // Layer 1: ChannelProxyExt fallback
-        hookChannelProxyExt(lpparam);
-        // Layer 2: MSFKernelBridge native packet choke point
-        hookMSFKernelBridge(lpparam);
-        // Layer 3: MsfCore SSO dispatcher
-        hookMsfCore(lpparam);
+
+        // Layer 1-3: Deep network/packet interception. Strictly guarded by ENABLE_NETWORK_INTERCEPT.
+        // Disabled by default so business traffic (message sending/receiving) remains completely unimpeded.
+        if (HookConfig.ENABLE_NETWORK_INTERCEPT) {
+            // Layer 1: ChannelProxyExt fallback
+            hookChannelProxyExt(lpparam);
+            // Layer 2: MSFKernelBridge native packet choke point
+            hookMSFKernelBridge(lpparam);
+            // Layer 3: MsfCore SSO dispatcher
+            hookMsfCore(lpparam);
+        }
+
         // Inspection checks (TuringFD /proc scanner neutralization)
         hookTuringFD(lpparam);
     }
