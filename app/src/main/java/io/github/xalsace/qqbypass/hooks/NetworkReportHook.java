@@ -28,12 +28,17 @@ import io.github.xalsace.qqbypass.utils.HookUtils;
  */
 public class NetworkReportHook {
 
-    // Only pure telemetry/report commands. Login-critical commands
-    // (wtlogin.*, turing, DeviceTokenV3) are intentionally NOT blocked -
-    // blocking them breaks the QQ login/registration handshake.
-    private static final String[] BLOCK_COMMANDS = {
-        "trpc.o3.report",
-        "trpc.o3.mobile_security",
+    // Strict Whitelist: never block or intercept critical protocol, session, and key-exchange commands
+    private static final String[] SAFE_WHITELIST = {
+        "trpc.o3.ecdh_access.",
+        "trpc.o3.full_social_lock_punish.",
+        "trpc.o3.mobile_security."
+    };
+
+    // Targeted block: only pure telemetry and risk detection reports
+    private static final String[] TELEMETRY_BLOCK_COMMANDS = {
+        "trpc.o3.report.Report.SsoReport",
+        "trpc.o3.report.Report.SsoEventReport",
         "trpc.ilive_cdn.report",
         "trpc.qq_security.",
         "OidbSvc.0xd79",
@@ -41,9 +46,10 @@ public class NetworkReportHook {
     };
 
     public static void hook(XC_LoadPackage.LoadPackageParam lpparam) {
-        // Do NOT intercept network requests; allow normal requests to proceed.
-        // Only handle inspection checks (TuringFD /proc scanner neutralization).
-        XposedEntry.log("NetworkReportHook: Network request interception disabled, running inspection hooks only");
+        XposedEntry.log("NetworkReportHook: Initializing targeted network telemetry and inspection hooks");
+        // Layer 0: Targeted ChannelManager report interception with synthetic 1000 ACK
+        hookChannelManager(lpparam);
+        // Inspection checks (TuringFD /proc scanner neutralization)
         hookTuringFD(lpparam);
     }
 
@@ -306,7 +312,15 @@ public class NetworkReportHook {
     private static boolean shouldBlock(String command) {
         if (command == null) return false;
 
-        for (String blockCmd : BLOCK_COMMANDS) {
+        // Whitelist check: strictly pass-through critical protocol and key-exchange commands
+        for (String whiteCmd : SAFE_WHITELIST) {
+            if (command.contains(whiteCmd)) {
+                return false;
+            }
+        }
+
+        // Targeted block: only pure telemetry and risk detection reports
+        for (String blockCmd : TELEMETRY_BLOCK_COMMANDS) {
             if (command.contains(blockCmd)) {
                 return true;
             }

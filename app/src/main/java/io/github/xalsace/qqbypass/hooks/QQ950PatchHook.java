@@ -46,6 +46,9 @@ public class QQ950PatchHook {
 
         // Tier 3: Face ID & Multi-Factor Authentication (HuiYan SDK & TuringFaceDefender)
         hookFaceRecognitionAndMFA(lpparam);
+
+        // Tier 4: trpc.o3.* telemetry & security detection targeted sanitization
+        hookO3SecurityAndTelemetry(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -169,7 +172,10 @@ public class QQ950PatchHook {
         // Suppress ChannelReport methods
         final String crCls = "com.tencent.mobileqq.channel.ChannelReport";
         if (HookUtils.classExists(crCls)) {
-            String[] reportMethods = {"reportInitTime", "reportTZ", "reportLoadFixedSo"};
+            String[] reportMethods = {
+                "reportInitTime", "reportTZ", "reportLoadFixedSo",
+                "reportGoogleAttestation", "reportStep"
+            };
             for (String rm : reportMethods) {
                 HookUtils.hookAllMethods(crCls, rm, new XC_MethodHook() {
                     @Override
@@ -178,6 +184,32 @@ public class QQ950PatchHook {
                     }
                 });
             }
+
+            // Suppress eventReport (0df00071646 SsoEventReport)
+            HookUtils.hookAllMethods(crCls, "eventReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                    XposedEntry.log("[ChannelPatch] Neutralized ChannelReport.eventReport");
+                }
+            });
+
+            // Neutralize commonReport and batchCommonReport for sensitive telemetry attaIds
+            XC_MethodHook attaFilterHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
+                        String attaId = (String) p.args[0];
+                        if ("0df00071646".equals(attaId) || "00e00075618".equals(attaId) ||
+                            "02f00075617".equals(attaId) || "0b500076578".equals(attaId)) {
+                            p.setResult(null);
+                            XposedEntry.log("[ChannelPatch] Suppressed ChannelReport for attaId: " + attaId);
+                        }
+                    }
+                }
+            };
+            HookUtils.hookAllMethods(crCls, "commonReport", attaFilterHook);
+            HookUtils.hookAllMethods(crCls, "batchCommonReport", attaFilterHook);
         }
     }
 
@@ -560,6 +592,245 @@ public class QQ950PatchHook {
                 }
             });
             XposedEntry.log("[FacePatch] Hooked TuringResultCacheEntity.setTuringEnvErrorStr");
+        }
+    }
+
+    // ============ Tier 4: trpc.o3.* telemetry & security detection targeted sanitization ============
+
+    /**
+     * Tier 4: Targeted Sanitization for trpc.o3.* Telemetry & QQProtect QSec Detection.
+     *
+     * Reverse engineering findings:
+     * 1. trpc.o3.ecdh_access.* is MSF's core ECDH key-exchange protocol (MUST NOT BE BLOCKED).
+     * 2. trpc.o3.full_social_lock_punish.* is the account verification/unlock channel (MUST NOT BE BLOCKED).
+     * 3. trpc.o3.report.Report.SsoReport & SsoEventReport carry telemetry:
+     *    - "0df00071646" (sign_report): reports signature mismatch, hook detection, and runtime tampering.
+     *    - "00e00075618" (env_detect): reports fake location, mock provider, time zone anomalies.
+     *    - "02f00075617" (google_attestation): reports Google Play integrity/attestation checks.
+     *    - "0b500076578" (sdk_init): reports FEKit load times and sleepCheckResult.
+     * 4. qqprotect.qsec.a.e gathers 33 system parameters into a JSON dictionary (adb, accessibility, sensors).
+     * 5. MainProcess2Fe.b checks display refresh rate <= 30fps, displayId > 0, scrcpy, minicap and sends display_report.
+     * 6. QSecChannelImpl sends feEnvReport ("face_detect"), feCameraActionReport ("camera_detect"), and collectReport.
+     */
+    private static void hookO3SecurityAndTelemetry(XC_LoadPackage.LoadPackageParam lpparam) {
+        // 1. Hook com.tencent.qqprotect.report.O3Report
+        final String o3ReportCls = "com.tencent.qqprotect.report.O3Report";
+        if (HookUtils.classExists(o3ReportCls)) {
+            // Neutralize O3Report.d(String, String, String) - sign_report (attaId = "0df00071646")
+            HookUtils.hookAllMethods(o3ReportCls, "d", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                    XposedEntry.log("[O3Patch] Neutralized O3Report.d (sign_report / integrity telemetry)");
+                }
+            });
+
+            // Neutralize O3Report.b(String, List, String) - env_detect (attaId = "00e00075618")
+            HookUtils.hookAllMethods(o3ReportCls, "b", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                    XposedEntry.log("[O3Patch] Neutralized O3Report.b (env_detect telemetry)");
+                }
+            });
+
+            // Neutralize O3Report.c(String, List) - fakeLocationReport / nearLocationReport
+            HookUtils.hookAllMethods(o3ReportCls, "c", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                    XposedEntry.log("[O3Patch] Neutralized O3Report.c (location anomaly report)");
+                }
+            });
+
+            // Sanitize / Fulfill O3Report.a(String, ArrayList, ProtoUtils.TroopProtocolObserver)
+            HookUtils.hookAllMethods(o3ReportCls, "a", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 3 && p.args[2] != null) {
+                        try {
+                            XposedHelpers.callMethod(p.args[2], "onResult", 0, true, new byte[0]);
+                        } catch (Throwable ignored) {
+                            try {
+                                XposedHelpers.callMethod(p.args[2], "onResult", 0, new byte[0]);
+                            } catch (Throwable ignored2) { }
+                        }
+                    }
+                    p.setResult(null);
+                    String attaId = (p.args != null && p.args.length > 0 && p.args[0] != null) ? p.args[0].toString() : "unknown";
+                    XposedEntry.log("[O3Patch] Intercepted and fulfilled O3Report.a (attaId=" + attaId + ")");
+                }
+            });
+        }
+
+        // 2. Hook O3ReportApiImpl & O3NotifySecApiImpl
+        HookUtils.hookAllMethods("com.tencent.qqprotect.qsec.api.impl.O3ReportApiImpl", "report", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+            }
+        });
+        HookUtils.hookAllMethods("com.tencent.qqprotect.qsec.api.impl.O3ReportApiImpl", "reportCommon", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+            }
+        });
+        HookUtils.hookAllMethods("com.tencent.qqprotect.qsec.api.impl.O3NotifySecApiImpl", "sendMessage", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+            }
+        });
+
+        // 3. Hook com.tencent.qqprotect.qsec.a (Device profile collector)
+        final String qsecACls = "com.tencent.qqprotect.qsec.a";
+        if (HookUtils.classExists(qsecACls)) {
+            // Sanitize collectInfo JSON: a.e(Context, ArrayList, ArrayList, ArrayList)
+            HookUtils.hookAllMethods(qsecACls, "e", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.getResult() instanceof String) {
+                        String raw = (String) p.getResult();
+                        try {
+                            org.json.JSONObject json = new org.json.JSONObject(raw);
+                            json.put("10", "none"); // sys.usb.config: hide adb
+                            json.put("30", 0);      // accessibility enabled: false
+                            json.put("31", "[]");   // installed accessibility services: empty
+                            json.put("32", "[]");   // enabled accessibility services: empty
+                            json.put("14", "CK_N"); // clean indicator
+                            p.setResult(json.toString());
+                            XposedEntry.log("[O3Patch] Sanitized qqprotect.qsec.a.e device profile JSON");
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            });
+
+            // a.n(): returns sys.usb.config
+            HookUtils.hookAllMethods(qsecACls, "n", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult("none");
+                }
+            });
+
+            // a.f(Context): enabled accessibility services
+            HookUtils.hookAllMethods(qsecACls, "f", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult("[]");
+                }
+            });
+
+            // a.g(Context): installed accessibility services
+            HookUtils.hookAllMethods(qsecACls, "g", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult("[]");
+                }
+            });
+        }
+
+        // 4. Hook com.tencent.mobileqq.dt.app.MainProcess2Fe (Remote control / scrcpy / minicap / face_detect)
+        final String mp2feCls = "com.tencent.mobileqq.dt.app.MainProcess2Fe";
+        if (HookUtils.classExists(mp2feCls)) {
+            // MainProcess2Fe.b(AppInterface, dt.api.a): display_report detecting scrcpy/minicap/fps<=30
+            HookUtils.hookAllMethods(mp2feCls, "b", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
+                        try {
+                            XposedHelpers.callMethod(p.args[1], "onResult", 0, new byte[0]);
+                        } catch (Throwable ignored) { }
+                    }
+                    p.setResult(null);
+                    XposedEntry.log("[O3Patch] Neutralized MainProcess2Fe.b display_report");
+                }
+            });
+
+            // MainProcess2Fe.k(AppInterface, String cmd, JSONObject data, dt.api.a callback)
+            HookUtils.hookAllMethods(mp2feCls, "k", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 2 && p.args[1] instanceof String) {
+                        String cmd = (String) p.args[1];
+                        if ("face_detect".equals(cmd) || "camera_detect".equals(cmd) || "display_report".equals(cmd)) {
+                            if (p.args.length >= 4 && p.args[3] != null) {
+                                try {
+                                    XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
+                                } catch (Throwable ignored) { }
+                            }
+                            if (p.args.length >= 3 && p.args[2] instanceof org.json.JSONObject) {
+                                org.json.JSONObject data = (org.json.JSONObject) p.args[2];
+                                if (data.has("content")) {
+                                    String c = data.optString("content", "");
+                                    if (c.contains("risk") || c.contains("hook") || c.contains("root") || c.contains("fail")) {
+                                        data.put("content", "{}");
+                                    }
+                                }
+                            }
+                            XposedEntry.log("[O3Patch] Sanitized MainProcess2Fe.k (" + cmd + ")");
+                        }
+                    }
+                }
+            });
+        }
+
+        // 5. Hook com.tencent.mobileqq.dt.api.impl.QSecChannelImpl
+        final String qsecChannelCls = "com.tencent.mobileqq.dt.api.impl.QSecChannelImpl";
+        if (HookUtils.classExists(qsecChannelCls)) {
+            // feEnvReport(AppInterface, String key, String content, dt.api.a callback)
+            HookUtils.hookAllMethods(qsecChannelCls, "feEnvReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 3) {
+                        String content = p.args[2] != null ? p.args[2].toString() : null;
+                        if (content != null && (content.contains("risk") || content.contains("hook") || content.contains("root") || content.contains("fail"))) {
+                            p.args[2] = "{}";
+                        }
+                    }
+                    if (p.args != null && p.args.length >= 4 && p.args[3] != null) {
+                        try {
+                            XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            });
+
+            // feCameraActionReport
+            HookUtils.hookAllMethods(qsecChannelCls, "feCameraActionReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 8 && p.args[7] != null) {
+                        try {
+                            XposedHelpers.callMethod(p.args[7], "onResult", 0, new byte[0]);
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            });
+
+            // collectReport
+            HookUtils.hookAllMethods(qsecChannelCls, "collectReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 3 && p.args[2] instanceof String) {
+                        try {
+                            org.json.JSONObject json = new org.json.JSONObject((String) p.args[2]);
+                            json.put("10", "none");
+                            json.put("30", 0);
+                            json.put("31", "[]");
+                            json.put("32", "[]");
+                            json.put("14", "CK_N");
+                            p.args[2] = json.toString();
+                        } catch (Throwable ignored) { }
+                    }
+                    if (p.args != null && p.args.length >= 4 && p.args[3] != null) {
+                        try {
+                            XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            });
         }
     }
 }
