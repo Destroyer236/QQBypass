@@ -227,7 +227,26 @@ public class DynamicRootDetectionHook {
                             String code = (String) de.robv.android.xposed.XposedHelpers.callMethod(event, "getCode");
                             if (code != null) {
                                 String lower = code.toLowerCase();
-                                if (lower.contains("root") || lower.contains("security") || lower.contains("su") || lower.contains("risk") || lower.contains("check")) {
+                                // Whitelist standard UI, messaging, NT, lifecycle, and network performance events
+                                if (lower.startsWith("actnt") || lower.startsWith("actmain") || lower.startsWith("actmsg")
+                                        || lower.startsWith("actaio") || lower.startsWith("actavif") || lower.startsWith("actperf")
+                                        || lower.startsWith("actsync") || lower.startsWith("actlogin") || lower.startsWith("actfriend")
+                                        || lower.startsWith("actgroup") || lower.startsWith("actc2c") || lower.startsWith("actfile")
+                                        || lower.startsWith("actmini") || lower.startsWith("actweb") || lower.startsWith("actvideo")
+                                        || lower.startsWith("actalbum") || lower.startsWith("actcamera") || lower.startsWith("actguild")) {
+                                    return;
+                                }
+
+                                // Targeted security / root event match
+                                boolean isSecurityRisk = lower.contains("root") || lower.contains("security") || lower.contains("jailbreak")
+                                        || lower.contains("xposed") || lower.contains("magisk") || lower.contains("lsposed")
+                                        || lower.contains("frida") || lower.contains("substrate") || lower.contains("superuser")
+                                        || lower.contains("secrisk") || lower.contains("risk_check") || lower.contains("root_check")
+                                        || lower.contains("env_check") || lower.contains("danger") || lower.contains("busybox")
+                                        || lower.equals("su") || lower.startsWith("su_") || lower.endsWith("_su") || lower.contains("_su_")
+                                        || lower.contains("/su") || lower.contains("su/");
+
+                                if (isSecurityRisk) {
                                     Class<?> eventResultCls = de.robv.android.xposed.XposedHelpers.findClassIfExists("com.tencent.beacon.event.open.EventResult", event.getClass().getClassLoader());
                                     if (eventResultCls != null) {
                                         Object successResult = de.robv.android.xposed.XposedHelpers.newInstance(eventResultCls, 0, 0L, "ok");

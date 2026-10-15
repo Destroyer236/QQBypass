@@ -591,17 +591,27 @@ public class QQ950PatchHook {
 
             HookUtils.hookAllMethods(tfdClass, "activeSign", new XC_MethodHook() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    param.setResult(0L);
-                    XposedEntry.log("[FacePatch] Preempted TuringFaceDefender.activeSign -> 0L");
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof Number) {
+                        long code = ((Number) res).longValue();
+                        if (code != 0L) {
+                            XposedEntry.log("[FacePatch] TuringFaceDefender.activeSign returned " + code + ", normalizing to 0L");
+                            param.setResult(0L);
+                        } else {
+                            XposedEntry.log("[FacePatch] TuringFaceDefender.activeSign succeeded natively -> 0L");
+                        }
+                    }
                 }
             });
 
             HookUtils.hookAllMethods(tfdClass, "getDeviceInfo", new XC_MethodHook() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    param.setResult(new org.json.JSONObject());
-                    XposedEntry.log("[FacePatch] Sanitized TuringFaceDefender.getDeviceInfo -> safe empty JSON");
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.getResult() == null) {
+                        param.setResult(new org.json.JSONObject());
+                        XposedEntry.log("[FacePatch] Sanitized null TuringFaceDefender.getDeviceInfo -> safe empty JSON");
+                    }
                 }
             });
 
@@ -631,6 +641,8 @@ public class QQ950PatchHook {
                             if (signMsg == null || signMsg.isEmpty()) {
                                 XposedHelpers.setObjectField(result, "signMsg", safeSign);
                                 XposedEntry.log("[FacePatch] Sanitized TuringFaceDefender.signData signMsg: null -> valid safe token");
+                            } else {
+                                XposedEntry.log("[FacePatch] Preserved genuine TuringFaceDefender.signData signMsg (len=" + signMsg.length() + ")");
                             }
                         } catch (Throwable t) {
                             try {
@@ -942,13 +954,25 @@ public class QQ950PatchHook {
             if (skepoCls != null) {
                 HookUtils.hookAllMethods(jd1ejClass, "b", new XC_MethodHook() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        try {
-                            Object safeSkEpO = XposedHelpers.newInstance(skepoCls);
-                            XposedHelpers.setIntField(safeSkEpO, "a", 0);
-                            XposedHelpers.setObjectField(safeSkEpO, "b", "");
-                            param.setResult(safeSkEpO);
-                        } catch (Throwable ignored) {}
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        Object result = param.getResult();
+                        if (result != null) {
+                            try {
+                                int code = XposedHelpers.getIntField(result, "a");
+                                if (code != 0) {
+                                    XposedHelpers.setIntField(result, "a", 0);
+                                    XposedEntry.log("[FacePatch] JD1Ej.b returned code " + code + " -> sanitized to 0");
+                                }
+                            } catch (Throwable ignored) {}
+                        } else {
+                            try {
+                                Object safeSkEpO = XposedHelpers.newInstance(skepoCls);
+                                XposedHelpers.setIntField(safeSkEpO, "a", 0);
+                                XposedHelpers.setObjectField(safeSkEpO, "b", "");
+                                param.setResult(safeSkEpO);
+                                XposedEntry.log("[FacePatch] Constructed safe SkEpO for null JD1Ej.b");
+                            } catch (Throwable ignored) {}
+                        }
                     }
                 });
             }
