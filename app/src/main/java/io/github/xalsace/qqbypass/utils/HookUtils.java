@@ -92,6 +92,21 @@ public class HookUtils {
     }
 
     /**
+     * Hook all constructors of class
+     */
+    public static void hookAllConstructors(String className, XC_MethodHook callback) {
+        try {
+            Class<?> clazz = XposedHelpers.findClass(className, HookConfig.getClassLoader());
+            XposedBridge.hookAllConstructors(clazz, callback);
+            log("Hooked all constructors: " + className);
+        } catch (Throwable t) {
+            if (HookConfig.VERBOSE_LOGGING) {
+                log("Failed to hook all constructors: " + className + " - " + t.getMessage());
+            }
+        }
+    }
+
+    /**
      * Check if class exists
      */
     public static boolean classExists(String className) {

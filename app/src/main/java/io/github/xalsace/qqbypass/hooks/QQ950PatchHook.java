@@ -49,6 +49,9 @@ public class QQ950PatchHook {
 
         // Tier 4: trpc.o3.* telemetry & security detection targeted sanitization
         hookO3SecurityAndTelemetry(lpparam);
+
+        // Tier 5: Clean detection sources at the origin (Location, Sensors, Screen/Display, ADB/Accessibility)
+        hookDetectionSourcesAtOrigin(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -828,6 +831,215 @@ public class QQ950PatchHook {
                         try {
                             XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
                         } catch (Throwable ignored) { }
+                    }
+                }
+            });
+        }
+    }
+
+    // ============ Tier 5: Clean detection sources at the origin ============
+
+    /**
+     * Tier 5: Direct Sanitization at the Detection Source.
+     *
+     * Cleans data at the moment of generation so that all downstream consumers,
+     * UI components, and telemetry collectors observe authentic, healthy values:
+     * 1. Location detection source:
+     *    - TencentLocation.getFakeReason() & isMockGps() forced to 0 (genuine).
+     *    - SosoLocation.fakeReason forced to 0 in constructors & clone.
+     *    - LbsManagerService.notifySec ensures fakeReason = 0 (prevents O3Report.c 10002/10003 triggers).
+     *    - android.location.Location.isFromMockProvider() & isMock() forced to false.
+     * 2. Sensor detection source:
+     *    - qqprotect.qsec.b.b() (accelerometer): synthesizes realistic gravity vector if missing/unregistered.
+     *    - qqprotect.qsec.c.b() (gyroscope): synthesizes realistic micro-tremor reading if missing/unregistered.
+     *    - qqprotect.qsec.d.b() (light sensor): synthesizes 150.0 lux indoor ambient reading if <= 0.
+     * 3. Screen/Display & Remote Control detection source:
+     *    - Display.getOwnerPackageName(): returns null (hides screen capture apps).
+     *    - Display.getName(): sanitizes scrcpy/minicap/virtual screen names to "Built-in Screen".
+     *    - Display.getRefreshRate(): normalizes <= 30fps emulator rates to 60.0f.
+     *    - Ganliang.g(): neutralizes forced FLAG_SECURE (8192) to eliminate black screen issues.
+     *    - Ganliang.f(): suppresses Cmd0x9747Req display package reporting.
+     * 4. APK lastModified detection source:
+     *    - qqprotect.qsec.a.o(): guarantees valid baseline APK timestamp.
+     */
+    private static void hookDetectionSourcesAtOrigin(XC_LoadPackage.LoadPackageParam lpparam) {
+        // 1. Location Detection Source: TencentLocation & SosoLocation
+        String[] tencentLocClasses = {
+            "com.tencent.map.geolocation.TencentLocation",
+            "com.tencent.map.geolocation.internal.TencentExtraKeys"
+        };
+        for (String cls : tencentLocClasses) {
+            if (!HookUtils.classExists(cls)) continue;
+            HookUtils.hookAllMethods(cls, "getFakeReason", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(0); // 0 = genuine, zero anomaly
+                }
+            });
+            HookUtils.hookAllMethods(cls, "isMockGps", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(0);
+                }
+            });
+        }
+
+        final String sosoLocCls = "com.tencent.mobileqq.soso.location.data.SosoLocation";
+        if (HookUtils.classExists(sosoLocCls)) {
+            HookUtils.hookAllConstructors(sosoLocCls, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    try {
+                        XposedHelpers.setIntField(p.thisObject, "fakeReason", 0);
+                    } catch (Throwable ignored) { }
+                }
+            });
+
+            HookUtils.hookAllMethods(sosoLocCls, "clone", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.getResult() != null) {
+                        try {
+                            XposedHelpers.setIntField(p.getResult(), "fakeReason", 0);
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            });
+        }
+
+        final String lbsMgrCls = "com.tencent.mobileqq.soso.location.LbsManagerService";
+        if (HookUtils.classExists(lbsMgrCls)) {
+            HookUtils.hookAllMethods(lbsMgrCls, "notifySec", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
+                        try {
+                            Object sosoLbsInfo = p.args[1];
+                            Object sosoLocation = XposedHelpers.getObjectField(sosoLbsInfo, "mLocation");
+                            if (sosoLocation != null) {
+                                XposedHelpers.setIntField(sosoLocation, "fakeReason", 0);
+                            }
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            });
+        }
+
+        // Framework Location: isFromMockProvider & isMock
+        HookUtils.hookAllMethods("android.location.Location", "isFromMockProvider", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        HookUtils.hookAllMethods("android.location.Location", "isMock", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+
+        // 2. Physical Sensor Detection Source: qqprotect.qsec.b, c, d
+        final String qsecBCls = "com.tencent.qqprotect.qsec.b";
+        if (HookUtils.classExists(qsecBCls)) {
+            HookUtils.hookAllMethods(qsecBCls, "b", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    Object res = p.getResult();
+                    if (res == null || "-1".equals(res) || "".equals(res) || "null".equals(res)) {
+                        p.setResult("{x=0.231, y=9.765, z=0.412}");
+                        XposedEntry.log("[DetectionSource] Cleaned qsec.b accelerometer -> realistic reading");
+                    }
+                }
+            });
+        }
+
+        final String qsecCCls = "com.tencent.qqprotect.qsec.c";
+        if (HookUtils.classExists(qsecCCls)) {
+            HookUtils.hookAllMethods(qsecCCls, "b", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    Object res = p.getResult();
+                    if (res == null || "-1".equals(res) || "".equals(res) || "null".equals(res)) {
+                        p.setResult("{x=0.001, y=0.002, z=0.001}");
+                        XposedEntry.log("[DetectionSource] Cleaned qsec.c gyroscope -> realistic reading");
+                    }
+                }
+            });
+        }
+
+        final String qsecDCls = "com.tencent.qqprotect.qsec.d";
+        if (HookUtils.classExists(qsecDCls)) {
+            HookUtils.hookAllMethods(qsecDCls, "b", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    Object res = p.getResult();
+                    if (res instanceof Number && ((Number) res).floatValue() <= 0.0f) {
+                        p.setResult(150.0f);
+                        XposedEntry.log("[DetectionSource] Cleaned qsec.d light sensor -> 150.0 lux");
+                    }
+                }
+            });
+        }
+
+        // 3. Screen / Display & Remote Control Detection Source: Display & Ganliang
+        HookUtils.hookAllMethods("android.view.Display", "getOwnerPackageName", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+            }
+        });
+
+        HookUtils.hookAllMethods("android.view.Display", "getName", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.getResult() instanceof String) {
+                    String name = (String) p.getResult();
+                    if (name.contains("scrcpy") || name.contains("minicap") || name.contains("virtual") || name.contains("overlay")) {
+                        p.setResult("Built-in Screen");
+                    }
+                }
+            }
+        });
+
+        HookUtils.hookAllMethods("android.view.Display", "getRefreshRate", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.getResult() instanceof Number && ((Number) p.getResult()).floatValue() <= 30.0f) {
+                    p.setResult(60.0f);
+                }
+            }
+        });
+
+        final String ganliangCls = "com.tencent.qqprotect.ganliang.Ganliang";
+        if (HookUtils.classExists(ganliangCls)) {
+            // Prevent imposing FLAG_SECURE (8192) on activity window
+            HookUtils.hookAllMethods(ganliangCls, "g", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                    XposedEntry.log("[DetectionSource] Neutralized Ganliang.g (prevented FLAG_SECURE)");
+                }
+            });
+
+            // Suppress Cmd0x9747Req display package report
+            HookUtils.hookAllMethods(ganliangCls, "f", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                    XposedEntry.log("[DetectionSource] Suppressed Ganliang.f (Cmd0x9747Req report)");
+                }
+            });
+        }
+
+        // 4. SourceDir LastModified Detection Source
+        final String qsecACls = "com.tencent.qqprotect.qsec.a";
+        if (HookUtils.classExists(qsecACls)) {
+            HookUtils.hookAllMethods(qsecACls, "o", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.getResult() instanceof Number && ((Number) p.getResult()).longValue() <= 0L) {
+                        p.setResult(1727000000000L);
                     }
                 }
             });
