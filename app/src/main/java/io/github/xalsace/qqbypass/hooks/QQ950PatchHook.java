@@ -55,6 +55,9 @@ public class QQ950PatchHook {
 
         // Tier 6: Dynamic SO (txlib / txPttlib) and MQP Integrity Strike Protection
         hookTxlibAndPttProtection(lpparam);
+
+        // Tier 7: RFix & Hotfix Failure Sanitization and Telemetry Drop
+        hookRFixFailureSanitization(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -1352,6 +1355,230 @@ public class QQ950PatchHook {
                         XposedEntry.log("[TxLibPatch] Suppressed SO load telemetry: " + tag);
                     }
                 }
+            }
+        });
+    }
+
+    /**
+     * Tier 7: RFix & Hotfix Failure Sanitization and Telemetry Drop.
+     *
+     * Directly addresses the root-cause of account kick / force-offline:
+     * When bytecode/signature verification on hotfix fails with ERROR_LOAD_PATCH_VERSION_DEX_MD5_MISMATCH (-8),
+     * RFix quality reporter sends LOAD_RESULT_PATCH_LOADER_FAIL with event_code_ext=-8 to ATTA (attaid=0ac00056535)
+     * and WeData (groupId=gwe0003255039a, streamId=swe000017406d5), directly triggering server-side forced kick!
+     *
+     * Defenses implemented:
+     * 1. RFixLoadResult: force isLoaderSuccess() and isSuccess() to true.
+     * 2. PatchLoadEngineBase: in tryLoadPatchInternal/loadPatch, if result is LOAD_RESULT_PATCH_LOADER_FAIL,
+     *    rewrite result to LOAD_RESULT_SUCCESS and subResult to 0.
+     * 3. com.tencent.rfix.lib.reporter.e:
+     *    - method d & e: drop any report where eventSuccess is false or eventCode contains "FAIL" or eventCodeExt is "-8".
+     *    - method a, b, c: drop if rFixLoadResult failed.
+     * 4. com.tencent.rfix.lib.atta.RFixATTASwitch:
+     *    - method a(): return false (turns off ATTA/WeData network delivery for RFix).
+     * 5. com.tencent.rfix.lib.atta.e:
+     *    - method d(Map): drop any map where event_code contains "FAIL" or attaid is "0ac00056535" with failure.
+     * 6. com.tencent.rfix.lib.wedata.base.d:
+     *    - method c(Map, String[]): drop failure maps.
+     * 7. com.tencent.rfix.lib.bugly.a:
+     *    - method a: ensure D4 is never set to "0" and patch_tag_flag_0_ is never written.
+     * 8. com.tencent.rfix.loader.safemode.RFixSafeModeKeeper:
+     *    - checkSafeMode: return 0 (RESULT_OK).
+     *    - reachP1Limit, reachP2Limit, reachP3Limit: return false.
+     *    - writeLastCrashFile: drop.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void hookRFixFailureSanitization(XC_LoadPackage.LoadPackageParam lpparam) {
+        XposedEntry.log("[Tier7] Initializing RFix & Hotfix failure sanitization and telemetry drop");
+
+        // 1. RFixLoadResult: Force isLoaderSuccess and isSuccess to true
+        hookSafe("com.tencent.rfix.loader.entity.RFixLoadResult", "isLoaderSuccess", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+            }
+        });
+        hookSafe("com.tencent.rfix.loader.entity.RFixLoadResult", "isSuccess", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+            }
+        });
+
+        // 2. PatchLoadEngineBase: neutralize LOAD_RESULT_PATCH_LOADER_FAIL in tryLoadPatchInternal
+        hookSafe("com.tencent.rfix.loader.engine.PatchLoadEngineBase", "tryLoadPatchInternal", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 0 && p.args[0] != null) {
+                    Object loadResult = p.args[0];
+                    try {
+                        Object resultObj = XposedHelpers.getObjectField(loadResult, "result");
+                        if (resultObj != null && resultObj.toString().contains("FAIL")) {
+                            Class enumCls = resultObj.getClass();
+                            Object successEnum = Enum.valueOf(enumCls, "LOAD_RESULT_SUCCESS");
+                            XposedHelpers.setObjectField(loadResult, "result", successEnum);
+                            XposedHelpers.setIntField(loadResult, "subResult", 0);
+                            XposedEntry.log("[RFixPatch] Neutralized PatchLoadEngineBase failure result -> LOAD_RESULT_SUCCESS");
+                        }
+                    } catch (Throwable t) {
+                        XposedEntry.log("[RFixPatch] Error neutralizing loadResult: " + t.getMessage());
+                    }
+                }
+            }
+        });
+
+        // 3. RFix Quality Reporter: Drop failure reports in com.tencent.rfix.lib.reporter.e
+        XC_MethodHook dropFailureReportHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args == null || p.args.length < 9) return;
+                try {
+                    // Check z (eventSuccess) at index 6
+                    boolean eventSuccess = true;
+                    if (p.args[6] instanceof Boolean) {
+                        eventSuccess = (Boolean) p.args[6];
+                    }
+                    // Check str6 (eventCode) at index 7
+                    String eventCode = p.args[7] != null ? p.args[7].toString() : null;
+                    // Check str7 (eventCodeExt) at index 8
+                    String eventCodeExt = p.args[8] != null ? p.args[8].toString() : null;
+
+                    if (!eventSuccess || (eventCode != null && eventCode.contains("FAIL")) ||
+                        "-8".equals(eventCodeExt) || "LOAD_RESULT_PATCH_LOADER_FAIL".equals(eventCode)) {
+                        p.setResult(true);
+                        XposedEntry.log("[RFixPatch] Dropped RFix failure telemetry report: eventCode=" + eventCode + ", codeExt=" + eventCodeExt);
+                    }
+                } catch (Throwable t) {
+                    XposedEntry.log("[RFixPatch] Error filtering RFix reporter: " + t.getMessage());
+                }
+            }
+        };
+        hookSafe("com.tencent.rfix.lib.reporter.e", "d", lpparam, dropFailureReportHook);
+        hookSafe("com.tencent.rfix.lib.reporter.e", "e", lpparam, dropFailureReportHook);
+
+        // Drop caller methods in e: a, b
+        hookSafe("com.tencent.rfix.lib.reporter.e", "a", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 1 && p.args[1] != null) {
+                    try {
+                        boolean isSuccess = (Boolean) XposedHelpers.callMethod(p.args[1], "isLoaderSuccess");
+                        if (!isSuccess) {
+                            p.setResult(null);
+                            XposedEntry.log("[RFixPatch] Dropped com.tencent.rfix.lib.reporter.e.a failure report");
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            }
+        });
+        hookSafe("com.tencent.rfix.lib.reporter.e", "b", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 1 && p.args[1] != null) {
+                    try {
+                        boolean isSuccess = (Boolean) XposedHelpers.callMethod(p.args[1], "isLoaderSuccess");
+                        if (!isSuccess) {
+                            p.setResult(true);
+                            XposedEntry.log("[RFixPatch] Dropped com.tencent.rfix.lib.reporter.e.b failure report");
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            }
+        });
+
+        // 4. RFix ATTASwitch: Force disable RFix ATTA/WeData network reporting
+        hookSafe("com.tencent.rfix.lib.atta.RFixATTASwitch", "a", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+
+        // 5. RFix ATTA Database & Upload Helper (com.tencent.rfix.lib.atta.e)
+        hookSafe("com.tencent.rfix.lib.atta.e", "d", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 0 && p.args[0] instanceof java.util.Map) {
+                    java.util.Map map = (java.util.Map) p.args[0];
+                    Object eventCode = map.get("event_code");
+                    Object eventSuccess = map.get("event_success");
+                    Object attaid = map.get("attaid");
+                    if ("0ac00056535".equals(attaid) && ("0".equals(eventSuccess) || (eventCode != null && eventCode.toString().contains("FAIL")))) {
+                        p.setResult(true);
+                        XposedEntry.log("[RFixPatch] Dropped ATTA poison failure record from atta.e.d");
+                    }
+                }
+            }
+        });
+
+        // 6. WeData Reporter (com.tencent.rfix.lib.wedata.base.d)
+        hookSafe("com.tencent.rfix.lib.wedata.base.d", "c", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 0 && p.args[0] instanceof java.util.Map) {
+                    java.util.Map map = (java.util.Map) p.args[0];
+                    Object eventCode = map.get("event_code");
+                    Object eventSuccess = map.get("event_success");
+                    if ("0".equals(eventSuccess) || (eventCode != null && eventCode.toString().contains("FAIL"))) {
+                        p.setResult(true);
+                        XposedEntry.log("[RFixPatch] Dropped WeData failure report in wedata.base.d.c");
+                    }
+                }
+            }
+        });
+
+        // 7. RFix Bugly tag initializer (com.tencent.rfix.lib.bugly.a)
+        hookSafe("com.tencent.rfix.lib.bugly.a", "a", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 1 && p.args[1] != null) {
+                    try {
+                        boolean isSuccess = (Boolean) XposedHelpers.callMethod(p.args[1], "isLoaderSuccess");
+                        if (!isSuccess) {
+                            p.setResult(null);
+                            XposedEntry.log("[RFixPatch] Suppressed Bugly updatePatchTag for failed hotfix");
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            }
+        });
+
+        // 8. RFix SafeMode Keeper (com.tencent.rfix.loader.safemode.RFixSafeModeKeeper)
+        final String safeModeKeeperCls = "com.tencent.rfix.loader.safemode.RFixSafeModeKeeper";
+        hookSafe(safeModeKeeperCls, "checkSafeMode", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(0); // RESULT_OK
+            }
+        });
+        hookSafe(safeModeKeeperCls, "reachP1Limit", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe(safeModeKeeperCls, "reachP2Limit", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe(safeModeKeeperCls, "reachP3Limit", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe(safeModeKeeperCls, "writeLastCrashFile", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+            }
+        });
+        hookSafe(safeModeKeeperCls, "handlePatchCrash", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
             }
         });
     }

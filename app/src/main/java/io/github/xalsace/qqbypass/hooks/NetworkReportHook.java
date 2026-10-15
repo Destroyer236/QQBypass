@@ -48,7 +48,10 @@ public class NetworkReportHook {
         "StatSvc.ReqMSFOffline",
         "QQProtect.SecReport",
         "SecCheck.Report",
-        "DevLockAuth.SecReport"
+        "DevLockAuth.SecReport",
+        "0ac00056535",
+        "LOAD_RESULT_PATCH_LOADER_FAIL",
+        "trpc.atta."
     };
 
     public static void hook(XC_LoadPackage.LoadPackageParam lpparam) {
