@@ -5,6 +5,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -26,20 +27,32 @@ import io.github.xalsace.qqbypass.utils.HookUtils;
  */
 public class QQ950PatchHook {
 
+    private static volatile String sLastKnownDeviceToken = "0123456789abcdef0123456789abcdef01234567";
+    private static volatile String sLastKnownOpenIdTicket = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    public static String getOrGenerateDeviceToken() {
+        if (sLastKnownDeviceToken != null && sLastKnownDeviceToken.length() >= 16) {
+            return sLastKnownDeviceToken;
+        }
+        return "0123456789abcdef0123456789abcdef01234567";
+    }
+
+    public static String getOrGenerateOpenIdTicket() {
+        if (sLastKnownOpenIdTicket != null && sLastKnownOpenIdTicket.length() >= 16) {
+            return sLastKnownOpenIdTicket;
+        }
+        return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    }
+
     public static void hook(XC_LoadPackage.LoadPackageParam lpparam) {
         if (!HookConfig.ENABLE_QQ950_PATCH) return;
 
         XposedEntry.log("Initializing QQ 9.3.70 detection & kick patch");
 
         // Tier 1: void-return, crash-safe backstops
-        // NOTE: hookKickBackstop is removed to eliminate the "Zombie Session" failure mode
-        // (where server revokes session tokens, client swallows kick, outgoing/incoming messages fail,
-        // and turning off module immediately exposes w21). Session state must remain in sync.
         hookMsfTelemetry();
         hookTuringWrapper();
         hookChannelReport();
-        // NOTE: hookTuringFDBridge is removed because wiping deviceToken/openIdTicket to ""
-        // caused Tencent servers to reject authentication with w21 (WTLogin token invalidation).
         hookSignatureAndIntegrity();
         hookTroopSecurityTipsBannerCrash(lpparam);
 
@@ -61,6 +74,9 @@ public class QQ950PatchHook {
 
         // Tier 7: RFix & Hotfix Failure Sanitization and Telemetry Drop
         hookRFixFailureSanitization(lpparam);
+
+        // Tier 8: Security Push Challenge Interception & NT Kernel / MSF Kick Defense in Depth
+        hookSecurityChallengeAndKickDefense(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -238,14 +254,38 @@ public class QQ950PatchHook {
                     Object result = p.getResult();
                     if (result != null) {
                         try {
-                            // o2 holds Wild field 'a', which has 'long a' as errorCode
+                            // o2 holds Wild field 'a', which has int/long a as errorCode and String b as deviceToken
                             Object wild = XposedHelpers.getObjectField(result, "a");
                             if (wild != null) {
-                                long err = XposedHelpers.getLongField(wild, "a");
-                                if (err != 0L) {
-                                    XposedHelpers.setLongField(wild, "a", 0L);
-                                    XposedEntry.log("[TuringPatch] Sanitized reqRiskDetectV2 errorCode: " + err + " -> 0 (preserved deviceToken)");
+                                try {
+                                    Field fa = wild.getClass().getDeclaredField("a");
+                                    fa.setAccessible(true);
+                                    Object aVal = fa.get(wild);
+                                    if (aVal instanceof Number) {
+                                        long err = ((Number) aVal).longValue();
+                                        if (err != 0L) {
+                                            if (fa.getType() == int.class) {
+                                                fa.setInt(wild, 0);
+                                            } else {
+                                                fa.setLong(wild, 0L);
+                                            }
+                                            XposedEntry.log("[TuringPatch] Sanitized Wild.a errorCode: " + err + " -> 0");
+                                        }
+                                    }
+                                } catch (Throwable t) {
+                                    XposedEntry.log("[TuringPatch] Error accessing Wild.a: " + t.getMessage());
                                 }
+                                try {
+                                    Field fb = wild.getClass().getDeclaredField("b");
+                                    fb.setAccessible(true);
+                                    String dt = (String) fb.get(wild);
+                                    if (dt != null && !dt.isEmpty()) {
+                                        sLastKnownDeviceToken = dt;
+                                    } else {
+                                        fb.set(wild, getOrGenerateDeviceToken());
+                                        XposedEntry.log("[TuringPatch] Injected valid fallback deviceToken into Wild.b");
+                                    }
+                                } catch (Throwable ignored) {}
                             }
                         } catch (Throwable t) {
                             try {
@@ -261,6 +301,32 @@ public class QQ950PatchHook {
                             p.setResult(proxy);
                             XposedEntry.log("[TuringPatch] Fallback null reqRiskDetectV2 with safe proxy @ " + cls);
                         }
+                    }
+                }
+            });
+        }
+
+        // Direct method hooks on o2 implementations to guarantee 0L errorCode and non-empty deviceToken
+        String[] o2Classes = {
+            "com.tencent.turingfd.sdk.xq.o2",
+            "com.tencent.tfd.sdk.wxa.o2"
+        };
+        for (String o2Cls : o2Classes) {
+            if (!HookUtils.classExists(o2Cls)) continue;
+            HookUtils.hookAllMethods(o2Cls, "getErrorCode", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(0L);
+                }
+            });
+            HookUtils.hookAllMethods(o2Cls, "getDeviceToken", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    Object res = p.getResult();
+                    if (res == null || "".equals(res)) {
+                        p.setResult(getOrGenerateDeviceToken());
+                    } else if (res instanceof String) {
+                        sLastKnownDeviceToken = (String) res;
                     }
                 }
             });
@@ -281,7 +347,7 @@ public class QQ950PatchHook {
                 public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
                     String name = method.getName();
                     if ("getErrorCode".equals(name)) return 0L;
-                    if ("getDeviceToken".equals(name)) return "";
+                    if ("getDeviceToken".equals(name)) return getOrGenerateDeviceToken();
                     if ("isDowngrade".equals(name)) return false;
                     if ("getStagePackTimeMillis".equals(name) || "getStageReqTimeMillis".equals(name)) return 0L;
 
@@ -301,7 +367,7 @@ public class QQ950PatchHook {
     /**
      * TuringIDService.getTuringDID / getTuringDIDCached : ITuringDID.
      * Allow real Turing ID generation to run under Native layer protection so genuine openIdTicket is generated.
-     * On result: sanitize errorCode to 0 while preserving authentic openIdTicket.
+     * On result: sanitize errorCode to 0, ensure timestamp is valid for 24h, and preserve authentic openIdTicket.
      * Fallback to safe proxy only if result is null to avoid NPE.
      */
     private static void hookTuringDID() {
@@ -319,13 +385,28 @@ public class QQ950PatchHook {
                         Object result = p.getResult();
                         if (result != null) {
                             try {
-                                // h2 holds t1 field 'a', which has 'int c' as errorCode
+                                // h2 holds t1 field 'a'
                                 Object t1 = XposedHelpers.getObjectField(result, "a");
                                 if (t1 != null) {
+                                    // int c is errorCode
                                     int err = XposedHelpers.getIntField(t1, "c");
                                     if (err != 0) {
                                         XposedHelpers.setIntField(t1, "c", 0);
-                                        XposedEntry.log("[TuringPatch] Sanitized getTuringDID errorCode: " + err + " -> 0 (preserved openIdTicket)");
+                                        XposedEntry.log("[TuringPatch] Sanitized t1.c errorCode: " + err + " -> 0");
+                                    }
+                                    // long b is expiredTimestamp; ensure never expired
+                                    long exp = XposedHelpers.getLongField(t1, "b");
+                                    if (exp <= System.currentTimeMillis()) {
+                                        XposedHelpers.setLongField(t1, "b", System.currentTimeMillis() + 86400000L);
+                                        XposedEntry.log("[TuringPatch] Refreshed expired timestamp in t1.b -> +24h");
+                                    }
+                                    // String a is openIdTicket
+                                    String ticket = (String) XposedHelpers.getObjectField(t1, "a");
+                                    if (ticket != null && !ticket.isEmpty()) {
+                                        sLastKnownOpenIdTicket = ticket;
+                                    } else {
+                                        XposedHelpers.setObjectField(t1, "a", getOrGenerateOpenIdTicket());
+                                        XposedEntry.log("[TuringPatch] Injected non-empty openIdTicket into t1.a");
                                     }
                                 }
                             } catch (Throwable t) {
@@ -346,6 +427,41 @@ public class QQ950PatchHook {
                 });
             }
         }
+
+        // Direct method hooks on h2 implementations
+        String[] h2Classes = {
+            "com.tencent.turingfd.sdk.xq.h2",
+            "com.tencent.tfd.sdk.wxa.h2"
+        };
+        for (String h2Cls : h2Classes) {
+            if (!HookUtils.classExists(h2Cls)) continue;
+            HookUtils.hookAllMethods(h2Cls, "getErrorCode", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(0);
+                }
+            });
+            HookUtils.hookAllMethods(h2Cls, "getExpiredTimestamp", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    Object res = p.getResult();
+                    if (res instanceof Number && ((Number) res).longValue() <= System.currentTimeMillis()) {
+                        p.setResult(System.currentTimeMillis() + 86400000L);
+                    }
+                }
+            });
+            HookUtils.hookAllMethods(h2Cls, "getOpenIdTicket", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    Object res = p.getResult();
+                    if (res == null || "".equals(res)) {
+                        p.setResult(getOrGenerateOpenIdTicket());
+                    } else if (res instanceof String) {
+                        sLastKnownOpenIdTicket = (String) res;
+                    }
+                }
+            });
+        }
     }
 
     private static Object createSafeTuringDIDProxy() {
@@ -362,8 +478,8 @@ public class QQ950PatchHook {
                 public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
                     String name = method.getName();
                     if ("getErrorCode".equals(name)) return 0;
-                    if ("getOpenIdTicket".equals(name) || "getAIDCode".equals(name)
-                        || "getAIDTicket".equals(name) || "getTAIDTicket".equals(name)) return "";
+                    if ("getOpenIdTicket".equals(name)) return getOrGenerateOpenIdTicket();
+                    if ("getAIDCode".equals(name) || "getAIDTicket".equals(name) || "getTAIDTicket".equals(name)) return getOrGenerateOpenIdTicket();
                     if ("getExpiredTimestamp".equals(name)) return System.currentTimeMillis() + 86400000L;
 
                     Class<?> ret = method.getReturnType();
@@ -1172,6 +1288,14 @@ public class QQ950PatchHook {
 
         // 4. Hook com.tencent.mobileqq.dt.app.MainProcess2Fe (Remote control / scrcpy / minicap / face_detect)
         final String mp2feCls = "com.tencent.mobileqq.dt.app.MainProcess2Fe";
+        hookSafe(mp2feCls, "d", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[O3Patch] Neutralized MainProcess2Fe.d (GetSocialLockStatus check)");
+            }
+        });
+
         if (HookUtils.classExists(mp2feCls)) {
             // MainProcess2Fe.b(AppInterface, dt.api.a): display_report detecting scrcpy/minicap/fps<=30
             HookUtils.hookAllMethods(mp2feCls, "b", new XC_MethodHook() {
@@ -1193,7 +1317,7 @@ public class QQ950PatchHook {
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     if (p.args != null && p.args.length >= 2 && p.args[1] instanceof String) {
                         String cmd = (String) p.args[1];
-                        if ("face_detect".equals(cmd) || "camera_detect".equals(cmd) || "display_report".equals(cmd)) {
+                        if ("face_detect".equals(cmd) || "camera_detect".equals(cmd) || "display_report".equals(cmd) || "ui_report".equals(cmd)) {
                             if (p.args.length >= 4 && p.args[3] != null) {
                                 try {
                                     XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
@@ -1214,6 +1338,82 @@ public class QQ950PatchHook {
                 }
             });
         }
+
+        // 4.1 Hook O3BusinessHandler (recError drop, GetSocialLockStatus safe fulfillment)
+        final String o3HandlerCls = "com.tencent.mobileqq.dt.web.O3BusinessHandler";
+        XC_MethodHook o3HandlerHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 2 && p.args[0] instanceof String) {
+                    String event = (String) p.args[0];
+                    String params = p.args[1] != null ? p.args[1].toString() : "";
+                    if ("recError".equals(event)) {
+                        p.setResult(null);
+                        XposedEntry.log("[O3Patch] Dropped O3BusinessHandler.recError (prevented server lock)");
+                        return;
+                    }
+                    if ("sendRequest".equals(event) && params.contains("GetSocialLockStatus")) {
+                        if (p.args.length >= 3 && p.args[2] != null) {
+                            try {
+                                XposedHelpers.callMethod(p.args[2], "a", 0, "{\"is_locked\":false,\"rsp_code\":0}".getBytes("UTF-8"));
+                            } catch (Throwable ignored) {}
+                        }
+                        p.setResult(null);
+                        XposedEntry.log("[O3Patch] Fulfilled GetSocialLockStatus with safe is_locked=false");
+                        return;
+                    }
+                    if ("display_report".equals(event) || "ui_report".equals(event)) {
+                        if (p.args.length >= 3 && p.args[2] != null) {
+                            try {
+                                XposedHelpers.callMethod(p.args[2], "a", 0, new byte[0]);
+                            } catch (Throwable ignored) {}
+                        }
+                        p.setResult(null);
+                        XposedEntry.log("[O3Patch] Dropped O3BusinessHandler telemetry: " + event);
+                        return;
+                    }
+                }
+            }
+        };
+        hookSafe(o3HandlerCls, "P2", lpparam, o3HandlerHook);
+        hookSafe(o3HandlerCls, "Q2", lpparam, o3HandlerHook);
+
+        // 4.2 Hook dt.model.d & VirtualClickDetection & DTAPIImpl
+        hookSafe("com.tencent.mobileqq.dt.model.d", "b", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
+                    String event = (String) p.args[0];
+                    if ("socialError".equals(event)) {
+                        p.setResult(null);
+                        XposedEntry.log("[O3Patch] Neutralized dt.model.d.b socialError popup");
+                    }
+                }
+            }
+        });
+
+        hookSafe("com.tencent.mobileqq.dt.model.VirtualClickDetection", "e", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    XposedHelpers.setBooleanField(p.thisObject, "d", false);
+                    XposedEntry.log("[O3Patch] Disabled VirtualClickDetection");
+                } catch (Throwable ignored) {}
+            }
+        });
+
+        hookSafe("com.tencent.mobileqq.dt.api.impl.DTAPIImpl", "onSecDispatchToAppEvent", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
+                    String event = (String) p.args[0];
+                    if ("socialError".equals(event) || "mainProcessCall".equals(event)) {
+                        p.setResult(null);
+                        XposedEntry.log("[O3Patch] Suppressed DTAPIImpl.onSecDispatchToAppEvent: " + event);
+                    }
+                }
+            }
+        });
 
         // 5. Hook com.tencent.mobileqq.dt.api.impl.QSecChannelImpl
         final String qsecChannelCls = "com.tencent.mobileqq.dt.api.impl.QSecChannelImpl";
@@ -2074,6 +2274,135 @@ public class QQ950PatchHook {
                             }
                         }
                     } catch (Throwable ignored) {}
+                }
+            }
+        });
+    }
+
+    /**
+     * Tier 8: Security Push Challenge Interception & NT Kernel / MSF Kick Defense in Depth.
+     *
+     * Directly addresses server-side periodic challenges, social lock checks, and soft session invalidation:
+     * 1. NTKickProcessor.a(AppRuntime, KickedInfo):
+     *    - When server sends a security kick (securityKickedType != 0 or tipsDesc mentions security/protection/anomaly),
+     *      suppress NTKickProcessor.a to prevent de-authenticating local account state,
+     *      clearing login data via reportClearLoginData("2004"), and killing the active NT session.
+     * 2. MainService$MyErrorHandler.onUserTokenExpired(ToServiceMsg, FromServiceMsg, boolean):
+     *    - When an SSO token error arrives (not an authoritative multi-login kick -10135/10136),
+     *      suppress onUserTokenExpired to prevent updateSimpleAccount(uin, false) from marking MSF unlogged,
+     *      and suppress popupNotification(ACTION_ACCOUNT_EXPIRED).
+     * 3. MainService.kick(KickParams):
+     *    - When isTokenExpired is true, suppress kick to avoid session teardown.
+     * 4. NotificationActivity:
+     *    - Auto-dismiss if launched with ACTION_ACCOUNT_EXPIRED or security kick action.
+     */
+    private static void hookSecurityChallengeAndKickDefense(XC_LoadPackage.LoadPackageParam lpparam) {
+        XposedEntry.log("[Tier8] Initializing Security Push Challenge & Kick Defense in Depth");
+
+        // 1. NTKickProcessor.a(AppRuntime, KickedInfo)
+        final String ntKickProcessorCls = "com.tencent.mobileqq.kick.NTKickProcessor";
+        hookSafe(ntKickProcessorCls, "a", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
+                    Object kickedInfo = p.args[1];
+                    try {
+                        int secType = XposedHelpers.getIntField(kickedInfo, "securityKickedType");
+                        String desc = (String) XposedHelpers.getObjectField(kickedInfo, "tipsDesc");
+                        String title = (String) XposedHelpers.getObjectField(kickedInfo, "tipsTitle");
+                        if (desc == null) desc = "";
+                        if (title == null) title = "";
+
+                        boolean isSecurityKick = secType != 0 ||
+                            desc.contains("安全") || desc.contains("环境") || desc.contains("异常") ||
+                            desc.contains("保护") || desc.contains("风险") || desc.contains("风控") ||
+                            title.contains("安全") || title.contains("风险") || title.contains("保护");
+
+                        if (isSecurityKick) {
+                            p.setResult(null);
+                            XposedEntry.log("[KickDefense] Preempted security kick in NTKickProcessor.a: secType=" + secType + ", title=" + title + ", desc=" + desc);
+                        }
+                    } catch (Throwable t) {
+                        XposedEntry.log("[KickDefense] Error inspecting KickedInfo: " + t.getMessage());
+                    }
+                }
+            }
+        });
+
+        // 2. MainService$MyErrorHandler.onUserTokenExpired
+        final String myErrorHandlerCls = "mqq.app.MainService$MyErrorHandler";
+        hookSafe(myErrorHandlerCls, "onUserTokenExpired", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
+                    try {
+                        Object fromServiceMsg = p.args[1];
+                        int ssoErrorCode = 0;
+                        try {
+                            Object attr = XposedHelpers.callMethod(fromServiceMsg, "getAttribute", "attr_sso_error_code", 0);
+                            if (attr instanceof Number) {
+                                ssoErrorCode = ((Number) attr).intValue();
+                            }
+                        } catch (Throwable ignored) {}
+
+                        // -10135 and 10136 are authoritative multi-device kicks (ACTION_ACCOUNT_KICKED).
+                        // All other codes are token expiration or server challenge failures (ACTION_ACCOUNT_EXPIRED).
+                        if (ssoErrorCode != -10135 && ssoErrorCode != 10136) {
+                            p.setResult(null);
+                            XposedEntry.log("[KickDefense] Suppressed onUserTokenExpired (ssoErrorCode=" + ssoErrorCode + "), preserved active session");
+                        }
+                    } catch (Throwable t) {
+                        XposedEntry.log("[KickDefense] Error in onUserTokenExpired hook: " + t.getMessage());
+                    }
+                }
+            }
+        });
+
+        // 3. MainService.kick(KickParams)
+        hookSafe("mqq.app.MainService", "kick", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 1 && p.args[0] != null) {
+                    try {
+                        Object kickParams = p.args[0];
+                        boolean isTokenExpired = XposedHelpers.getBooleanField(kickParams, "isTokenExpired");
+                        if (isTokenExpired) {
+                            p.setResult(null);
+                            XposedEntry.log("[KickDefense] Suppressed MainService.kick (isTokenExpired=true)");
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            }
+        });
+
+        // 4. NotificationActivity auto-dismiss for security kick & expired tokens
+        final String notifActCls = "com.tencent.mobileqq.activity.NotificationActivity";
+        hookSafe(notifActCls, "doOnCreate", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    android.app.Activity act = (android.app.Activity) p.thisObject;
+                    android.content.Intent intent = act.getIntent();
+                    if (intent != null) {
+                        String action = intent.getAction();
+                        String msg = intent.getStringExtra("msg");
+                        if (msg == null) msg = intent.getStringExtra("title");
+                        if (msg == null) msg = "";
+
+                        boolean isExpiredOrSecKick = "mqq.intent.action.ACCOUNT_EXPIRED".equals(action) ||
+                            "mqq.intent.action.ACCOUNT_KICKED".equals(action) ||
+                            "mqq.intent.action.KICK_TO_LOGIN".equals(action);
+
+                        if (isExpiredOrSecKick && (msg.contains("安全") || msg.contains("环境") || msg.contains("异常") ||
+                                msg.contains("保护") || msg.contains("风险") || msg.contains("凭证") || msg.contains("失效") ||
+                                "mqq.intent.action.ACCOUNT_EXPIRED".equals(action))) {
+                            p.setResult(false);
+                            act.finish();
+                            XposedEntry.log("[KickDefense] Auto-dismissed NotificationActivity for action=" + action + ", msg=" + msg);
+                        }
+                    }
+                } catch (Throwable t) {
+                    XposedEntry.log("[KickDefense] Error in NotificationActivity.doOnCreate hook: " + t.getMessage());
                 }
             }
         });
