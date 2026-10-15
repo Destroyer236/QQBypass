@@ -41,6 +41,8 @@ bool is_sensitive_path(const char* path) {
         "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
         "epic", "pine", "taichi", "liblspd", "lsposed", "edxposed",
         "qqbypass", "libnative-bypass", "libbytehook", "xalsace",
+        "zygisk_lsposed", "zygisksu", "bin.mt.plus",
+        "bytehook_bypass", "native-bypass_bypass",
         nullptr
     };
     for (int i = 0; hidden[i]; i++) {
@@ -71,6 +73,8 @@ FILE* build_filtered_maps() {
         "libnative-bypass", "libbytehook", "xalsace", "qq_hook",
         "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
         "epic", "pine", "taichi", "top.canyie", "liblspd", "qqbypass",
+        "zygisk_lsposed", "zygisksu", "/data/adb", "bin.mt.plus",
+        "bytehook_bypass", "native-bypass_bypass",
         nullptr
     };
 

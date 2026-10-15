@@ -144,6 +144,7 @@ if command -v clang++ >/dev/null 2>&1; then
         "$SCRIPT_DIR/app/src/main/cpp/hooks/hook_libmsfkernel.cpp" \
         "$SCRIPT_DIR/app/src/main/cpp/hooks/hook_libturingmfa.cpp" \
         "$SCRIPT_DIR/app/src/main/cpp/utils/log.cpp" \
+        -L"$BUILD_DIR/apk_root/lib/arm64-v8a" -lbytehook \
         -llog -landroid -O2 \
         -o "$BUILD_DIR/apk_root/lib/arm64-v8a/libnative-bypass.so"
     if command -v llvm-strip >/dev/null 2>&1; then

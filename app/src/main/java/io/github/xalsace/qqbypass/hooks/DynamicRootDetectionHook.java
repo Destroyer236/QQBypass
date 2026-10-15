@@ -582,6 +582,8 @@ public class DynamicRootDetectionHook {
             || lower.contains("me.weishu") || lower.contains("me.bmax")
             || lower.contains("sandhook") || lower.contains("taichi")
             || lower.contains("top.canyie") || lower.contains("xalsace")
-            || lower.contains("qqbypass") || lower.contains("dexkit");
+            || lower.contains("qqbypass") || lower.contains("dexkit")
+            || lower.contains("bin.mt.plus") || lower.contains("youqu.android.todesk")
+            || lower.contains("com.netease.uuremote") || lower.contains("com.topjohnwu.magisk");
     }
 }

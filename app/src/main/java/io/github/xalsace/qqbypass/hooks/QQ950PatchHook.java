@@ -1019,6 +1019,128 @@ public class QQ950PatchHook {
                 }
             });
         }
+
+        // 5. Accessibility Services & Dtc Telemetry Sanitization (prevents bin.mt.plus / todesk / uuremote detection)
+        final String[] suspiciousAssistKeywords = {
+            "bin.mt.plus", "todesk", "uuremote", "xposed", "lsposed", "magisk", "xalsace", "qqbypass", "dexkit"
+        };
+
+        HookUtils.hookAllMethods("android.view.accessibility.AccessibilityManager", "getInstalledAccessibilityServiceList", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res instanceof java.util.List) {
+                    java.util.List list = (java.util.List) res;
+                    java.util.List filtered = new java.util.ArrayList();
+                    for (Object item : list) {
+                        if (item instanceof android.accessibilityservice.AccessibilityServiceInfo) {
+                            android.accessibilityservice.AccessibilityServiceInfo asi = (android.accessibilityservice.AccessibilityServiceInfo) item;
+                            String pkg = asi.getResolveInfo() != null && asi.getResolveInfo().serviceInfo != null ?
+                                asi.getResolveInfo().serviceInfo.packageName : null;
+                            if (pkg != null) {
+                                boolean susp = false;
+                                String lower = pkg.toLowerCase();
+                                for (String kw : suspiciousAssistKeywords) {
+                                    if (lower.contains(kw)) { susp = true; break; }
+                                }
+                                if (susp) continue;
+                            }
+                        }
+                        filtered.add(item);
+                    }
+                    p.setResult(filtered);
+                }
+            }
+        });
+
+        HookUtils.hookAllMethods("android.view.accessibility.AccessibilityManager", "getEnabledAccessibilityServiceList", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res instanceof java.util.List) {
+                    java.util.List list = (java.util.List) res;
+                    java.util.List filtered = new java.util.ArrayList();
+                    for (Object item : list) {
+                        if (item instanceof android.accessibilityservice.AccessibilityServiceInfo) {
+                            android.accessibilityservice.AccessibilityServiceInfo asi = (android.accessibilityservice.AccessibilityServiceInfo) item;
+                            String pkg = asi.getResolveInfo() != null && asi.getResolveInfo().serviceInfo != null ?
+                                asi.getResolveInfo().serviceInfo.packageName : null;
+                            if (pkg != null) {
+                                boolean susp = false;
+                                String lower = pkg.toLowerCase();
+                                for (String kw : suspiciousAssistKeywords) {
+                                    if (lower.contains(kw)) { susp = true; break; }
+                                }
+                                if (susp) continue;
+                            }
+                        }
+                        filtered.add(item);
+                    }
+                    p.setResult(filtered);
+                }
+            }
+        });
+
+        final String dtcCls = "com.tencent.mobileqq.dt.app.Dtc";
+        hookSafe(dtcCls, "getAccessibilityServiceList", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult("[]");
+            }
+        });
+        hookSafe(dtcCls, "getAccessibilityEnabledServiceList", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult("[]");
+            }
+        });
+        hookSafe(dtcCls, "getAccessibilityEnabledStatus", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(0);
+            }
+        });
+        hookSafe(dtcCls, "checkRiskPermission", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(0);
+            }
+        });
+        hookSafe(dtcCls, "checkAppInstalled", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 0 && p.args[0] instanceof String) {
+                    String pkg = ((String) p.args[0]).toLowerCase();
+                    for (String kw : suspiciousAssistKeywords) {
+                        if (pkg.contains(kw)) {
+                            p.setResult(false);
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        // 6. CrashDefend Startup Crash Suppression
+        final String crashDefendMgrCls = "com.tencent.qqperf.crashdefend.CrashDefendManager";
+        hookSafe(crashDefendMgrCls, "hasCrashedAtStartup", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe(crashDefendMgrCls, "d", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe(crashDefendMgrCls, "b", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
     }
 
     /**
@@ -1356,6 +1478,141 @@ public class QQ950PatchHook {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 p.setResult(null);
+            }
+        });
+
+        // 9. RFix SafeMode Info (com.tencent.rfix.loader.safemode.RFixSafeModeInfo)
+        final String rfixSafeModeInfoCls = "com.tencent.rfix.loader.safemode.RFixSafeModeInfo";
+        hookSafe(rfixSafeModeInfoCls, "loadStoreInfo", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    XposedHelpers.setIntField(p.thisObject, "p1Count", 0);
+                    XposedHelpers.setIntField(p.thisObject, "p2Count", 0);
+                    Object list = XposedHelpers.getObjectField(p.thisObject, "p3CrashTimes");
+                    if (list instanceof java.util.List) {
+                        ((java.util.List) list).clear();
+                    }
+                } catch (Throwable ignored) {}
+            }
+        });
+        hookSafe(rfixSafeModeInfoCls, "saveStoreInfo", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    XposedHelpers.setIntField(p.thisObject, "p1Count", 0);
+                    XposedHelpers.setIntField(p.thisObject, "p2Count", 0);
+                    Object list = XposedHelpers.getObjectField(p.thisObject, "p3CrashTimes");
+                    if (list instanceof java.util.List) {
+                        ((java.util.List) list).clear();
+                    }
+                } catch (Throwable ignored) {}
+            }
+        });
+
+        // 10. RFixGlobalPreferences: Neutralize safeModeInterceptVersion & reset lastInstallRetryCount
+        final String rfixGlobalPrefCls = "com.tencent.rfix.loader.storage.RFixGlobalPreferences";
+        hookSafe(rfixGlobalPrefCls, "loadStoreInfo", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    XposedHelpers.setObjectField(p.thisObject, "safeModeInterceptVersion", null);
+                    XposedHelpers.setIntField(p.thisObject, "lastInstallRetryCount", 0);
+                } catch (Throwable ignored) {}
+            }
+        });
+        hookSafe(rfixGlobalPrefCls, "saveStoreInfo", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    XposedHelpers.setObjectField(p.thisObject, "safeModeInterceptVersion", null);
+                    XposedHelpers.setIntField(p.thisObject, "lastInstallRetryCount", 0);
+                } catch (Throwable ignored) {}
+            }
+        });
+
+        // 11. RFixPatchInfo: Force lastInstallResult to 0 (PATCH_RESULT_OK) and mainVerified to true
+        final String rfixPatchInfoCls = "com.tencent.rfix.loader.entity.RFixPatchInfo";
+        hookSafe(rfixPatchInfoCls, "loadStoreInfo", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    int cur = XposedHelpers.getIntField(p.thisObject, "lastInstallResult");
+                    if (cur != 0) {
+                        XposedHelpers.setIntField(p.thisObject, "lastInstallResult", 0);
+                    }
+                    XposedHelpers.setBooleanField(p.thisObject, "mainVerified", true);
+                    XposedHelpers.setBooleanField(p.thisObject, "removePatch", false);
+                } catch (Throwable ignored) {}
+            }
+        });
+        hookSafe(rfixPatchInfoCls, "saveStoreInfo", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    XposedHelpers.setIntField(p.thisObject, "lastInstallResult", 0);
+                    XposedHelpers.setBooleanField(p.thisObject, "mainVerified", true);
+                    XposedHelpers.setBooleanField(p.thisObject, "removePatch", false);
+                } catch (Throwable ignored) {}
+            }
+        });
+
+        // 12. PatchLoadEngineBase: checkPatchSafeMode & checkPatchInfo
+        final String patchLoadEngineBaseCls = "com.tencent.rfix.loader.engine.PatchLoadEngineBase";
+        hookSafe(patchLoadEngineBaseCls, "checkPatchSafeMode", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    ClassLoader cl = p.thisObject.getClass().getClassLoader();
+                    Class<?> enumCls = XposedHelpers.findClass("com.tencent.rfix.loader.utils.RFixConstants$LoadResult", cl);
+                    p.setResult(Enum.valueOf((Class<Enum>) enumCls, "LOAD_RESULT_SUCCESS"));
+                } catch (Throwable ignored) {}
+            }
+        });
+        hookSafe(patchLoadEngineBaseCls, "checkPatchInfo", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    Object res = p.getResult();
+                    if (res != null && res.toString().contains("FAIL")) {
+                        Class<?> enumCls = res.getClass();
+                        p.setResult(Enum.valueOf((Class<Enum>) enumCls, "LOAD_RESULT_SUCCESS"));
+                    }
+                } catch (Throwable ignored) {}
+            }
+        });
+
+        // 13. PatchEngineBase: sanitize install results in f and e
+        final String patchEngineBaseCls = "com.tencent.rfix.lib.engine.PatchEngineBase";
+        hookSafe(patchEngineBaseCls, "f", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res != null && res.getClass().isEnum()) {
+                    String name = ((Enum<?>) res).name();
+                    if (name.contains("INTERCEPT") || name.contains("FAIL") || name.contains("LIMIT")) {
+                        try {
+                            p.setResult(Enum.valueOf((Class<Enum>) res.getClass(), "PATCH_RESULT_OK"));
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            }
+        });
+        hookSafe(patchEngineBaseCls, "e", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res != null) {
+                    try {
+                        Object aObj = XposedHelpers.getObjectField(res, "a");
+                        if (aObj != null && aObj.getClass().isEnum()) {
+                            String name = ((Enum<?>) aObj).name();
+                            if (name.contains("FAIL") || name.contains("INTERCEPT") || name.contains("EXCEPTION") || name.contains("LIMIT")) {
+                                XposedHelpers.setObjectField(res, "a", Enum.valueOf((Class<Enum>) aObj.getClass(), "PATCH_RESULT_OK"));
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                }
             }
         });
     }

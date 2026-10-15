@@ -14,21 +14,91 @@ public class NativeBypass {
     private static boolean libraryLoaded = false;
 
     static {
+        loadLibraries();
+    }
+
+    private static synchronized void loadLibraries() {
+        if (libraryLoaded) return;
         try {
-            // 先初始化 ByteHook 的 AAR（会加载 libbytehook.so）
+            // 1. 尝试直接加载 libbytehook.so
             try {
-                com.bytedance.android.bytehook.ByteHook.init();
-                Log.i(TAG, "ByteHook AAR initialized");
+                System.loadLibrary("bytehook");
             } catch (Throwable t) {
-                Log.w(TAG, "ByteHook.init() failed, native hooks may not work: " + t.getMessage());
+                try {
+                    com.bytedance.android.bytehook.ByteHook.init();
+                } catch (Throwable ignored) {}
             }
 
+            // 2. 尝试加载 libnative-bypass.so
             System.loadLibrary("native-bypass");
             libraryLoaded = true;
-            Log.i(TAG, "Native library loaded successfully");
-        } catch (UnsatisfiedLinkError e) {
-            Log.e(TAG, "Failed to load native library", e);
-            libraryLoaded = false;
+            Log.i(TAG, "Native library loaded successfully via System.loadLibrary");
+            return;
+        } catch (Throwable e) {
+            Log.w(TAG, "System.loadLibrary failed, attempting fallback extraction: " + e.getMessage());
+        }
+
+        // 3. Fallback: 从模块 APK 动态提取 .so 到目标应用 code_cache 目录并直接 load
+        try {
+            java.io.File cacheDir = new java.io.File("/data/data/com.tencent.mobileqq/code_cache");
+            if (!cacheDir.exists()) cacheDir.mkdirs();
+
+            String moduleApkPath = null;
+            try {
+                java.io.File maps = new java.io.File("/proc/self/maps");
+                if (maps.exists()) {
+                    java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(maps));
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        if (line.contains("io.github.xalsace.qqbypass") && line.contains(".apk")) {
+                            int idx = line.indexOf('/');
+                            if (idx != -1) {
+                                moduleApkPath = line.substring(idx).trim();
+                                break;
+                            }
+                        }
+                    }
+                    br.close();
+                }
+            } catch (Throwable ignored) {}
+
+            if (moduleApkPath != null && new java.io.File(moduleApkPath).exists()) {
+                java.util.zip.ZipFile zf = new java.util.zip.ZipFile(moduleApkPath);
+                
+                // 提取 libbytehook.so
+                java.util.zip.ZipEntry bhEntry = zf.getEntry("lib/arm64-v8a/libbytehook.so");
+                if (bhEntry != null) {
+                    java.io.File bhOut = new java.io.File(cacheDir, "libbytehook_bypass.so");
+                    java.io.InputStream in = zf.getInputStream(bhEntry);
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(bhOut);
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = in.read(buf)) > 0) fos.write(buf, 0, len);
+                    fos.close();
+                    in.close();
+                    System.load(bhOut.getAbsolutePath());
+                    Log.i(TAG, "Fallback: Loaded libbytehook from " + bhOut.getAbsolutePath());
+                }
+
+                // 提取 libnative-bypass.so
+                java.util.zip.ZipEntry nbEntry = zf.getEntry("lib/arm64-v8a/libnative-bypass.so");
+                if (nbEntry != null) {
+                    java.io.File nbOut = new java.io.File(cacheDir, "libnative-bypass_bypass.so");
+                    java.io.InputStream in = zf.getInputStream(nbEntry);
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(nbOut);
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = in.read(buf)) > 0) fos.write(buf, 0, len);
+                    fos.close();
+                    in.close();
+                    System.load(nbOut.getAbsolutePath());
+                    libraryLoaded = true;
+                    Log.i(TAG, "Fallback: Loaded libnative-bypass from " + nbOut.getAbsolutePath());
+                }
+                zf.close();
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "Fallback extraction failed: " + t.getMessage(), t);
         }
     }
 
@@ -36,6 +106,9 @@ public class NativeBypass {
      * Check if native library is loaded
      */
     public static boolean isLibraryLoaded() {
+        if (!libraryLoaded) {
+            loadLibraries();
+        }
         return libraryLoaded;
     }
 
