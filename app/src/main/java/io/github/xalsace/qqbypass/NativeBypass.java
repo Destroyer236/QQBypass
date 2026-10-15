@@ -65,6 +65,25 @@ public class NativeBypass {
             if (moduleApkPath != null && new java.io.File(moduleApkPath).exists()) {
                 java.util.zip.ZipFile zf = new java.util.zip.ZipFile(moduleApkPath);
                 
+                // 提取 libc++_shared.so (如果存在)
+                java.util.zip.ZipEntry cppEntry = zf.getEntry("lib/arm64-v8a/libc++_shared.so");
+                if (cppEntry != null) {
+                    java.io.File cppOut = new java.io.File(cacheDir, "libc++_shared.so");
+                    java.io.InputStream in = zf.getInputStream(cppEntry);
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(cppOut);
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = in.read(buf)) > 0) fos.write(buf, 0, len);
+                    fos.close();
+                    in.close();
+                    try {
+                        System.load(cppOut.getAbsolutePath());
+                        Log.i(TAG, "Fallback: Loaded libc++_shared from " + cppOut.getAbsolutePath());
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Fallback: Failed to load libc++_shared: " + t.getMessage());
+                    }
+                }
+
                 // 提取 libbytehook.so
                 java.util.zip.ZipEntry bhEntry = zf.getEntry("lib/arm64-v8a/libbytehook.so");
                 if (bhEntry != null) {
@@ -76,6 +95,12 @@ public class NativeBypass {
                     while ((len = in.read(buf)) > 0) fos.write(buf, 0, len);
                     fos.close();
                     in.close();
+                    try {
+                        java.io.File bhStd = new java.io.File(cacheDir, "libbytehook.so");
+                        if (!bhStd.exists() || bhStd.length() != bhOut.length()) {
+                            java.nio.file.Files.copy(bhOut.toPath(), bhStd.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    } catch (Throwable ignored) {}
                     System.load(bhOut.getAbsolutePath());
                     Log.i(TAG, "Fallback: Loaded libbytehook from " + bhOut.getAbsolutePath());
                 }

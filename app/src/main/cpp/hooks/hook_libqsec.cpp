@@ -1,6 +1,6 @@
 #include <jni.h>
 #include <dlfcn.h>
-#include <string>
+#include <string.h>
 #include "../utils/log.h"
 #include "bytehook.h"
 
@@ -14,22 +14,26 @@ static int (*original_dladdr)(const void*, Dl_info*) = nullptr;
  */
 static void* hooked_dlopen(const char* filename, int flag) {
     if (filename) {
-        std::string name(filename);
         // 拦截对 hook 框架的检测
-        if (name.find("bytehook") != std::string::npos ||
-            name.find("xposed") != std::string::npos ||
-            name.find("lsposed") != std::string::npos ||
-            name.find("liblspd") != std::string::npos ||
-            name.find("substrate") != std::string::npos ||
-            name.find("dexkit") != std::string::npos ||
-            name.find("libdexkit") != std::string::npos ||
-            name.find("sandhook") != std::string::npos ||
-            name.find("yahfa") != std::string::npos ||
-            name.find("epic") != std::string::npos ||
-            name.find("pine") != std::string::npos ||
-            name.find("taichi") != std::string::npos ||
-            name.find("qqbypass") != std::string::npos ||
-            name.find("xalsace") != std::string::npos) {
+        if (strcasestr(filename, "bytehook") ||
+            strcasestr(filename, "xposed") ||
+            strcasestr(filename, "lsposed") ||
+            strcasestr(filename, "liblspd") ||
+            strcasestr(filename, "substrate") ||
+            strcasestr(filename, "dexkit") ||
+            strcasestr(filename, "libdexkit") ||
+            strcasestr(filename, "sandhook") ||
+            strcasestr(filename, "yahfa") ||
+            strcasestr(filename, "epic") ||
+            strcasestr(filename, "pine") ||
+            strcasestr(filename, "taichi") ||
+            strcasestr(filename, "qqbypass") ||
+            strcasestr(filename, "xalsace") ||
+            strcasestr(filename, "qauxv") ||
+            strcasestr(filename, "io.github.qauxv") ||
+            strcasestr(filename, "libqauxv") ||
+            strcasestr(filename, "cc.ioctl") ||
+            strcasestr(filename, "qnotified")) {
             LOGI("QSec dlopen blocked: %s", filename);
             return nullptr;
         }
@@ -42,19 +46,19 @@ static void* hooked_dlopen(const char* filename, int flag) {
  */
 static void* hooked_dlsym(void* handle, const char* symbol) {
     if (symbol) {
-        std::string sym(symbol);
         // 拦截对 hook 相关符号的查询（指定精确框架名，避免误杀正常函数）
-        if (sym.find("bytehook") != std::string::npos ||
-            sym.find("xposed") != std::string::npos ||
-            sym.find("lsposed") != std::string::npos ||
-            sym.find("sandhook") != std::string::npos ||
-            sym.find("yahfa") != std::string::npos ||
-            sym.find("pine") != std::string::npos ||
-            sym.find("dexkit") != std::string::npos ||
-            sym.find("epic") != std::string::npos ||
-            sym.find("dobby") != std::string::npos ||
-            sym.find("riru") != std::string::npos ||
-            sym.find("zygisk") != std::string::npos) {
+        if (strcasestr(symbol, "bytehook") ||
+            strcasestr(symbol, "xposed") ||
+            strcasestr(symbol, "lsposed") ||
+            strcasestr(symbol, "sandhook") ||
+            strcasestr(symbol, "yahfa") ||
+            strcasestr(symbol, "pine") ||
+            strcasestr(symbol, "dexkit") ||
+            strcasestr(symbol, "epic") ||
+            strcasestr(symbol, "dobby") ||
+            strcasestr(symbol, "riru") ||
+            strcasestr(symbol, "zygisk") ||
+            strcasestr(symbol, "qauxv")) {
             LOGI("QSec dlsym blocked: %s", symbol);
             return nullptr;
         }
@@ -69,22 +73,27 @@ static int hooked_dladdr(const void* addr, Dl_info* info) {
     int ret = original_dladdr(addr, info);
 
     if (ret != 0 && info && info->dli_fname) {
-        std::string fname(info->dli_fname);
+        const char* fname = info->dli_fname;
         // 如果查到的是 hook 框架，伪装成系统库
-        if (fname.find("bytehook") != std::string::npos ||
-            fname.find("native-bypass") != std::string::npos ||
-            fname.find("xposed") != std::string::npos ||
-            fname.find("lsposed") != std::string::npos ||
-            fname.find("liblspd") != std::string::npos ||
-            fname.find("dexkit") != std::string::npos ||
-            fname.find("libdexkit") != std::string::npos ||
-            fname.find("sandhook") != std::string::npos ||
-            fname.find("yahfa") != std::string::npos ||
-            fname.find("epic") != std::string::npos ||
-            fname.find("pine") != std::string::npos ||
-            fname.find("taichi") != std::string::npos ||
-            fname.find("qqbypass") != std::string::npos ||
-            fname.find("xalsace") != std::string::npos) {
+        if (strcasestr(fname, "bytehook") ||
+            strcasestr(fname, "native-bypass") ||
+            strcasestr(fname, "xposed") ||
+            strcasestr(fname, "lsposed") ||
+            strcasestr(fname, "liblspd") ||
+            strcasestr(fname, "dexkit") ||
+            strcasestr(fname, "libdexkit") ||
+            strcasestr(fname, "sandhook") ||
+            strcasestr(fname, "yahfa") ||
+            strcasestr(fname, "epic") ||
+            strcasestr(fname, "pine") ||
+            strcasestr(fname, "taichi") ||
+            strcasestr(fname, "qqbypass") ||
+            strcasestr(fname, "xalsace") ||
+            strcasestr(fname, "qauxv") ||
+            strcasestr(fname, "io.github.qauxv") ||
+            strcasestr(fname, "libqauxv") ||
+            strcasestr(fname, "cc.ioctl") ||
+            strcasestr(fname, "qnotified")) {
             LOGI("QSec dladdr spoofed: %s -> libc.so", info->dli_fname);
 #if defined(__aarch64__) || defined(__x86_64__)
             info->dli_fname = "/system/lib64/libc.so";
