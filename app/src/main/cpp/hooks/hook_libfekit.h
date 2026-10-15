@@ -13,7 +13,6 @@ namespace hook_libfekit {
  * - Package manager queries
  */
 void install_hooks();
-void install_hooks_for_handle(void* handle, HookFunType hook_func);
 
 } // namespace hook_libfekit
 

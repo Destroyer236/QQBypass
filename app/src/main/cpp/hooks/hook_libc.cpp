@@ -13,7 +13,6 @@
 #include <sys/system_properties.h>
 #include <sys/syscall.h>
 #include <link.h>
-#include <unordered_set>
 
 namespace hook_libc {
 
@@ -615,48 +614,6 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     return syscall(number, a1, a2, a3, a4, a5, a6);
 }
 
-void install_inline_hooks(HookFunType hook_func) {
-    if (!hook_func) return;
-    LOGI("Installing libc inline hooks via LSPosed NativeHook...");
-    ensure_real_funcs();
-
-    std::unordered_set<void*> hooked_syms;
-    auto hook_if_new = [&](const char* name, void* fake_fn, void** real_fn_ptr) {
-        void* sym = dlsym(RTLD_DEFAULT, name);
-        if (!sym) return;
-        if (hooked_syms.find(sym) != hooked_syms.end()) {
-            LOGI("Symbol %s points to duplicate address %p, skipped duplicate inline hook", name, sym);
-            return;
-        }
-        hooked_syms.insert(sym);
-        int ret = hook_func(sym, fake_fn, real_fn_ptr);
-        LOGI("Inline hooked %s at %p -> ret %d, backup %p", name, sym, ret, real_fn_ptr ? *real_fn_ptr : nullptr);
-    };
-
-    hook_if_new("fopen", (void*)fake_fopen, (void**)&real_fopen_ptr);
-    hook_if_new("fopen64", (void*)fake_fopen, (void**)&real_fopen_ptr);
-    hook_if_new("open", (void*)fake_open, (void**)&real_open_ptr);
-    hook_if_new("open64", (void*)fake_open, (void**)&real_open_ptr);
-    hook_if_new("openat", (void*)fake_openat, (void**)&real_openat_ptr);
-    hook_if_new("openat64", (void*)fake_openat, (void**)&real_openat_ptr);
-    hook_if_new("access", (void*)fake_access, (void**)&real_access_ptr);
-    hook_if_new("faccessat", (void*)fake_faccessat, (void**)&real_faccessat_ptr);
-    hook_if_new("stat", (void*)fake_stat, (void**)&real_stat_ptr);
-    hook_if_new("stat64", (void*)fake_stat, (void**)&real_stat_ptr);
-    hook_if_new("lstat", (void*)fake_lstat, (void**)&real_lstat_ptr);
-    hook_if_new("lstat64", (void*)fake_lstat, (void**)&real_lstat_ptr);
-    hook_if_new("fstatat", (void*)fake_fstatat, (void**)&real_fstatat_ptr);
-    hook_if_new("fstatat64", (void*)fake_fstatat, (void**)&real_fstatat_ptr);
-    hook_if_new("readlink", (void*)fake_readlink, (void**)&real_readlink_ptr);
-    hook_if_new("readlinkat", (void*)fake_readlinkat, (void**)&real_readlinkat_ptr);
-    hook_if_new("syscall", (void*)fake_syscall, (void**)&real_syscall_ptr);
-    hook_if_new("dladdr", (void*)fake_dladdr, (void**)&real_dladdr_ptr);
-    hook_if_new("dl_iterate_phdr", (void*)fake_dl_iterate_phdr, (void**)&real_dl_iterate_phdr_ptr);
-    hook_if_new("__system_property_get", (void*)fake_system_property_get, (void**)&real_system_property_get_ptr);
-    hook_if_new("__system_property_find", (void*)fake_system_property_find, (void**)&real_system_property_find_ptr);
-
-    LOGI("libc inline hooks installed successfully via LSPosed NativeHook!");
-}
 
 void install_hooks() {
     LOGI("Installing libc hooks (ByteHook)...");

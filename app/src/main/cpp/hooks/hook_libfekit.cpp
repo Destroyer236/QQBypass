@@ -89,13 +89,5 @@ void install_hooks() {
     LOGI("libfekit hooks installed");
 }
 
-void install_hooks_for_handle(void* handle, HookFunType hook_func) {
-    if (!handle || !hook_func) return;
-    void* sym = dlsym(handle, "strstr");
-    if (sym) {
-        hook_func(sym, (void*)fake_strstr, (void**)&real_fekit_strstr_ptr);
-        LOGI("libfekit: inline hooked strstr");
-    }
-}
 
 } // namespace hook_libfekit

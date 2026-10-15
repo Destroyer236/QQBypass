@@ -11,6 +11,5 @@
  * - strstr: memory & hook framework keyword neutralization
  */
 void install_turingmfa_hooks();
-void install_turingmfa_hooks_for_handle(void* handle, HookFunType hook_func);
 
 #endif // HOOK_LIBTURINGMFA_H

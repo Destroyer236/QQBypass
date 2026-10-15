@@ -3,8 +3,6 @@
 
 #include <stdio.h>
 
-typedef int (*HookFunType)(void *func, void *replace, void **backup);
-
 namespace hook_libc {
 
 /**
@@ -15,7 +13,6 @@ namespace hook_libc {
  * - syscall: intercept openat, newfstatat, faccessat, readlinkat
  */
 void install_hooks();
-void install_inline_hooks(HookFunType hook_func);
 
 bool is_sensitive_path(const char* path);
 FILE* build_filtered_maps();

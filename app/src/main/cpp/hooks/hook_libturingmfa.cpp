@@ -117,26 +117,3 @@ void install_turingmfa_hooks() {
         LOGW("libturingmfa.so not loaded yet; registered for automatic hook on load");
     }
 }
-
-void install_turingmfa_hooks_for_handle(void* handle, HookFunType hook_func) {
-    if (!handle || !hook_func) return;
-    LOGI("Installing libturingmfa inline hooks for handle...");
-
-    void* sym_syscall = dlsym(handle, "syscall");
-    if (sym_syscall) {
-        hook_func(sym_syscall, (void*)hooked_mfa_syscall, (void**)&original_syscall_mfa);
-        LOGI("libturingmfa: inline hooked syscall");
-    }
-
-    void* sym_real_syscall = dlsym(handle, "real_syscall");
-    if (sym_real_syscall) {
-        hook_func(sym_real_syscall, (void*)hooked_mfa_real_syscall, (void**)&original_real_syscall_mfa);
-        LOGI("libturingmfa: inline hooked real_syscall");
-    }
-
-    void* sym_strstr = dlsym(handle, "strstr");
-    if (sym_strstr) {
-        hook_func(sym_strstr, (void*)fake_mfa_strstr, (void**)&real_mfa_strstr_ptr);
-        LOGI("libturingmfa: inline hooked strstr");
-    }
-}

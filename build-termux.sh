@@ -115,10 +115,6 @@ unzip -q -o "$BUILD_DIR/base.apk" -d "$BUILD_DIR/apk_root/"
 cp "$BUILD_DIR/dex/classes.dex" "$BUILD_DIR/apk_root/"
 mkdir -p "$BUILD_DIR/apk_root/assets"
 cp -f "$SCRIPT_DIR/app/src/main/assets/"* "$BUILD_DIR/apk_root/assets/"
-mkdir -p "$BUILD_DIR/apk_root/META-INF/xposed"
-if [ -d "$SCRIPT_DIR/app/src/main/resources/META-INF/xposed" ]; then
-    cp -f "$SCRIPT_DIR/app/src/main/resources/META-INF/xposed/"* "$BUILD_DIR/apk_root/META-INF/xposed/"
-fi
 
 # 检查 native 库
 EXISTING_APK="/storage/emulated/0/0_TM/apks/QQ Enhanced Bypass_1.0.7.apk"
@@ -136,7 +132,7 @@ if command -v clang++ >/dev/null 2>&1; then
         unzip -p "$BYTEHOOK_AAR" prefab/modules/bytehook/include/bytehook.h > "$BUILD_DIR/bytehook_include/bytehook.h"
         unzip -p "$BYTEHOOK_AAR" jni/arm64-v8a/libbytehook.so > "$BUILD_DIR/apk_root/lib/arm64-v8a/libbytehook.so"
     fi
-    clang++ -shared -fPIC -std=c++17 -fno-exceptions -fno-rtti -Wall -Wextra \
+    clang++ -shared -fPIC -std=c++17 -fno-exceptions -fno-rtti -fno-sized-deallocation -Wall -Wextra \
         -nostdlib++ -lc -lm -ldl \
         -I"$BUILD_DIR/bytehook_include" \
         -I"$SCRIPT_DIR/app/src/main/cpp" \

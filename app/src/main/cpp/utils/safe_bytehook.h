@@ -4,7 +4,6 @@
 #include <bytehook.h>
 
 extern bool g_bytehook_hooks_installed;
-extern bool g_lsposed_initialized;
 
 #ifdef __cplusplus
 struct SafeBytehookScope {

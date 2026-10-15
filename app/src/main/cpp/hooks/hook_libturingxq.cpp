@@ -92,27 +92,4 @@ void install_hooks() {
     LOGI("libturingxq hooks installed (syscall, real_syscall, strstr)");
 }
 
-void install_hooks_for_handle(void* handle, HookFunType hook_func) {
-    if (!handle || !hook_func) return;
-    LOGI("Installing libturingxq inline hooks for handle...");
-
-    void* sym_syscall = dlsym(handle, "syscall");
-    if (sym_syscall) {
-        hook_func(sym_syscall, (void*)hooked_syscall, (void**)&original_syscall);
-        LOGI("libturingxq: inline hooked syscall");
-    }
-
-    void* sym_real_syscall = dlsym(handle, "real_syscall");
-    if (sym_real_syscall) {
-        hook_func(sym_real_syscall, (void*)hooked_real_syscall, (void**)&original_real_syscall);
-        LOGI("libturingxq: inline hooked real_syscall");
-    }
-
-    void* sym_strstr = dlsym(handle, "strstr");
-    if (sym_strstr) {
-        hook_func(sym_strstr, (void*)fake_xq_strstr, (void**)&real_xq_strstr_ptr);
-        LOGI("libturingxq: inline hooked strstr");
-    }
-}
-
 } // namespace hook_libturingxq

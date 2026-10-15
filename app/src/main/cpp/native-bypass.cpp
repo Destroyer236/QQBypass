@@ -15,14 +15,13 @@
 #include "hooks/hook_libturingmfa.h"
 
 /**
- * Native Bypass Module for QQ Enhanced Bypass (Dual Engine: LSPosed NativeHook + ByteHook)
+ * Native Bypass Module for QQ Enhanced Bypass (ByteHook Engine)
  *
- * This module provides dual-layer native protection against QQ & Tencent risk detection:
- * - Engine 1: LSPosed NativeHook (Inline hooking directly into libc and security SOs at instruction level)
- * - Engine 2: ByteHook (Automatic PLT/GOT hooking across library linkage boundaries)
+ * This module provides comprehensive native protection against QQ & Tencent risk detection:
+ * - Engine: ByteHook (Automatic PLT/GOT hooking across library linkage boundaries)
  *
  * Key targets:
- * - libc: File I/O interception (/proc/self/maps, /proc/self/status, mounts, syscalls)
+ * - libc: File I/O interception (/proc/self/maps via memfd_create, /proc/self/status, mounts, syscalls)
  * - libfekit.so: Root/Xposed detection
  * - libturingxq.so: ART integrity checks and risk reporting
  * - libMSFKernel.so: qimei36 fingerprint injection (QQ 9.3.50+)
@@ -31,66 +30,19 @@
  * - libMSF hooks: Signature verification (experimental)
  */
 
-typedef void (*NativeOnModuleLoaded)(const char *name, void *handle);
-
-typedef struct {
-    uint32_t version;
-    HookFunType hook_func;
-    void* unhook_func;
-} NativeAPIEntries;
-
 #include "utils/safe_bytehook.h"
+#include <stdlib.h>
 
-NativeAPIEntries g_lsposed_api = {0, nullptr, nullptr};
-bool g_lsposed_initialized = false;
+// Standalone C++ memory operators to avoid any external libc++ dependency
+void* operator new(size_t size) { return malloc(size); }
+void* operator new[](size_t size) { return malloc(size); }
+void operator delete(void* p) noexcept { free(p); }
+void operator delete[](void* p) noexcept { free(p); }
+void operator delete(void* p, size_t) noexcept { free(p); }
+void operator delete[](void* p, size_t) noexcept { free(p); }
+
 bool g_bytehook_hooks_installed = false;
 static pthread_mutex_t g_init_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/**
- * LSPosed dlopen notification callback
- */
-static void on_module_loaded(const char* name, void* handle) {
-    if (!name || !handle) return;
-    LOGI("[LSPosedNative] on_module_loaded: %s", name);
-
-    if (g_lsposed_api.hook_func) {
-        if (strstr(name, "libturingmfa.so")) {
-            LOGI("[LSPosedNative] Detected libturingmfa.so -> applying inline hooks");
-            install_turingmfa_hooks_for_handle(handle, g_lsposed_api.hook_func);
-        } else if (strstr(name, "libfekit.so")) {
-            LOGI("[LSPosedNative] Detected libfekit.so -> applying inline hooks");
-            hook_libfekit::install_hooks_for_handle(handle, g_lsposed_api.hook_func);
-        } else if (strstr(name, "libturingxq.so")) {
-            LOGI("[LSPosedNative] Detected libturingxq.so -> applying inline hooks");
-            hook_libturingxq::install_hooks_for_handle(handle, g_lsposed_api.hook_func);
-        }
-    }
-}
-
-/**
- * LSPosed Native Hook Entry Point (native_init)
- * Exported with default visibility so LSPosed framework loader can resolve and call it.
- */
-extern "C" __attribute__((visibility("default"))) __attribute__((used))
-NativeOnModuleLoaded native_init(const NativeAPIEntries *entries) {
-    LOGI("=== LSPosed Native Hook Entry Point Called (native_init) ===");
-    if (!entries) {
-        LOGE("native_init: entries pointer is null");
-        return nullptr;
-    }
-
-    LOGI("LSPosed Native API version: %u, hook_func: %p", entries->version, (void*)entries->hook_func);
-    g_lsposed_api = *entries;
-    g_lsposed_initialized = true;
-
-    // 1. Immediately inline-hook libc primitives at the lowest instruction level
-    if (g_lsposed_api.hook_func) {
-        hook_libc::install_inline_hooks(g_lsposed_api.hook_func);
-    }
-
-    // 2. Return on_module_loaded callback to intercept future dlopened security SOs
-    return on_module_loaded;
-}
 
 /**
  * Install all hooks via ByteHook in a background thread
@@ -153,11 +105,6 @@ Java_io_github_xalsace_qqbypass_NativeBypass_initNativeHooksNative(JNIEnv* env, 
     (void)clazz;
     LOGI("initNativeHooks called from Java layer");
 
-    if (g_lsposed_initialized) {
-        LOGI("LSPosed NativeHook is active! Skipping ByteHook to prevent conflicts.");
-        return;
-    }
-
     if (g_bytehook_hooks_installed) {
         LOGW("ByteHook native hooks already installed");
         return;
@@ -180,7 +127,7 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_isHooksInstalledNative(JNIEnv* env, jclass clazz) {
     (void)env;
     (void)clazz;
-    return (g_bytehook_hooks_installed || g_lsposed_initialized);
+    return g_bytehook_hooks_installed;
 }
 
 /**
@@ -191,8 +138,7 @@ Java_io_github_xalsace_qqbypass_NativeBypass_getHookStatusNative(JNIEnv* env, jc
     (void)clazz;
     char status_buf[256];
     snprintf(status_buf, sizeof(status_buf),
-             "Native hooks installed: LSPosed InlineHook=%s, ByteHook PLT=%s",
-             g_lsposed_initialized ? "active" : "standby",
+             "Native hooks installed: ByteHook PLT=%s",
              g_bytehook_hooks_installed ? "active" : "standby");
     return env->NewStringUTF(status_buf);
 }
