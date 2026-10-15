@@ -438,6 +438,9 @@ public class DynamicRootDetectionHook {
                     if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String pkg = (String) param.args[0];
                         if (isSuspiciousPackage(pkg)) {
+                            if (isCallerQAuxv()) {
+                                return;
+                            }
                             param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg));
                             return;
                         }
@@ -486,6 +489,9 @@ public class DynamicRootDetectionHook {
                     if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String pkg = (String) param.args[0];
                         if (isSuspiciousPackage(pkg)) {
+                            if (isCallerQAuxv()) {
+                                return;
+                            }
                             param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg));
                             return;
                         }
@@ -507,6 +513,9 @@ public class DynamicRootDetectionHook {
                         if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
                             String pkg = (String) param.args[1];
                             if (isSuspiciousPackage(pkg)) {
+                                if (isCallerQAuxv()) {
+                                    return;
+                                }
                                 param.setResult(false);
                             }
                         }
@@ -605,6 +614,19 @@ public class DynamicRootDetectionHook {
         }
     }
 
+    private static boolean isCallerQAuxv() {
+        try {
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            for (StackTraceElement elem : stack) {
+                String cls = elem.getClassName();
+                if (cls != null && (cls.startsWith("io.github.qauxv.") || cls.startsWith("cc.ioctl."))) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
     private static boolean isSuspiciousPath(String path) {
         if (path == null) return false;
         String lower = path.toLowerCase();
@@ -619,9 +641,7 @@ public class DynamicRootDetectionHook {
             || lower.contains("xposed") || lower.contains("lsposed")
             || lower.contains("frida") || lower.contains("/data/adb")
             || lower.contains("dexkit") || lower.contains("sandhook")
-            || lower.contains("yahfa") || lower.contains("liblspd")
-            || lower.contains("qauxv") || lower.contains("qnotified")
-            || lower.contains("cc.ioctl") || lower.contains("libqauxv");
+            || lower.contains("yahfa") || lower.contains("liblspd");
     }
 
     private static boolean isSuspiciousPackage(String pkg) {

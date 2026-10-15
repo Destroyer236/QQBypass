@@ -43,7 +43,6 @@ bool is_sensitive_path(const char* path) {
         "qqbypass", "libnative-bypass", "libbytehook", "xalsace",
         "zygisk_lsposed", "zygisksu", "bin.mt.plus",
         "bytehook_bypass", "native-bypass_bypass",
-        "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "cc.ioctl", "qnotified",
         nullptr
     };
     for (int i = 0; hidden[i]; i++) {

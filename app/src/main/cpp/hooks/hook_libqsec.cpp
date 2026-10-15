@@ -28,12 +28,7 @@ static void* hooked_dlopen(const char* filename, int flag) {
             strcasestr(filename, "pine") ||
             strcasestr(filename, "taichi") ||
             strcasestr(filename, "qqbypass") ||
-            strcasestr(filename, "xalsace") ||
-            strcasestr(filename, "qauxv") ||
-            strcasestr(filename, "io.github.qauxv") ||
-            strcasestr(filename, "libqauxv") ||
-            strcasestr(filename, "cc.ioctl") ||
-            strcasestr(filename, "qnotified")) {
+            strcasestr(filename, "xalsace")) {
             LOGI("QSec dlopen blocked: %s", filename);
             return nullptr;
         }

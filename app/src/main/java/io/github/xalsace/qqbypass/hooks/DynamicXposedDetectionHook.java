@@ -397,10 +397,7 @@ public class DynamicXposedDetectionHook {
             || lower.startsWith("top.canyie.pine.")
             || lower.startsWith("lab.galaxy.yahfa.")
             || lower.startsWith("me.ele.epic.")
-            || lower.startsWith("me.weishu.exposed.")
-            || lower.startsWith("io.github.qauxv.")
-            || lower.startsWith("cc.ioctl.")
-            || lower.contains("qnotified");
+            || lower.startsWith("me.weishu.exposed.");
     }
 
     private static boolean isCallerWhitelisted() {
