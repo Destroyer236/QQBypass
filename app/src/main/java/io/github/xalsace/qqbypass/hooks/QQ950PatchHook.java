@@ -52,6 +52,9 @@ public class QQ950PatchHook {
 
         // Tier 5: Clean detection sources at the origin (Location, Sensors, Screen/Display, ADB/Accessibility)
         hookDetectionSourcesAtOrigin(lpparam);
+
+        // Tier 6: Tinker SafeMode, dynamic SO (txlib / txPttlib), and MQP Integrity Strike Protection
+        hookTinkerTxlibAndPttProtection(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -1045,4 +1048,211 @@ public class QQ950PatchHook {
             });
         }
     }
+
+    /**
+     * Tier 6: Tinker SafeMode, dynamic SO (txlib / txPttlib), and MQP Integrity Strike Protection.
+     *
+     * Addresses runtime telemetry and security integrity verification across:
+     * 1. Tinker SafeMode & Hotfix Crash Count:
+     *    - ShareTinkerInternals.getSafeModeCount: forced to 0 to prevent TinkerLoader from triggering
+     *      safe mode rollback/directory purge (deleteDirAsync).
+     *    - ShareTinkerInternals.setSafeModeCount / cleanPatch: neutralized.
+     *    - SharePatchFileUtil.checkTinkerLastUncaughtCrash: forced null.
+     *    - SharePatchFileUtil.verifyFileMd5 / verifyDexFileMd5: forced true.
+     * 2. txlib & Dynamic Native Library Verification / Telemetry:
+     *    - com.tencent.mobileqq.msf.core.report.j.a: suppresses reportMsfLoadSoError when isLoaded=false or resultCode!=0.
+     *    - MsfCore.tryReportSoLoadUseTxlib: suppresses msf_core_EvtLoadUseTxlib telemetry.
+     *    - SoLoadCore.reportThrowable: suppresses SO loading exception reporting.
+     * 3. MQPSecUtil & Integrity Check Strike (txlib/libmqpintchk.so):
+     *    - MQPSecUtil.memchk: forced true (clean memory integrity).
+     *    - MQPSecUtil.antitrace / do_report: neutralized.
+     *    - MSFIntChkStrike.exec: neutralized (prevents punishment dialog & forced logout).
+     * 4. txPttlib Audio Codec Telemetry:
+     *    - StatisticCollector.collectPerformance: sanitizes actPttSoUpdate to param_FailCode=0 and success=true;
+     *      suppresses msf_core_EvtMsfLoadSoError and msf_core_EvtLoadUseTxlib.
+     */
+    private static void hookTinkerTxlibAndPttProtection(XC_LoadPackage.LoadPackageParam lpparam) {
+        XposedEntry.log("[Tier6] Initializing Tinker, txlib, txPttlib & MQP integrity protection");
+
+        // --- 1. Tinker Hotfix & SafeMode Protection ---
+        final String tinkerInternalsCls = "com.tencent.tinker.loader.shareutil.ShareTinkerInternals";
+        hookSafe(tinkerInternalsCls, "getSafeModeCount", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(0);
+                XposedEntry.log("[TinkerPatch] ShareTinkerInternals.getSafeModeCount -> 0 (safe mode protected)");
+            }
+        });
+
+        hookSafe(tinkerInternalsCls, "setSafeModeCount", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[TinkerPatch] Suppressed ShareTinkerInternals.setSafeModeCount");
+            }
+        });
+
+        hookSafe(tinkerInternalsCls, "cleanPatch", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[TinkerPatch] Suppressed ShareTinkerInternals.cleanPatch");
+            }
+        });
+
+        final String patchFileUtilCls = "com.tencent.tinker.loader.shareutil.SharePatchFileUtil";
+        hookSafe(patchFileUtilCls, "checkTinkerLastUncaughtCrash", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[TinkerPatch] SharePatchFileUtil.checkTinkerLastUncaughtCrash -> null");
+            }
+        });
+
+        hookSafe(patchFileUtilCls, "verifyFileMd5", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+            }
+        });
+
+        hookSafe(patchFileUtilCls, "verifyDexFileMd5", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+            }
+        });
+
+        // --- 2. txlib & Dynamic SO Integrity Telemetry ---
+        final String msfReportJCls = "com.tencent.mobileqq.msf.core.report.j";
+        hookSafe(msfReportJCls, "a", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length == 4 && p.args[0] instanceof String && p.args[1] instanceof Boolean && p.args[2] instanceof Integer) {
+                    boolean isLoaded = (Boolean) p.args[1];
+                    int resultCode = (Integer) p.args[2];
+                    if (!isLoaded || resultCode != 0) {
+                        p.setResult(null);
+                        XposedEntry.log("[TxLibPatch] Suppressed reportMsfLoadSoError for lib: " + p.args[0]);
+                    }
+                }
+            }
+        });
+
+        final String msfCoreCls = "com.tencent.mobileqq.msf.core.MsfCore";
+        hookSafe(msfCoreCls, "tryReportSoLoadUseTxlib", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[TxLibPatch] Suppressed MsfCore.tryReportSoLoadUseTxlib");
+            }
+        });
+
+        final String soLoadCoreCls = "com.tencent.commonsdk.soload.SoLoadCore";
+        hookSafe(soLoadCoreCls, "reportThrowable", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[TxLibPatch] Suppressed SoLoadCore.reportThrowable");
+            }
+        });
+
+        // --- 3. MQPSecUtil & Integrity Strike (txlib/libmqpintchk.so) ---
+        final String mqpSecUtilCls = "com.tencent.mqp.app.sec.MQPSecUtil";
+        hookSafe(mqpSecUtilCls, "memchk", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+                XposedEntry.log("[MQPPatch] MQPSecUtil.memchk -> forced true (clean memory integrity)");
+            }
+        });
+
+        hookSafe(mqpSecUtilCls, "antitrace", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[MQPPatch] Neutralized MQPSecUtil.antitrace");
+            }
+        });
+
+        hookSafe(mqpSecUtilCls, "do_report", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[MQPPatch] Suppressed MQPSecUtil.do_report");
+            }
+        });
+
+        final String intChkStrikeCls = "com.tencent.msfmqpsdkbridge.MSFIntChkStrike";
+        hookSafe(intChkStrikeCls, "exec", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[MQPPatch] Suppressed MSFIntChkStrike.exec (prevented strike popup/logout)");
+            }
+        });
+
+        // --- 4. txPttlib Audio Codec Telemetry ---
+        final String statCollectorCls = "com.tencent.mobileqq.statistics.StatisticCollector";
+        hookSafe(statCollectorCls, "collectPerformance", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 2 && p.args[1] instanceof String) {
+                    String tag = (String) p.args[1];
+                    if ("actPttSoUpdate".equals(tag)) {
+                        if (p.args.length > 2 && p.args[2] instanceof Boolean) {
+                            p.args[2] = true;
+                        }
+                        for (int i = 3; i < p.args.length; i++) {
+                            if (p.args[i] instanceof java.util.Map) {
+                                ((java.util.Map) p.args[i]).put("param_FailCode", "0");
+                                break;
+                            }
+                        }
+                        XposedEntry.log("[PttPatch] Sanitized actPttSoUpdate telemetry to success (0)");
+                    } else if ("msf_core_EvtMsfLoadSoError".equals(tag) || "msf_core_EvtLoadUseTxlib".equals(tag)) {
+                        p.setResult(null);
+                        XposedEntry.log("[TxLibPatch] Suppressed SO load telemetry: " + tag);
+                    }
+                }
+            }
+        });
+    }
+
+    private static void hookSafe(final String className, final String methodName, XC_LoadPackage.LoadPackageParam lpparam, final XC_MethodHook callback) {
+        ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
+        Class<?> clazz = XposedHelpers.findClassIfExists(className, cl);
+        if (clazz != null) {
+            HookUtils.hookAllMethods(clazz, methodName, callback);
+        } else if (cl != null) {
+            try {
+                XposedHelpers.findAndHookMethod(cl.getClass(), "loadClass", String.class, boolean.class, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        if (className.equals(p.args[0])) {
+                            Class<?> loadedClass = (Class<?>) p.getResult();
+                            if (loadedClass != null) {
+                                HookUtils.hookAllMethods(loadedClass, methodName, callback);
+                            }
+                        }
+                    }
+                });
+            } catch (Throwable ignored) {
+                try {
+                    XposedHelpers.findAndHookMethod(cl.getClass(), "loadClass", String.class, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                            if (className.equals(p.args[0])) {
+                                Class<?> loadedClass = (Class<?>) p.getResult();
+                                if (loadedClass != null) {
+                                    HookUtils.hookAllMethods(loadedClass, methodName, callback);
+                                }
+                            }
+                        }
+                    });
+                } catch (Throwable ignored2) {}
+            }
+        }
+    }
 }
+
