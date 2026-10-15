@@ -107,6 +107,9 @@ public class XposedEntry implements IXposedHookLoadPackage {
             // Layer 7: QQ 9.3.50 detection-point completion (real risk/kick targets)
             QQ950PatchHook.hook(lpparam);
 
+            // Layer 8: QAuxv (QNotified) compatibility & BaseApk crash prevention
+            io.github.xalsace.qqbypass.hooks.QAuxvCompatHook.hook(lpparam);
+
             // === Report Status ===
             log("=== Java Hooks Initialized ===");
             log("Initial Protection Level: " + UnifiedHookCoordinator.getProtectionLevel());
