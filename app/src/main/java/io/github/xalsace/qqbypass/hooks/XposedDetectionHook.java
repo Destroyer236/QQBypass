@@ -33,6 +33,7 @@ public class XposedDetectionHook {
         "de.robv.android.xposed.installer",
         "org.meowcat.edxposed.manager",
         "io.github.lsposed.manager",
+        "org.lsposed.manager",
         "com.topjohnwu.magisk"
     };
 

@@ -32,7 +32,7 @@ public class QQ950PatchHook {
         XposedEntry.log("Initializing QQ 9.3.70 detection & kick patch");
 
         // Tier 1: void-return, crash-safe backstops
-        hookKickBackstop();
+        hookKickBackstop(lpparam);
         hookMsfTelemetry();
         hookTuringWrapper();
         hookChannelReport();
@@ -60,53 +60,245 @@ public class QQ950PatchHook {
     // ==================== Tier 1: void-return, crash-safe ====================
 
     /**
-     * Enhanced Kick Prevention:
-     * In QQ 9.3.70, NTKickProcessor.a(AppRuntime, KickedInfo) is the public entry point.
-     * Before calling the internal worker 'b', method 'a' calls MsfSdkUtils.updateSimpleAccount(uin, false)
-     * and reportClearLoginData, which invalidates the login state!
-     * Hooking method 'a' directly suppresses the entire kick sequence.
+     * Enhanced Multi-Process Kick Prevention & Session Defense:
+     *
+     * Tackles the root cause of kick/force-offline at all protocol & UI levels:
+     * 1. MSF Process (com.tencent.mobileqq:MSF):
+     *    - SSORespHandler (t.a): drops MessageSvc.PushForceOffline, StatSvc.ReqMSFOffline, KickNT;
+     *      neutralizes fatal failCodes (-10103, -10104, -10105, -10005, -10106, -10135, -10136, 210, etc.)
+     *    - AccountCenter.p (b.p): blocks setAccountNoLogin to prevent deleting session key from memory.
+     *    - PushManager.d (h.d): blocks unregistering push listeners for kicked UIN.
+     *    - MsfSdkUtils.updateSimpleAccount: prevents writing logged-out status (_f) to disk.
+     *    - MsfSdkUtils.killProcess: blocks killing main or MSF processes.
+     * 2. Main Process (com.tencent.mobileqq):
+     *    - MainService$MyErrorHandler: suppresses onKicked, onKickedAndClearToken, onKickedInternal, popupNotification.
+     *    - MainService.kick: suppresses AppRuntime.KickParams dispatch.
+     *    - KickApiImpl: neutralizes NT kernel kick and forces shouldIgnoreNotifyMsfStatusChanged to true.
+     *    - NTKickProcessor: suppresses entry a, worker b, and notification launch unconditionally.
+     *    - UidServiceImpl: blocks kickToLoginPage and logoutWhenReqUidFail.
+     *    - AppRuntime: blocks ntTriggerLogout, setKickIntent, setAutoLogin(false), and marks onReceiveUnhandledKickedMsg true.
      */
-    private static void hookKickBackstop() {
-        final String cls = "com.tencent.mobileqq.kick.NTKickProcessor";
-        Class<?> clazz = XposedHelpers.findClassIfExists(cls, HookConfig.getClassLoader());
-        if (clazz == null) {
-            XposedEntry.log("[KickPatch] NTKickProcessor not present, skip kick hook");
-            return;
-        }
+    private static void hookKickBackstop(XC_LoadPackage.LoadPackageParam lpparam) {
+        XposedEntry.log("[KickPatch] Initializing multi-process kick & session preservation hooks");
 
-        // Hook public entry a(AppRuntime, KickedInfo)
-        HookUtils.hookAllMethods(cls, "a", new XC_MethodHook() {
+        // === Layer 1: MSF Network Protocol & Token Protection ===
+
+        // 1.1 MSF SSORespHandler (com.tencent.mobileqq.msf.core.t.a)
+        hookSafe("com.tencent.mobileqq.msf.core.t", "a", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
-                    p.setResult(null); // void - crash-safe! Prevents kick, token invalidation, and notification
-                    XposedEntry.log("[KickPatch] Suppressed NTKickProcessor.a kick event");
+                if (p.args == null || p.args.length < 2) return;
+                Object fromServiceMsg = null;
+                for (Object arg : p.args) {
+                    if (arg != null && "com.tencent.qphone.base.remote.FromServiceMsg".equals(arg.getClass().getName())) {
+                        fromServiceMsg = arg;
+                        break;
+                    }
+                }
+                if (fromServiceMsg == null) return;
+                try {
+                    String cmd = (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd");
+                    int failCode = ((Number) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailCode")).intValue();
+
+                    // Drop push kicks completely
+                    if ("MessageSvc.PushForceOffline".equals(cmd) ||
+                        "StatSvc.ReqMSFOffline".equals(cmd) ||
+                        "trpc.qq_new_tech.status_svc.StatusService.KickNT".equals(cmd)) {
+                        p.setResult(true);
+                        XposedEntry.log("[MSFKickPatch] Dropped server push force-offline: " + cmd);
+                        return;
+                    }
+
+                    // Neutralize fatal SSO failCodes that purge credentials or trigger killProcess
+                    if (failCode == -10103 || failCode == -10104 || failCode == -10105 ||
+                        failCode == -10005 || failCode == -10106 || failCode == -10135 ||
+                        failCode == -10136 || failCode == -10001 || failCode == -10003 ||
+                        failCode == -10004 || failCode == -10006 || failCode == -12003 || failCode == 210) {
+                        XposedHelpers.callMethod(fromServiceMsg, "setBusinessFailCode", 1000);
+                        XposedHelpers.callMethod(fromServiceMsg, "setMsgSuccess");
+                        XposedEntry.log("[MSFKickPatch] Neutralized fatal SSO failCode " + failCode + " for cmd: " + cmd);
+                    }
+                } catch (Throwable t) {
+                    XposedEntry.log("[MSFKickPatch] Error inspecting MSF message: " + t.getMessage());
                 }
             }
         });
 
-        // Hook internal worker 'b' by signature (void + LogoutReason) as second-line backstop
-        int hooked = 0;
-        for (Method m : clazz.getDeclaredMethods()) {
-            if (m.getReturnType() != void.class) continue;
-            boolean hasLogoutReason = false;
-            for (Class<?> pt : m.getParameterTypes()) {
-                if (pt.getName().contains("LogoutReason")) {
-                    hasLogoutReason = true;
-                    break;
+        // 1.2 MSF AccountCenter.p(String) (setAccountNoLogin)
+        hookSafe("com.tencent.mobileqq.msf.core.auth.b", "p", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length == 1 && p.args[0] instanceof String) {
+                    p.setResult(null);
+                    XposedEntry.log("[MSFKickPatch] Suppressed AccountCenter.p(setAccountNoLogin) for UIN: " + p.args[0]);
                 }
             }
-            if (!hasLogoutReason) continue;
-            XposedBridge.hookMethod(m, new XC_MethodHook() {
+        });
+
+        // 1.3 MSF PushManager.d(String) (unregister push on kick)
+        hookSafe("com.tencent.mobileqq.msf.core.push.h", "d", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length == 1 && p.args[0] instanceof String) {
+                    p.setResult(null);
+                    XposedEntry.log("[MSFKickPatch] Suppressed PushManager.d(unregister on kick) for UIN: " + p.args[0]);
+                }
+            }
+        });
+
+        // 1.4 MSF NetAdapt kick alert
+        hookSafe("com.tencent.mobileqq.msf.core.net.adapt.a", "a", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 0 && "kicked".equals(p.args[0])) {
+                    p.setResult(null);
+                    XposedEntry.log("[MSFKickPatch] Suppressed net adaptation kick alert");
+                }
+            }
+        });
+
+        // 1.5 MsfSdkUtils: Prevent writing logged-out status (_f) to disk
+        hookSafe("com.tencent.mobileqq.msf.sdk.MsfSdkUtils", "updateSimpleAccount", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 2 && Boolean.FALSE.equals(p.args[1])) {
+                    p.args[1] = Boolean.TRUE;
+                    XposedEntry.log("[KickPatch] MsfSdkUtils.updateSimpleAccount: forced isLogined=true for " + p.args[0]);
+                }
+            }
+        });
+        hookSafe("com.tencent.mobileqq.msf.sdk.MsfSdkUtils", "updateSimpleAccountNotCreate", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 2 && Boolean.FALSE.equals(p.args[1])) {
+                    p.args[1] = Boolean.TRUE;
+                }
+            }
+        });
+
+        // 1.6 MsfSdkUtils.killProcess: Prevent terminating any process
+        hookSafe("com.tencent.mobileqq.msf.sdk.MsfSdkUtils", "killProcess", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+                XposedEntry.log("[KickPatch] Blocked MsfSdkUtils.killProcess for: " + (p.args != null && p.args.length > 1 ? p.args[1] : "target"));
+            }
+        });
+
+        // === Layer 2: Main Process & NT Kernel Protection ===
+
+        // 2.1 MainService$MyErrorHandler: Suppress all kick dispatch handlers
+        String errorHandlerCls = "mqq.app.MainService$MyErrorHandler";
+        String[] errHandlerMethods = {
+            "onKicked", "onKickedAndClearToken", "onKickedInternal",
+            "onInterceptKicked", "popupNotification", "popupNotificationEx"
+        };
+        for (String mName : errHandlerMethods) {
+            hookSafe(errorHandlerCls, mName, lpparam, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(null);
-                    XposedEntry.log("[KickPatch] Suppressed NTKickProcessor logout worker (b)");
+                    XposedEntry.log("[KickPatch] Suppressed MainService.MyErrorHandler." + p.method.getName());
                 }
             });
-            hooked++;
         }
-        XposedEntry.log("[KickPatch] NTKickProcessor hooks installed (entry + " + hooked + " workers)");
+
+        // 2.2 MainService.kick(AppRuntime.KickParams)
+        hookSafe("mqq.app.MainService", "kick", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[KickPatch] Suppressed MainService.kick");
+            }
+        });
+
+        // 2.3 KickApiImpl: Suppress NT Kernel kick listener and ignore MSF status offline changes
+        final String kickApiCls = "com.tencent.qqnt.kernel.api.impl.KickApiImpl";
+        hookSafe(kickApiCls, "kick", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[KickPatch] Suppressed KickApiImpl.kick");
+            }
+        });
+        hookSafe(kickApiCls, "shouldIgnoreNotifyMsfStatusChanged", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+            }
+        });
+        hookSafe(kickApiCls, "isOpenIgnoreNotifyMsfStatusChanged", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+            }
+        });
+
+        // 2.4 NTKickProcessor: Suppress public entry a, internal worker b, and showNotification
+        final String ntKickCls = "com.tencent.mobileqq.kick.NTKickProcessor";
+        hookSafe(ntKickCls, "a", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[KickPatch] Suppressed NTKickProcessor.a kick event");
+            }
+        });
+        hookSafe(ntKickCls, "b", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[KickPatch] Suppressed NTKickProcessor.b worker");
+            }
+        });
+
+        // 2.5 UidServiceImpl: Suppress kickToLoginPage & logoutWhenReqUidFail
+        final String uidServiceCls = "com.tencent.mobileqq.login.api.impl.UidServiceImpl";
+        hookSafe(uidServiceCls, "kickToLoginPage", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[KickPatch] Suppressed UidServiceImpl.kickToLoginPage");
+            }
+        });
+        hookSafe(uidServiceCls, "logoutWhenReqUidFail", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[KickPatch] Suppressed UidServiceImpl.logoutWhenReqUidFail");
+            }
+        });
+
+        // 2.6 AppRuntime: Suppress ntTriggerLogout, setKickIntent, setAutoLogin(false), onReceiveUnhandledKickedMsg
+        final String appRuntimeCls = "mqq.app.AppRuntime";
+        hookSafe(appRuntimeCls, "ntTriggerLogout", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[KickPatch] Suppressed AppRuntime.ntTriggerLogout");
+            }
+        });
+        hookSafe(appRuntimeCls, "setKickIntent", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[KickPatch] Suppressed AppRuntime.setKickIntent");
+            }
+        });
+        hookSafe(appRuntimeCls, "setAutoLogin", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 0 && Boolean.FALSE.equals(p.args[0])) {
+                    p.setResult(null);
+                    XposedEntry.log("[KickPatch] Suppressed AppRuntime.setAutoLogin(false)");
+                }
+            }
+        });
+        hookSafe(appRuntimeCls, "onReceiveUnhandledKickedMsg", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+            }
+        });
     }
 
     /**
