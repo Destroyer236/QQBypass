@@ -1,6 +1,8 @@
 #ifndef NATIVE_BYPASS_HOOK_LIBFEKIT_H
 #define NATIVE_BYPASS_HOOK_LIBFEKIT_H
 
+#include "hook_libc.h"
+
 namespace hook_libfekit {
 
 /**
@@ -11,6 +13,7 @@ namespace hook_libfekit {
  * - Package manager queries
  */
 void install_hooks();
+void install_hooks_for_handle(void* handle, HookFunType hook_func);
 
 } // namespace hook_libfekit
 

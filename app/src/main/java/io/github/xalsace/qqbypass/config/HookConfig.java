@@ -11,11 +11,12 @@ public class HookConfig {
     public static ClassLoader classLoader;
 
     // Module version info & cache schema
-    public static final int MODULE_VERSION_CODE = 8;
-    public static final String MODULE_VERSION_NAME = "1.0.16";
+    public static final int MODULE_VERSION_CODE = 9;
+    public static final String MODULE_VERSION_NAME = "1.0.17";
     public static final int CACHE_SCHEMA_VERSION = 3;
 
     // Feature toggles
+    public static boolean ENABLE_DEXKIT = (android.os.Build.VERSION.SDK_INT < 35); // Disabled on Android 15/16+ (jemalloc tagged pointer abort)
     public static boolean ENABLE_NATIVE_HOOKS = true;        // Native layer hooks (70% coverage)
     public static boolean ENABLE_ROOT_BYPASS = true;
     public static boolean ENABLE_XPOSED_BYPASS = true;

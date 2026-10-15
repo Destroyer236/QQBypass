@@ -1,11 +1,15 @@
 #include "hook_libfekit.h"
 #include "hook_libc.h"
 #include "../utils/log.h"
+#include "../utils/safe_bytehook.h"
 #include <bytehook.h>
 #include <stdio.h>
 #include <string.h>
+#include <dlfcn.h>
 
 namespace hook_libfekit {
+
+static char* (*real_fekit_strstr_ptr)(const char*, const char*) = nullptr;
 
 /**
  * libfekit.so 的检测函数符号被剥离，无法直接 hook。
@@ -14,7 +18,7 @@ namespace hook_libfekit {
 
 // system 代理：阻止 root 检测命令
 static int fake_system(const char* command) {
-    BYTEHOOK_STACK_SCOPE();
+    SAFE_BYTEHOOK_SCOPE();
 
     if (command && (strstr(command, "magisk") || strstr(command, "su") ||
                     strstr(command, "mount") || strstr(command, "/proc/mounts") ||
@@ -30,7 +34,7 @@ static int fake_system(const char* command) {
 
 // popen 代理：阻止管道命令检测
 static FILE* fake_popen(const char* command, const char* type) {
-    BYTEHOOK_STACK_SCOPE();
+    SAFE_BYTEHOOK_SCOPE();
 
     if (command) {
         if (strstr(command, "mount") || strstr(command, "/proc/mounts")) {
@@ -52,14 +56,14 @@ static FILE* fake_popen(const char* command, const char* type) {
 
 // strstr 代理：仅拦截 libfekit.so 对敏感关键字的匹配
 static char* fake_strstr(const char* haystack, const char* needle) {
-    BYTEHOOK_STACK_SCOPE();
+    SAFE_BYTEHOOK_SCOPE();
 
-    char* result = BYTEHOOK_CALL_PREV(fake_strstr, haystack, needle);
+    char* result = real_fekit_strstr_ptr ? real_fekit_strstr_ptr(haystack, needle) : BYTEHOOK_CALL_PREV(fake_strstr, haystack, needle);
     if (result && needle) {
         const char* sensitive[] = {
             "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", "ksu", "apatch", "shamiko",
             "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa", "epic", "pine", "taichi", "liblspd",
-            "qqbypass", "xalsace", "libnative-bypass", "libbytehook",
+            "qqbypass", "xalsace", "libnative-bypass", "libbytehook", "bytehook", "trampoline",
             "qauxv", "io.github.qauxv", "libqauxv", "cc.ioctl", "qnotified", nullptr
         };
         for (int i = 0; sensitive[i]; i++) {
@@ -83,6 +87,15 @@ void install_hooks() {
     bytehook_hook_single("libfekit.so", nullptr, "strstr", (void*)fake_strstr, nullptr, nullptr);
 
     LOGI("libfekit hooks installed");
+}
+
+void install_hooks_for_handle(void* handle, HookFunType hook_func) {
+    if (!handle || !hook_func) return;
+    void* sym = dlsym(handle, "strstr");
+    if (sym) {
+        hook_func(sym, (void*)fake_strstr, (void**)&real_fekit_strstr_ptr);
+        LOGI("libfekit: inline hooked strstr");
+    }
 }
 
 } // namespace hook_libfekit

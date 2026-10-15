@@ -50,6 +50,14 @@ public class DexKitCacheManager {
     }
 
     public static Map<String, List<DexMethodData>> loadCache(XC_LoadPackage.LoadPackageParam lpparam) {
+        Map<String, List<DexMethodData>> diskResult = loadFromDisk(lpparam);
+        if (diskResult != null && !diskResult.isEmpty()) {
+            return diskResult;
+        }
+        return loadFromAssets(lpparam);
+    }
+
+    private static Map<String, List<DexMethodData>> loadFromDisk(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             File cacheFile = getCacheFile(lpparam);
             if (cacheFile == null || !cacheFile.exists() || cacheFile.length() == 0) {
@@ -58,13 +66,9 @@ public class DexKitCacheManager {
             }
 
             String apkPath = lpparam.appInfo != null ? lpparam.appInfo.sourceDir : null;
-            if (apkPath == null) {
-                return null;
-            }
+            if (apkPath == null) return null;
             File apkFile = new File(apkPath);
-            if (!apkFile.exists()) {
-                return null;
-            }
+            if (!apkFile.exists()) return null;
 
             long currentApkModified = apkFile.lastModified();
             long currentApkLength = apkFile.length();
@@ -80,24 +84,19 @@ public class DexKitCacheManager {
 
             JSONObject root = new JSONObject(sb.toString());
 
-            // 1. Validate schema version & module version
+            // 1. Validate schema version (compatible across module revisions)
             int schemaVersion = root.optInt("schemaVersion", 0);
-            int moduleVerCode = root.optInt("moduleVersionCode", 0);
-            String moduleVerName = root.optString("moduleVersionName", "");
-
-            if (schemaVersion != HookConfig.CACHE_SCHEMA_VERSION ||
-                moduleVerCode != HookConfig.MODULE_VERSION_CODE ||
-                !HookConfig.MODULE_VERSION_NAME.equals(moduleVerName)) {
-                XposedBridge.log("[" + TAG + "] Cache invalidated: Module updated (cached code=" + moduleVerCode + ", current=" + HookConfig.MODULE_VERSION_CODE + ")");
+            if (schemaVersion != HookConfig.CACHE_SCHEMA_VERSION) {
+                XposedBridge.log("[" + TAG + "] Cache schema version mismatch: cached=" + schemaVersion + ", current=" + HookConfig.CACHE_SCHEMA_VERSION);
                 return null;
             }
 
-            // 2. Validate APK identity (timestamp + size)
+            // 2. Validate target APK identity (timestamp + size)
             long cachedApkModified = root.optLong("apkLastModified", 0L);
             long cachedApkLength = root.optLong("apkLength", 0L);
 
-            if (cachedApkModified != currentApkModified || cachedApkLength != currentApkLength) {
-                XposedBridge.log("[" + TAG + "] Cache invalidated: Target APK modified/updated (time: " + cachedApkModified + " -> " + currentApkModified + ", size: " + cachedApkLength + " -> " + currentApkLength + ")");
+            if (cachedApkModified != 0 && currentApkModified != 0 && (cachedApkModified != currentApkModified || cachedApkLength != currentApkLength)) {
+                XposedBridge.log("[" + TAG + "] Cache invalidated: Target APK updated (time: " + cachedApkModified + " -> " + currentApkModified + ", size: " + cachedApkLength + " -> " + currentApkLength + ")");
                 return null;
             }
 
@@ -108,34 +107,96 @@ public class DexKitCacheManager {
                 return null;
             }
 
-            Map<String, List<DexMethodData>> resultMap = new HashMap<>();
-            int totalMethods = 0;
-            Iterator<String> keys = methodsObj.keys();
-            while (keys.hasNext()) {
-                String key = keys.next();
-                JSONArray arr = methodsObj.optJSONArray(key);
-                List<DexMethodData> list = new ArrayList<>();
-                if (arr != null) {
-                    for (int i = 0; i < arr.length(); i++) {
-                        JSONObject mObj = arr.optJSONObject(i);
-                        if (mObj != null) {
-                            try {
-                                list.add(DexMethodData.fromJson(mObj));
-                            } catch (Exception ignored) { }
-                        }
-                    }
-                }
-                resultMap.put(key, list);
-                totalMethods += list.size();
-            }
-
-            XposedBridge.log("[" + TAG + "] Cache HIT! Loaded " + totalMethods + " methods across " + resultMap.size() + " categories from disk cache: " + cacheFile.getAbsolutePath());
+            Map<String, List<DexMethodData>> resultMap = parseMethodsMap(methodsObj);
+            XposedBridge.log("[" + TAG + "] Disk Cache HIT! Loaded " + resultMap.size() + " categories from disk cache: " + cacheFile.getAbsolutePath());
             return resultMap;
 
         } catch (Throwable t) {
             XposedBridge.log("[" + TAG + "] Error reading disk cache: " + t.getMessage());
             return null;
         }
+    }
+
+    private static Map<String, List<DexMethodData>> loadFromAssets(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            String jsonStr = null;
+            String modulePath = io.github.xalsace.qqbypass.XposedEntry.MODULE_PATH;
+            if (modulePath != null && new File(modulePath).exists()) {
+                try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(modulePath)) {
+                    java.util.zip.ZipEntry ze = zf.getEntry("assets/qqbypass_dexkit_cache.json");
+                    if (ze != null) {
+                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(zf.getInputStream(ze), StandardCharsets.UTF_8))) {
+                            StringBuilder sb = new StringBuilder();
+                            String line;
+                            while ((line = reader.readLine()) != null) sb.append(line);
+                            jsonStr = sb.toString();
+                        }
+                    }
+                }
+            }
+
+            if (jsonStr == null) {
+                File appDir = new File("/data/app");
+                if (appDir.exists() && appDir.isDirectory()) {
+                    File[] subdirs = appDir.listFiles((dir, name) -> name.contains("io.github.xalsace.qqbypass"));
+                    if (subdirs != null) {
+                        for (File subdir : subdirs) {
+                            File apk = new File(subdir, "base.apk");
+                            if (apk.exists()) {
+                                try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(apk)) {
+                                    java.util.zip.ZipEntry ze = zf.getEntry("assets/qqbypass_dexkit_cache.json");
+                                    if (ze != null) {
+                                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(zf.getInputStream(ze), StandardCharsets.UTF_8))) {
+                                            StringBuilder sb = new StringBuilder();
+                                            String line;
+                                            while ((line = reader.readLine()) != null) sb.append(line);
+                                            jsonStr = sb.toString();
+                                            break;
+                                        }
+                                    }
+                                } catch (Throwable ignored) {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (jsonStr != null) {
+                JSONObject root = new JSONObject(jsonStr);
+                JSONObject methodsObj = root.optJSONObject("methods");
+                if (methodsObj != null) {
+                    Map<String, List<DexMethodData>> resultMap = parseMethodsMap(methodsObj);
+                    XposedBridge.log("[" + TAG + "] Bundled Asset Cache HIT! Restored " + resultMap.size() + " categories from module assets");
+                    saveCache(lpparam, resultMap);
+                    return resultMap;
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("[" + TAG + "] Failed to load bundled asset cache: " + t.getMessage());
+        }
+        return null;
+    }
+
+    private static Map<String, List<DexMethodData>> parseMethodsMap(JSONObject methodsObj) {
+        Map<String, List<DexMethodData>> resultMap = new HashMap<>();
+        Iterator<String> keys = methodsObj.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            JSONArray arr = methodsObj.optJSONArray(key);
+            List<DexMethodData> list = new ArrayList<>();
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject mObj = arr.optJSONObject(i);
+                    if (mObj != null) {
+                        try {
+                            list.add(DexMethodData.fromJson(mObj));
+                        } catch (Exception ignored) { }
+                    }
+                }
+            }
+            resultMap.put(key, list);
+        }
+        return resultMap;
     }
 
     public static boolean saveCache(XC_LoadPackage.LoadPackageParam lpparam, Map<String, List<DexMethodData>> methodMap) {

@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import io.github.xalsace.qqbypass.config.HookConfig;
 
 /**
  * DexKit-based detector for dynamically locating obfuscated detection points in QQ.
@@ -80,12 +81,20 @@ public class DexKitDetector {
      */
     public static void init(String apkPath) {
         if (ready && dexKitBridge != null) return;
+        if (!enabled || !HookConfig.ENABLE_DEXKIT || android.os.Build.VERSION.SDK_INT >= 35) {
+            ready = true;
+            readyLatch.countDown();
+            return;
+        }
         synchronized (initLock) {
             if (dexKitBridge != null) return;
             try {
                 XposedBridge.log("[" + TAG + "] Initializing DexKit with APK: " + apkPath);
                 loadDexKitNativeLib();
                 dexKitBridge = DexKitBridge.create(apkPath);
+                try {
+                    dexKitBridge.setThreadNum(1);
+                } catch (Throwable ignored) {}
                 ready = true;
                 XposedBridge.log("[" + TAG + "] DexKit initialized successfully");
             } catch (Throwable e) {
@@ -101,6 +110,12 @@ public class DexKitDetector {
      * Full scan and cache generation workflow on cache miss.
      */
     public static void scanAndCache(String apkPath, XC_LoadPackage.LoadPackageParam lpparam) {
+        if (!enabled || !HookConfig.ENABLE_DEXKIT || android.os.Build.VERSION.SDK_INT >= 35) {
+            XposedBridge.log("[" + TAG + "] DexKit dynamic scan skipped: disabled or Android 15/16+ jemalloc protection");
+            ready = true;
+            readyLatch.countDown();
+            return;
+        }
         init(apkPath);
         if (dexKitBridge == null) {
             XposedBridge.log("[" + TAG + "] DexKit bridge unavailable, scan aborted");

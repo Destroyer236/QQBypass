@@ -1,6 +1,8 @@
 #ifndef NATIVE_BYPASS_HOOK_LIBTURINGXQ_H
 #define NATIVE_BYPASS_HOOK_LIBTURINGXQ_H
 
+#include "hook_libc.h"
+
 namespace hook_libturingxq {
 
 /**
@@ -9,6 +11,7 @@ namespace hook_libturingxq {
  * - Risk detection and reporting
  */
 void install_hooks();
+void install_hooks_for_handle(void* handle, HookFunType hook_func);
 
 } // namespace hook_libturingxq
 

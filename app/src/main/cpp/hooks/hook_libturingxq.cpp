@@ -1,82 +1,77 @@
 #include "hook_libturingxq.h"
 #include "hook_libc.h"
 #include "../utils/log.h"
+#include "../utils/safe_bytehook.h"
 #include <bytehook.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <dlfcn.h>
 
 namespace hook_libturingxq {
 
 typedef long (*real_syscall_t)(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6);
+static real_syscall_t original_syscall = nullptr;
 static real_syscall_t original_real_syscall = nullptr;
+static char* (*real_xq_strstr_ptr)(const char*, const char*) = nullptr;
 
-/**
- * libturingxq.so 内部自带 real_syscall 汇编实现 (svc #0)，
- * 并在内部通过 real_syscall@plt 绕过 libc 直接发起底层系统调用：
- * - 0x38 (56, __NR_openat): 探测 /proc/self/maps 及 root/magisk 敏感路径
- * - 0x4f (79, __NR_newfstatat): 探测文件元数据
- * - 0xc6 (198, socket), 0xce (206, sendto), 0xcf (207, recvfrom): 网络通信
- *
- * 策略：拦截 openat 与 newfstatat 的敏感路径探测与 maps/mounts 扫描，
- * 对网络指令及其他正常 syscall 完全放行，确保合规与正常业务通信。
- */
+static long hooked_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6) {
+    long ret = hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
+    if (ret != -1 || (number != 56 && number != 79 && number != 48 && number != 439 && number != 78)) {
+        return ret;
+    }
+    if (original_syscall) {
+        return original_syscall(number, a1, a2, a3, a4, a5, a6);
+    }
+    return ret;
+}
+
 static long hooked_real_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6) {
-    // 56: __NR_openat
-    if (number == 56) {
-        const char* path = (const char*)a2;
-        if (path) {
-            if (hook_libc::is_sensitive_path(path)) {
-                LOGD("libturingxq: real_syscall openat blocked sensitive: %s", path);
-                errno = ENOENT;
-                return -1;
-            }
-            if (strcmp(path, "/proc/self/maps") == 0 ||
-                (strstr(path, "/proc/") && strstr(path, "/maps"))) {
-                LOGI("libturingxq: real_syscall openat maps redirected: %s", path);
-                FILE* fake = hook_libc::build_filtered_maps();
-                if (fake) {
-                    int fd = dup(fileno(fake));
-                    fclose(fake);
-                    return fd;
-                }
-            }
-            if (strcmp(path, "/proc/mounts") == 0 ||
-                strcmp(path, "/proc/self/mounts") == 0 ||
-                strcmp(path, "/proc/self/mountinfo") == 0) {
-                LOGI("libturingxq: real_syscall openat mounts redirected: %s", path);
-                FILE* fake = hook_libc::build_filtered_mounts();
-                if (fake) {
-                    int fd = dup(fileno(fake));
-                    fclose(fake);
-                    return fd;
-                }
-            }
-        }
+    long ret = hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
+    if (ret != -1 || (number != 56 && number != 79 && number != 48 && number != 439 && number != 78)) {
+        return ret;
     }
-    // 79: __NR_newfstatat
-    else if (number == 79) {
-        const char* path = (const char*)a2;
-        if (path && hook_libc::is_sensitive_path(path)) {
-            LOGD("libturingxq: real_syscall newfstatat blocked sensitive: %s", path);
-            errno = ENOENT;
-            return -1;
-        }
-    }
-
-    // 网络及其他 syscall (198 socket, 206 sendto, 207 recvfrom 等) 原样放行
     if (original_real_syscall) {
         return original_real_syscall(number, a1, a2, a3, a4, a5, a6);
     }
-    return -1;
+    return ret;
+}
+
+static char* fake_xq_strstr(const char* haystack, const char* needle) {
+    SAFE_BYTEHOOK_SCOPE();
+    char* result = real_xq_strstr_ptr ? real_xq_strstr_ptr(haystack, needle) : BYTEHOOK_CALL_PREV(fake_xq_strstr, haystack, needle);
+    if (result && needle) {
+        const char* sensitive[] = {
+            "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", "ksu", "apatch", "shamiko",
+            "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa", "epic", "pine", "taichi", "liblspd",
+            "qqbypass", "xalsace", "libnative-bypass", "libbytehook", "bytehook", "trampoline",
+            "qauxv", "io.github.qauxv", "libqauxv", "cc.ioctl", "qnotified", nullptr
+        };
+        for (int i = 0; sensitive[i]; i++) {
+            if (strcasecmp(needle, sensitive[i]) == 0 || strstr(needle, sensitive[i])) {
+                LOGD("libturingxq: Blocked strstr match: %s", needle);
+                return nullptr;
+            }
+        }
+    }
+    return result;
 }
 
 void install_hooks() {
     LOGI("Installing libturingxq direct syscall hooks (ByteHook)...");
 
-    bytehook_stub_t stub = bytehook_hook_single(
+    bytehook_hook_single(
+        "libturingxq.so",
+        nullptr,
+        "syscall",
+        (void*)hooked_syscall,
+        nullptr,
+        (void**)&original_syscall
+    );
+
+    bytehook_hook_single(
         "libturingxq.so",
         nullptr,
         "real_syscall",
@@ -85,17 +80,38 @@ void install_hooks() {
         (void**)&original_real_syscall
     );
 
-    if (stub == nullptr) {
-        LOGW("libturingxq.so not loaded yet; registering global real_syscall hook fallback");
-        bytehook_hook_all(
-            nullptr,
-            "real_syscall",
-            (void*)hooked_real_syscall,
-            nullptr,
-            (void**)&original_real_syscall
-        );
-    } else {
-        LOGI("libturingxq real_syscall hook installed successfully");
+    bytehook_hook_single(
+        "libturingxq.so",
+        nullptr,
+        "strstr",
+        (void*)fake_xq_strstr,
+        nullptr,
+        nullptr
+    );
+
+    LOGI("libturingxq hooks installed (syscall, real_syscall, strstr)");
+}
+
+void install_hooks_for_handle(void* handle, HookFunType hook_func) {
+    if (!handle || !hook_func) return;
+    LOGI("Installing libturingxq inline hooks for handle...");
+
+    void* sym_syscall = dlsym(handle, "syscall");
+    if (sym_syscall) {
+        hook_func(sym_syscall, (void*)hooked_syscall, (void**)&original_syscall);
+        LOGI("libturingxq: inline hooked syscall");
+    }
+
+    void* sym_real_syscall = dlsym(handle, "real_syscall");
+    if (sym_real_syscall) {
+        hook_func(sym_real_syscall, (void*)hooked_real_syscall, (void**)&original_real_syscall);
+        LOGI("libturingxq: inline hooked real_syscall");
+    }
+
+    void* sym_strstr = dlsym(handle, "strstr");
+    if (sym_strstr) {
+        hook_func(sym_strstr, (void*)fake_xq_strstr, (void**)&real_xq_strstr_ptr);
+        LOGI("libturingxq: inline hooked strstr");
     }
 }
 

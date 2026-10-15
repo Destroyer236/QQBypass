@@ -18,10 +18,19 @@ import io.github.xalsace.qqbypass.hooks.*;
  * - Network reporting interception
  * - Device info spoofing with cross-validation protection
  */
-public class XposedEntry implements IXposedHookLoadPackage {
+import de.robv.android.xposed.IXposedHookZygoteInit;
+
+public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     private static final String TAG = "QQEnhancedBypass";
     private static final String TARGET_PACKAGE = "com.tencent.mobileqq";
+    public static String MODULE_PATH = null;
+
+    @Override
+    public void initZygote(StartupParam startupParam) throws Throwable {
+        MODULE_PATH = startupParam.modulePath;
+        log("initZygote: MODULE_PATH=" + MODULE_PATH);
+    }
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
@@ -36,21 +45,19 @@ public class XposedEntry implements IXposedHookLoadPackage {
         // Initialize configuration
         HookConfig.init(lpparam);
 
-        // Process gate: DexKitBridge.create() parses the whole ~112MB APK. QQ runs
-        // several processes (main, :MSF, ...); parsing in every one caused a
-        // memory/CPU spike that could get the process killed on cold start (the
-        // "1-2s flash-exit"). Only the main process runs DexKit; subprocesses keep
-        // the cheap universal framework hooks. main process: processName == packageName.
+        // Process gate: DexKit parses the whole ~112MB APK. QQ runs
+        // several processes (main, :MSF, ...). Subprocesses keep
+        // the cheap universal framework hooks.
         boolean isMainProcess = lpparam.packageName.equals(lpparam.processName);
-        DexKitDetector.setEnabled(isMainProcess);
-        log("DexKit enabled for this process: " + isMainProcess);
+        DexKitDetector.setEnabled(isMainProcess && HookConfig.ENABLE_DEXKIT);
+        log("DexKit enabled for this process: " + (isMainProcess && HookConfig.ENABLE_DEXKIT));
 
-        // === DexKit Disk Cache Check (< 5ms) ===
-        // If app and module versions are unchanged, load cached method signatures from disk directly
+        // === DexKit Disk / Asset Cache Check (< 5ms) ===
+        // If valid cache exists on disk or in bundled assets, load cached method signatures directly
         boolean cacheHit = DexKitDetector.tryInitWithCache(lpparam);
         if (cacheHit) {
-            log("=== DexKit: Disk cache HIT! Restored " + DexKitDetector.getCachedCount() + " detection points from disk, DexKit scan skipped ===");
-        } else if (isMainProcess) {
+            log("=== DexKit: Cache HIT! Restored " + DexKitDetector.getCachedCount() + " detection points, native DexKit scan skipped ===");
+        } else if (isMainProcess && HookConfig.ENABLE_DEXKIT) {
             // === DexKit Dynamic Detection (Background Thread) on Cache Miss ===
             new Thread(() -> {
                 try {
@@ -110,6 +117,9 @@ public class XposedEntry implements IXposedHookLoadPackage {
             // Layer 8: QAuxv (QNotified) compatibility & BaseApk crash prevention
             io.github.xalsace.qqbypass.hooks.QAuxvCompatHook.hook(lpparam);
 
+            // Layer 9: Dynamic secondary dex & Tinker hot patch lifecycle monitor
+            hookClassLoaderAndLifecycle(lpparam);
+
             // === Report Status ===
             log("=== Java Hooks Initialized ===");
             log("Initial Protection Level: " + UnifiedHookCoordinator.getProtectionLevel());
@@ -128,6 +138,60 @@ public class XposedEntry implements IXposedHookLoadPackage {
     @Deprecated
     private void initNativeHooks() {
         // This method is kept for compatibility but functionality moved to UnifiedHookCoordinator
+    }
+
+    private static final java.util.Set<ClassLoader> sObservedLoaders =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    public static void dispatchLateStageHooks(ClassLoader cl) {
+        if (cl == null || sObservedLoaders.contains(cl)) return;
+        sObservedLoaders.add(cl);
+        try {
+            log("[Lifecycle] New ClassLoader observed: " + cl.getClass().getName() + ", dispatching late-stage hooks");
+            QQ950PatchHook.hookLateStage(cl);
+            DynamicRootDetectionHook.hookLateStage(cl);
+        } catch (Throwable t) {
+            logError("Error dispatching late-stage hooks: " + t.getMessage(), t);
+        }
+    }
+
+    private static void hookClassLoaderAndLifecycle(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            // 1. Hook Application.attachBaseContext(Context)
+            de.robv.android.xposed.XposedHelpers.findAndHookMethod(
+                "android.app.Application",
+                lpparam.classLoader,
+                "attachBaseContext",
+                android.content.Context.class,
+                new de.robv.android.xposed.XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        android.content.Context ctx = (android.content.Context) param.args[0];
+                        if (ctx != null) {
+                            dispatchLateStageHooks(ctx.getClassLoader());
+                        }
+                    }
+                }
+            );
+        } catch (Throwable t) {
+            log("Failed to hook Application.attachBaseContext: " + t.getMessage());
+        }
+
+        try {
+            // 2. Hook dalvik.system.BaseDexClassLoader constructors
+            de.robv.android.xposed.XposedBridge.hookAllConstructors(
+                dalvik.system.BaseDexClassLoader.class,
+                new de.robv.android.xposed.XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        ClassLoader cl = (ClassLoader) param.thisObject;
+                        dispatchLateStageHooks(cl);
+                    }
+                }
+            );
+        } catch (Throwable t) {
+            log("Failed to hook BaseDexClassLoader constructors: " + t.getMessage());
+        }
     }
 
     public static void log(String message) {

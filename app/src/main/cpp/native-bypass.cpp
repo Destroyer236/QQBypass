@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
+#include <dlfcn.h>
 #include <bytehook.h>
 #include "utils/log.h"
 #include "hooks/hook_libc.h"
@@ -14,37 +15,94 @@
 #include "hooks/hook_libturingmfa.h"
 
 /**
- * Native Bypass Module for QQ Enhanced Bypass
+ * Native Bypass Module for QQ Enhanced Bypass (Dual Engine: LSPosed NativeHook + ByteHook)
  *
- * This module provides native-level hooks to bypass detection mechanisms
- * that cannot be handled by Java-layer Xposed hooks.
+ * This module provides dual-layer native protection against QQ & Tencent risk detection:
+ * - Engine 1: LSPosed NativeHook (Inline hooking directly into libc and security SOs at instruction level)
+ * - Engine 2: ByteHook (Automatic PLT/GOT hooking across library linkage boundaries)
  *
  * Key targets:
- * - libc: File I/O interception (/proc/self/maps, /proc/self/status)
+ * - libc: File I/O interception (/proc/self/maps, /proc/self/status, mounts, syscalls)
  * - libfekit.so: Root/Xposed detection
  * - libturingxq.so: ART integrity checks and risk reporting
  * - libMSFKernel.so: qimei36 fingerprint injection (QQ 9.3.50+)
  * - libQSec.so: Anti-hook detection (dlopen/dlsym/dladdr)
- * - libturingmfa.so: Risk reporting channel
+ * - libturingmfa.so: Multi-factor authentication & face ID engine (syscall & real_syscall interception)
  * - libMSF hooks: Signature verification (experimental)
  */
 
-static bool g_hooks_installed = false;
+typedef void (*NativeOnModuleLoaded)(const char *name, void *handle);
+
+typedef struct {
+    uint32_t version;
+    HookFunType hook_func;
+    void* unhook_func;
+} NativeAPIEntries;
+
+#include "utils/safe_bytehook.h"
+
+NativeAPIEntries g_lsposed_api = {0, nullptr, nullptr};
+bool g_lsposed_initialized = false;
+bool g_bytehook_hooks_installed = false;
 static pthread_mutex_t g_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /**
- * Install all hooks in a background thread
+ * LSPosed dlopen notification callback
+ */
+static void on_module_loaded(const char* name, void* handle) {
+    if (!name || !handle) return;
+    LOGI("[LSPosedNative] on_module_loaded: %s", name);
+
+    if (g_lsposed_api.hook_func) {
+        if (strstr(name, "libturingmfa.so")) {
+            LOGI("[LSPosedNative] Detected libturingmfa.so -> applying inline hooks");
+            install_turingmfa_hooks_for_handle(handle, g_lsposed_api.hook_func);
+        } else if (strstr(name, "libfekit.so")) {
+            LOGI("[LSPosedNative] Detected libfekit.so -> applying inline hooks");
+            hook_libfekit::install_hooks_for_handle(handle, g_lsposed_api.hook_func);
+        } else if (strstr(name, "libturingxq.so")) {
+            LOGI("[LSPosedNative] Detected libturingxq.so -> applying inline hooks");
+            hook_libturingxq::install_hooks_for_handle(handle, g_lsposed_api.hook_func);
+        }
+    }
+}
+
+/**
+ * LSPosed Native Hook Entry Point (native_init)
+ * Exported with default visibility so LSPosed framework loader can resolve and call it.
+ */
+extern "C" __attribute__((visibility("default"))) __attribute__((used))
+NativeOnModuleLoaded native_init(const NativeAPIEntries *entries) {
+    LOGI("=== LSPosed Native Hook Entry Point Called (native_init) ===");
+    if (!entries) {
+        LOGE("native_init: entries pointer is null");
+        return nullptr;
+    }
+
+    LOGI("LSPosed Native API version: %u, hook_func: %p", entries->version, (void*)entries->hook_func);
+    g_lsposed_api = *entries;
+    g_lsposed_initialized = true;
+
+    // 1. Immediately inline-hook libc primitives at the lowest instruction level
+    if (g_lsposed_api.hook_func) {
+        hook_libc::install_inline_hooks(g_lsposed_api.hook_func);
+    }
+
+    // 2. Return on_module_loaded callback to intercept future dlopened security SOs
+    return on_module_loaded;
+}
+
+/**
+ * Install all hooks via ByteHook in a background thread
  */
 static void* install_hooks_thread(void* arg) {
     (void)arg;
-    LOGI("=== Native Bypass Module Starting ===");
+    LOGI("=== Native Bypass Module (ByteHook Engine) Starting ===");
     LOGI("Process: %d", getpid());
-
-    // Immediate installation to eliminate cold-start blind spot (ByteHook AUTOMATIC mode handles future dlopened libs)
 
     pthread_mutex_lock(&g_init_mutex);
 
-    if (g_hooks_installed) {
+    if (g_bytehook_hooks_installed) {
         pthread_mutex_unlock(&g_init_mutex);
         return nullptr;
     }
@@ -59,9 +117,9 @@ static void* install_hooks_thread(void* arg) {
     LOGI("ByteHook initialized (AUTOMATIC mode)");
 
     // Install hooks in order of importance
-    LOGI("Installing hooks...");
+    LOGI("Installing ByteHook hooks...");
 
-    // 1. libc hooks (highest priority - intercept file I/O)
+    // 1. libc hooks (highest priority - intercept file I/O & syscalls)
     hook_libc::install_hooks();
 
     // 2. libfekit.so hooks (root/xposed detection)
@@ -73,13 +131,13 @@ static void* install_hooks_thread(void* arg) {
     // 4. QQ 9.3.50+ extended hooks
     install_qsec_hooks();        // Anti-hook detection
     install_msfkernel_hooks();   // qimei36 fingerprint injection
-    install_turingmfa_hooks();   // Risk reporting channel
+    install_turingmfa_hooks();   // Multi-factor authentication & face verification
 
     // 5. libMSF hooks (signature verification bypass)
     hook_libmsf::install_hooks();
 
-    g_hooks_installed = true;
-    LOGI("=== All Native Hooks Installed Successfully ===");
+    g_bytehook_hooks_installed = true;
+    LOGI("=== All ByteHook Native Hooks Installed Successfully ===");
 
     pthread_mutex_unlock(&g_init_mutex);
 
@@ -87,24 +145,29 @@ static void* install_hooks_thread(void* arg) {
 }
 
 /**
- * Initialize native hooks
+ * Initialize native hooks (called from Java layer)
  */
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_initNativeHooksNative(JNIEnv* env, jclass clazz) {
     (void)env;
     (void)clazz;
-    LOGI("initNativeHooks called");
+    LOGI("initNativeHooks called from Java layer");
 
-    if (g_hooks_installed) {
-        LOGW("Native hooks already installed");
+    if (g_lsposed_initialized) {
+        LOGI("LSPosed NativeHook is active! Skipping ByteHook to prevent conflicts.");
         return;
     }
 
-    // Install hooks in background thread to avoid blocking
+    if (g_bytehook_hooks_installed) {
+        LOGW("ByteHook native hooks already installed");
+        return;
+    }
+
+    // Install hooks in background thread to avoid blocking main thread
     pthread_t thread;
     if (pthread_create(&thread, nullptr, install_hooks_thread, nullptr) == 0) {
         pthread_detach(thread);
-        LOGI("Hook installation thread started");
+        LOGI("ByteHook installation thread started");
     } else {
         LOGE("Failed to create hook installation thread");
     }
@@ -117,7 +180,7 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_isHooksInstalledNative(JNIEnv* env, jclass clazz) {
     (void)env;
     (void)clazz;
-    return g_hooks_installed;
+    return (g_bytehook_hooks_installed || g_lsposed_initialized);
 }
 
 /**
@@ -126,11 +189,12 @@ Java_io_github_xalsace_qqbypass_NativeBypass_isHooksInstalledNative(JNIEnv* env,
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_xalsace_qqbypass_NativeBypass_getHookStatusNative(JNIEnv* env, jclass clazz) {
     (void)clazz;
-    if (g_hooks_installed) {
-        return env->NewStringUTF("Native hooks installed successfully");
-    } else {
-        return env->NewStringUTF("Native hooks not installed yet");
-    }
+    char status_buf[256];
+    snprintf(status_buf, sizeof(status_buf),
+             "Native hooks installed: LSPosed InlineHook=%s, ByteHook PLT=%s",
+             g_lsposed_initialized ? "active" : "standby",
+             g_bytehook_hooks_installed ? "active" : "standby");
+    return env->NewStringUTF(status_buf);
 }
 
 /**
@@ -149,78 +213,12 @@ Java_io_github_xalsace_qqbypass_NativeBypass_notifyDetectionNative(
     // Handle different events
     if (strcmp(event_str, "file_blocked") == 0) {
         LOGD("Java layer blocked file access: %s", data_str);
-    } else if (strcmp(event_str, "package_hidden") == 0) {
-        LOGD("Java layer hid package: %s", data_str);
+    } else if (strcmp(event_str, "package_blocked") == 0) {
+        LOGD("Java layer blocked package query: %s", data_str);
+    } else if (strcmp(event_str, "class_blocked") == 0) {
+        LOGD("Java layer blocked class load: %s", data_str);
     }
 
     env->ReleaseStringUTFChars(event, event_str);
     env->ReleaseStringUTFChars(data, data_str);
-}
-
-/**
- * Check if specific hook is active
- */
-extern "C" JNIEXPORT jboolean JNICALL
-Java_io_github_xalsace_qqbypass_NativeBypass_isHookActiveNative(
-    JNIEnv* env, jclass clazz, jstring hookName) {
-    (void)clazz;
-
-    const char* hook_name = env->GetStringUTFChars(hookName, nullptr);
-    bool is_active = false;
-
-    // Check specific hooks
-    if (strcmp(hook_name, "fopen") == 0 ||
-        strcmp(hook_name, "fgets") == 0 ||
-        strcmp(hook_name, "system") == 0) {
-        is_active = g_hooks_installed;
-    }
-
-    env->ReleaseStringUTFChars(hookName, hook_name);
-    return is_active;
-}
-
-/**
- * Get detailed hook statistics
- */
-static int g_fopen_intercepts = 0;
-static int g_fgets_intercepts = 0;
-static int g_system_blocks = 0;
-
-extern "C" JNIEXPORT jstring JNICALL
-Java_io_github_xalsace_qqbypass_NativeBypass_getHookStatisticsNative(
-    JNIEnv* env, jclass clazz) {
-    (void)clazz;
-
-    char stats[512];
-    snprintf(stats, sizeof(stats),
-        "Native Hook Statistics:\n"
-        "- Hooks Installed: %s\n"
-        "- fopen intercepts: %d\n"
-        "- fgets intercepts: %d\n"
-        "- system() blocks: %d\n"
-        "- Protection Level: %s",
-        g_hooks_installed ? "Yes" : "No",
-        g_fopen_intercepts,
-        g_fgets_intercepts,
-        g_system_blocks,
-        g_hooks_installed ? "Full (80%)" : "Partial (30%)");
-
-    return env->NewStringUTF(stats);
-}
-
-/**
- * JNI_OnLoad - called when library is loaded
- */
-JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
-    (void)reserved;
-    LOGI("=== Native Bypass Library Loaded ===");
-
-    JNIEnv* env;
-    if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
-        LOGE("Failed to get JNI environment");
-        return JNI_ERR;
-    }
-
-    LOGI("JNI_OnLoad complete, waiting for initNativeHooks() call");
-    return JNI_VERSION_1_6;
 }

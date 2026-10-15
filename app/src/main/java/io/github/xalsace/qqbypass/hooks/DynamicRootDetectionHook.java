@@ -160,12 +160,12 @@ public class DynamicRootDetectionHook {
      * com.tencent.beacon.a.c.e:
      * - m(): device hardware provider root check (returns false)
      */
-    private static volatile boolean sBeaconDHooked = false;
-    private static volatile boolean sBeaconEHooked = false;
+    private static final java.util.Set<Class<?>> sHookedBeaconClasses =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     private static void hookBeaconClassD(Class<?> beaconUtilD) {
-        if (sBeaconDHooked || beaconUtilD == null) return;
-        sBeaconDHooked = true;
+        if (beaconUtilD == null || sHookedBeaconClasses.contains(beaconUtilD)) return;
+        sHookedBeaconClasses.add(beaconUtilD);
         try {
             XC_MethodHook falseHook = new XC_MethodHook() {
                 @Override
@@ -199,8 +199,8 @@ public class DynamicRootDetectionHook {
     }
 
     private static void hookBeaconClassE(Class<?> beaconDevInfo) {
-        if (sBeaconEHooked || beaconDevInfo == null) return;
-        sBeaconEHooked = true;
+        if (beaconDevInfo == null || sHookedBeaconClasses.contains(beaconDevInfo)) return;
+        sHookedBeaconClasses.add(beaconDevInfo);
         try {
             HookUtils.hookAllMethods(beaconDevInfo, "m", new XC_MethodHook() {
                 @Override
@@ -214,19 +214,76 @@ public class DynamicRootDetectionHook {
         }
     }
 
-    /**
-     * Intercept Tencent Beacon Root Detection:
-     * com.tencent.beacon.base.util.d:
-     * - d(): overall root status (returns false)
-     * - a(): su command execution probe (returns false)
-     * - b(): /system/app/Superuser.apk probe (returns false)
-     * - c(): Build.TAGS test-keys probe (returns false)
-     * - e(): executes "/system/bin/sh -c type su" via RuntimeMonitor.exec (neutralized to return empty list)
-     * - static boolean a: latched root flag (force to false)
-     *
-     * com.tencent.beacon.a.c.e:
-     * - m(): device hardware provider root check (returns false)
-     */
+    private static void hookBeaconReport(Class<?> beaconReportCls) {
+        if (beaconReportCls == null || sHookedBeaconClasses.contains(beaconReportCls)) return;
+        sHookedBeaconClasses.add(beaconReportCls);
+        try {
+            HookUtils.hookAllMethods(beaconReportCls, "report", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] != null) {
+                        Object event = param.args[0];
+                        try {
+                            String code = (String) de.robv.android.xposed.XposedHelpers.callMethod(event, "getCode");
+                            if (code != null) {
+                                String lower = code.toLowerCase();
+                                if (lower.contains("root") || lower.contains("security") || lower.contains("su") || lower.contains("risk") || lower.contains("check")) {
+                                    Class<?> eventResultCls = de.robv.android.xposed.XposedHelpers.findClassIfExists("com.tencent.beacon.event.open.EventResult", event.getClass().getClassLoader());
+                                    if (eventResultCls != null) {
+                                        Object successResult = de.robv.android.xposed.XposedHelpers.newInstance(eventResultCls, 0, 0L, "ok");
+                                        param.setResult(successResult);
+                                    } else {
+                                        param.setResult(null);
+                                    }
+                                    XposedEntry.log("[BeaconReport] Dropped security event: " + code);
+                                }
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            });
+            XposedEntry.log("[BeaconReport] Neutralized BeaconReport.report for security/root events");
+        } catch (Throwable t) {
+            XposedEntry.log("[BeaconReport] Failed to hook BeaconReport: " + t.getMessage());
+        }
+    }
+
+    public static void hookLateStage(ClassLoader cl) {
+        if (cl == null) return;
+        try {
+            Class<?> beaconUtilD = de.robv.android.xposed.XposedHelpers.findClassIfExists("com.tencent.beacon.base.util.d", cl);
+            if (beaconUtilD != null) {
+                hookBeaconClassD(beaconUtilD);
+            }
+            Class<?> beaconDevInfo = de.robv.android.xposed.XposedHelpers.findClassIfExists("com.tencent.beacon.a.c.e", cl);
+            if (beaconDevInfo != null) {
+                hookBeaconClassE(beaconDevInfo);
+            }
+            Class<?> beaconReportCls = de.robv.android.xposed.XposedHelpers.findClassIfExists("com.tencent.beacon.event.open.BeaconReport", cl);
+            if (beaconReportCls != null) {
+                hookBeaconReport(beaconReportCls);
+            }
+            Class<?> userInfoImpl = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                "com.tencent.gathererga.core.internal.provider.impl.UserInfoImpl", cl);
+            if (userInfoImpl != null && !sHookedBeaconClasses.contains(userInfoImpl)) {
+                sHookedBeaconClasses.add(userInfoImpl);
+                HookUtils.hookAllMethods(userInfoImpl, "isRooted", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        Object result = param.getResult();
+                        if (result != null) {
+                            try {
+                                de.robv.android.xposed.XposedHelpers.setObjectField(result, "b", Boolean.FALSE);
+                            } catch (Throwable ignored) {}
+                        }
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedEntry.log("[BeaconRoot] hookLateStage error: " + t.getMessage());
+        }
+    }
+
     private static void hookBeaconRootCheck(XC_LoadPackage.LoadPackageParam lpparam) {
         ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
         if (cl != null) {
@@ -237,6 +294,10 @@ public class DynamicRootDetectionHook {
             Class<?> beaconDevInfo = de.robv.android.xposed.XposedHelpers.findClassIfExists("com.tencent.beacon.a.c.e", cl);
             if (beaconDevInfo != null) {
                 hookBeaconClassE(beaconDevInfo);
+            }
+            Class<?> beaconReportCls = de.robv.android.xposed.XposedHelpers.findClassIfExists("com.tencent.beacon.event.open.BeaconReport", cl);
+            if (beaconReportCls != null) {
+                hookBeaconReport(beaconReportCls);
             }
         }
 
@@ -253,6 +314,9 @@ public class DynamicRootDetectionHook {
                         } else if ("com.tencent.beacon.a.c.e".equals(name)) {
                             Class<?> clazz = (Class<?>) p.getResult();
                             if (clazz != null) hookBeaconClassE(clazz);
+                        } else if ("com.tencent.beacon.event.open.BeaconReport".equals(name)) {
+                            Class<?> clazz = (Class<?>) p.getResult();
+                            if (clazz != null) hookBeaconReport(clazz);
                         }
                     }
                 }

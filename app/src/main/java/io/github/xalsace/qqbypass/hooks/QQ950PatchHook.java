@@ -479,19 +479,54 @@ public class QQ950PatchHook {
      * 4. Turing 结果缓存实体 (com.tencent.could.huiyansdk.entity.TuringResultCacheEntity):
      *    - setTuringEnvErrorStr(String): 过滤错误特征字符串，防止上报环境异常至人脸核验服务端。
      */
+    private static final java.util.Set<Class<?>> sHookedFaceClasses =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    public static void hookLateStage(ClassLoader cl) {
+        if (cl == null) return;
+        try {
+            hookFaceRecognitionAndMFAWithClassLoader(cl);
+        } catch (Throwable t) {
+            XposedEntry.log("[FacePatch] hookLateStage error: " + t.getMessage());
+        }
+    }
+
     private static void hookFaceRecognitionAndMFA(XC_LoadPackage.LoadPackageParam lpparam) {
         ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
+        if (cl != null) {
+            hookFaceRecognitionAndMFAWithClassLoader(cl);
+        }
+    }
+
+    public static void hookFaceRecognitionAndMFAWithClassLoader(ClassLoader cl) {
         if (cl == null) return;
 
-        // 1. TuringFaceDefender: init & signData
+        // 1. TuringFaceDefender: init, signData, activeSign, getDeviceInfo
         final String tfdCls = "com.tencent.turingcam.TuringFaceDefender";
         Class<?> tfdClass = XposedHelpers.findClassIfExists(tfdCls, cl);
-        if (tfdClass != null) {
+        if (tfdClass != null && !sHookedFaceClasses.contains(tfdClass)) {
+            sHookedFaceClasses.add(tfdClass);
             HookUtils.hookAllMethods(tfdClass, "init", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     param.setResult(0);
                     XposedEntry.log("[FacePatch] Preempted TuringFaceDefender.init -> 0");
+                }
+            });
+
+            HookUtils.hookAllMethods(tfdClass, "activeSign", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(0L);
+                    XposedEntry.log("[FacePatch] Preempted TuringFaceDefender.activeSign -> 0L");
+                }
+            });
+
+            HookUtils.hookAllMethods(tfdClass, "getDeviceInfo", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(new org.json.JSONObject());
+                    XposedEntry.log("[FacePatch] Sanitized TuringFaceDefender.getDeviceInfo -> safe empty JSON");
                 }
             });
 
@@ -521,23 +556,89 @@ public class QQ950PatchHook {
             XposedEntry.log("[FacePatch] Hooked TuringFaceDefender for face recognition safety");
         }
 
-        // 2. TuringSdkImp$a: onException
+        // 2. TuringSdkImp: b(Context) hardware init & a() status
+        final String turingSdkImpCls = "com.tencent.could.huiyansdk.turingmodule.TuringSdkImp";
+        Class<?> turingSdkImpClass = XposedHelpers.findClassIfExists(turingSdkImpCls, cl);
+        if (turingSdkImpClass != null && !sHookedFaceClasses.contains(turingSdkImpClass)) {
+            sHookedFaceClasses.add(turingSdkImpClass);
+            HookUtils.hookAllMethods(turingSdkImpClass, "b", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    try {
+                        XposedHelpers.setBooleanField(param.thisObject, "f184c", true);
+                        XposedHelpers.setObjectField(param.thisObject, "d", "");
+                        param.setResult(null);
+                        XposedEntry.log("[FacePatch] Preempted TuringSdkImp.b -> hardware init success");
+                    } catch (Throwable ignored) {}
+                }
+            });
+            HookUtils.hookAllMethods(turingSdkImpClass, "a", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args == null || param.args.length == 0) {
+                        param.setResult(""); // a() -> return error string or ""
+                    }
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked TuringSdkImp for face hardware status");
+        }
+
+        // 3. TuringSdkImp$a: onException, onFinish, onFinishFrameCheck
         final String callbackCls = "com.tencent.could.huiyansdk.turingmodule.TuringSdkImp$a";
         Class<?> cbClass = XposedHelpers.findClassIfExists(callbackCls, cl);
-        if (cbClass != null) {
+        if (cbClass != null && !sHookedFaceClasses.contains(cbClass)) {
+            sHookedFaceClasses.add(cbClass);
             HookUtils.hookAllMethods(cbClass, "onException", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     param.setResult(null); // void, suppress exception
-                    XposedEntry.log("[FacePatch] Suppressed TuringSdkImp onException callback");
+                    try {
+                        Object thisObj = param.thisObject;
+                        byte[] safeToken = new byte[64];
+                        java.util.Arrays.fill(safeToken, (byte) 1);
+                        XposedHelpers.callMethod(thisObj, "onFinish", 0L, safeToken);
+                        XposedEntry.log("[FacePatch] Recovered from TuringSdkImp$a.onException -> dispatched onFinish(0L, token)");
+                    } catch (Throwable t) {
+                        XposedEntry.log("[FacePatch] Failed to dispatch fallback onFinish: " + t.getMessage());
+                    }
                 }
             });
+            HookUtils.hookAllMethods(cbClass, "onFinish", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length >= 2) {
+                        if (param.args[0] instanceof Number && ((Number) param.args[0]).longValue() != 0) {
+                            param.args[0] = 0L;
+                        }
+                        if (param.args[1] == null) {
+                            param.args[1] = new byte[32];
+                        }
+                        XposedEntry.log("[FacePatch] Sanitized TuringSdkImp$a.onFinish args -> 0L");
+                    }
+                }
+            });
+            HookUtils.hookAllMethods(cbClass, "onFinishFrameCheck", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length >= 2) {
+                        if (param.args[0] instanceof Number && ((Number) param.args[0]).longValue() != 0) {
+                            param.args[0] = 0L;
+                        }
+                        if (param.args[1] == null) {
+                            param.args[1] = new byte[32];
+                        }
+                        XposedEntry.log("[FacePatch] Sanitized TuringSdkImp$a.onFinishFrameCheck args -> 0L");
+                    }
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked TuringSdkImp$a callbacks");
         }
 
-        // 3. Turing helper: com.tencent.could.huiyansdk.turing.d.a(long, byte[])
+        // 4. Turing helper: com.tencent.could.huiyansdk.turing.d.a(long, byte[])
         final String dCls = "com.tencent.could.huiyansdk.turing.d";
         Class<?> dClass = XposedHelpers.findClassIfExists(dCls, cl);
-        if (dClass != null) {
+        if (dClass != null && !sHookedFaceClasses.contains(dClass)) {
+            sHookedFaceClasses.add(dClass);
             HookUtils.hookAllMethods(dClass, "a", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -559,17 +660,134 @@ public class QQ950PatchHook {
             XposedEntry.log("[FacePatch] Hooked HuiYan turing.d result consumer");
         }
 
-        // 4. TuringResultCacheEntity: setTuringEnvErrorStr
+        // 5. TuringResultCacheEntity: setTuringEnvErrorStr & getTuringEnvErrorStr
         final String cacheCls = "com.tencent.could.huiyansdk.entity.TuringResultCacheEntity";
         Class<?> cacheClass = XposedHelpers.findClassIfExists(cacheCls, cl);
-        if (cacheClass != null) {
+        if (cacheClass != null && !sHookedFaceClasses.contains(cacheClass)) {
+            sHookedFaceClasses.add(cacheClass);
             HookUtils.hookAllMethods(cacheClass, "setTuringEnvErrorStr", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    param.args[0] = ""; // Neutralize environment error string
+                    if (param.args != null && param.args.length > 0) {
+                        param.args[0] = ""; // Neutralize environment error string
+                    }
                 }
             });
-            XposedEntry.log("[FacePatch] Hooked TuringResultCacheEntity.setTuringEnvErrorStr");
+            HookUtils.hookAllMethods(cacheClass, "getTuringEnvErrorStr", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult("");
+                }
+            });
+            HookUtils.hookAllMethods(cacheClass, "isNeedFrameCheck", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(false);
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked TuringResultCacheEntity.setTuringEnvErrorStr, getTuringEnvErrorStr, isNeedFrameCheck");
+        }
+
+        // 6. TuringCam arWPM: b() so load & c() native init
+        final String arwpmCls = "com.tencent.turingcam.arWPM";
+        Class<?> arwpmClass = XposedHelpers.findClassIfExists(arwpmCls, cl);
+        if (arwpmClass != null && !sHookedFaceClasses.contains(arwpmClass)) {
+            sHookedFaceClasses.add(arwpmClass);
+            HookUtils.hookAllMethods(arwpmClass, "b", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(0);
+                }
+            });
+            HookUtils.hookAllMethods(arwpmClass, "c", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(0);
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked arWPM.b & arWPM.c -> 0");
+        }
+
+        // 7. TuringCam JD1Ej: a(TuringFaceBuilder) & b() SkEpO
+        final String jd1ejCls = "com.tencent.turingcam.JD1Ej";
+        Class<?> jd1ejClass = XposedHelpers.findClassIfExists(jd1ejCls, cl);
+        if (jd1ejClass != null && !sHookedFaceClasses.contains(jd1ejClass)) {
+            sHookedFaceClasses.add(jd1ejClass);
+            HookUtils.hookAllMethods(jd1ejClass, "a", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(0);
+                }
+            });
+            Class<?> skepoCls = XposedHelpers.findClassIfExists("com.tencent.turingcam.JD1Ej$SkEpO", cl);
+            if (skepoCls != null) {
+                HookUtils.hookAllMethods(jd1ejClass, "b", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            Object safeSkEpO = XposedHelpers.newInstance(skepoCls);
+                            XposedHelpers.setIntField(safeSkEpO, "a", 0);
+                            XposedHelpers.setObjectField(safeSkEpO, "b", "");
+                            param.setResult(safeSkEpO);
+                        } catch (Throwable ignored) {}
+                    }
+                });
+            }
+            XposedEntry.log("[FacePatch] Hooked JD1Ej.a & JD1Ej.b");
+        }
+
+        // 8. HuiYanSdkImp: sendBuriedPointInfo & doOnFail
+        final String huiyanSdkCls = "com.tencent.could.huiyansdk.api.HuiYanSdkImp";
+        Class<?> huiyanSdkClass = XposedHelpers.findClassIfExists(huiyanSdkCls, cl);
+        if (huiyanSdkClass != null && !sHookedFaceClasses.contains(huiyanSdkClass)) {
+            sHookedFaceClasses.add(huiyanSdkClass);
+            HookUtils.hookAllMethods(huiyanSdkClass, "sendBuriedPointInfo", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length >= 2 && param.args[1] instanceof String) {
+                        String event = (String) param.args[1];
+                        if (event.contains("Error") || event.contains("Fail") || event.contains("Risk") || event.contains("Turing")) {
+                            param.setResult(null);
+                            XposedEntry.log("[FacePatch] Suppressed HuiYan buried point event: " + event);
+                        }
+                    }
+                }
+            });
+            HookUtils.hookAllMethods(huiyanSdkClass, "doOnFail", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length >= 2) {
+                        String msg = String.valueOf(param.args[1]);
+                        int code = param.args[0] instanceof Number ? ((Number) param.args[0]).intValue() : 0;
+                        if (msg.contains("400103") || msg.contains("Turing") || msg.contains("Env") || msg.contains("环境") || code == 216 || code == 224) {
+                            param.setResult(null);
+                            XposedEntry.log("[FacePatch] Intercepted HuiYanSdkImp.doOnFail environment error: code=" + code + ", msg=" + msg);
+                        }
+                    }
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked HuiYanSdkImp.sendBuriedPointInfo & doOnFail");
+        }
+
+        // 9. CommonUtils: sendErrorAndExitAuth
+        final String commonUtilsCls = "com.tencent.could.huiyansdk.utils.CommonUtils";
+        Class<?> commonUtilsClass = XposedHelpers.findClassIfExists(commonUtilsCls, cl);
+        if (commonUtilsClass != null && !sHookedFaceClasses.contains(commonUtilsClass)) {
+            sHookedFaceClasses.add(commonUtilsClass);
+            HookUtils.hookAllMethods(commonUtilsClass, "sendErrorAndExitAuth", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length >= 2) {
+                        String msg = String.valueOf(param.args[1]);
+                        int code = param.args[0] instanceof Number ? ((Number) param.args[0]).intValue() : 0;
+                        if (msg.contains("400103") || msg.contains("Turing") || msg.contains("Env") || msg.contains("环境") || code == 216 || code == 224) {
+                            param.setResult(null);
+                            XposedEntry.log("[FacePatch] Neutralized CommonUtils.sendErrorAndExitAuth: " + code + " " + msg);
+                        }
+                    }
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked CommonUtils.sendErrorAndExitAuth");
         }
     }
 

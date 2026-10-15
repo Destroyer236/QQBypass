@@ -67,8 +67,8 @@ echo "[2/6] 链接资源与 Manifest (aapt2 link)..."
 aapt2 link -I "$PLATFORM_JAR" \
     --min-sdk-version 26 \
     --target-sdk-version 34 \
-    --version-code 8 \
-    --version-name "1.0.16" \
+    --version-code 9 \
+    --version-name "1.0.17" \
     --manifest "$SCRIPT_DIR/app/src/main/AndroidManifest.xml" \
     --java "$BUILD_DIR/gen" \
     -o "$BUILD_DIR/base.apk" \
@@ -114,7 +114,11 @@ unzip -q -o "$BUILD_DIR/base.apk" -d "$BUILD_DIR/apk_root/"
 # 注入 classes.dex 与 xposed_init
 cp "$BUILD_DIR/dex/classes.dex" "$BUILD_DIR/apk_root/"
 mkdir -p "$BUILD_DIR/apk_root/assets"
-cp "$SCRIPT_DIR/app/src/main/assets/xposed_init" "$BUILD_DIR/apk_root/assets/"
+cp -f "$SCRIPT_DIR/app/src/main/assets/"* "$BUILD_DIR/apk_root/assets/"
+mkdir -p "$BUILD_DIR/apk_root/META-INF/xposed"
+if [ -d "$SCRIPT_DIR/app/src/main/resources/META-INF/xposed" ]; then
+    cp -f "$SCRIPT_DIR/app/src/main/resources/META-INF/xposed/"* "$BUILD_DIR/apk_root/META-INF/xposed/"
+fi
 
 # 检查 native 库
 EXISTING_APK="/storage/emulated/0/0_TM/apks/QQ Enhanced Bypass_1.0.7.apk"
@@ -184,7 +188,7 @@ apksigner sign \
 echo "验证 APK 签名:"
 apksigner verify --min-sdk-version 23 -v "$TARGET_APK" | grep -E "Verifies|scheme"
 
-DEST_APK="/storage/emulated/0/0_TM/apks/QQ Enhanced Bypass_1.0.16_dexkit_fixed.apk"
+DEST_APK="/storage/emulated/0/0_TM/apks/QQ Enhanced Bypass_1.0.17_dexkit_fixed.apk"
 if [ -d "$(dirname "$DEST_APK")" ]; then
     cp -f "$TARGET_APK" "$DEST_APK"
     echo "同步产物至存储空间: $DEST_APK"
