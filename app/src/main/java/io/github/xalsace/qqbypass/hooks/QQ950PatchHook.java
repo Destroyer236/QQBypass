@@ -53,8 +53,8 @@ public class QQ950PatchHook {
         // Tier 5: Clean detection sources at the origin (Location, Sensors, Screen/Display, ADB/Accessibility)
         hookDetectionSourcesAtOrigin(lpparam);
 
-        // Tier 6: Tinker SafeMode, dynamic SO (txlib / txPttlib), and MQP Integrity Strike Protection
-        hookTinkerTxlibAndPttProtection(lpparam);
+        // Tier 6: Dynamic SO (txlib / txPttlib) and MQP Integrity Strike Protection
+        hookTxlibAndPttProtection(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -1050,80 +1050,25 @@ public class QQ950PatchHook {
     }
 
     /**
-     * Tier 6: Tinker SafeMode, dynamic SO (txlib / txPttlib), and MQP Integrity Strike Protection.
+     * Tier 6: Dynamic SO (txlib / txPttlib) and MQP Integrity Strike Protection.
      *
      * Addresses runtime telemetry and security integrity verification across:
-     * 1. Tinker SafeMode & Hotfix Crash Count:
-     *    - ShareTinkerInternals.getSafeModeCount: forced to 0 to prevent TinkerLoader from triggering
-     *      safe mode rollback/directory purge (deleteDirAsync).
-     *    - ShareTinkerInternals.setSafeModeCount / cleanPatch: neutralized.
-     *    - SharePatchFileUtil.checkTinkerLastUncaughtCrash: forced null.
-     *    - SharePatchFileUtil.verifyFileMd5 / verifyDexFileMd5: forced true.
-     * 2. txlib & Dynamic Native Library Verification / Telemetry:
+     * 1. txlib & Dynamic Native Library Verification / Telemetry:
      *    - com.tencent.mobileqq.msf.core.report.j.a: suppresses reportMsfLoadSoError when isLoaded=false or resultCode!=0.
      *    - MsfCore.tryReportSoLoadUseTxlib: suppresses msf_core_EvtLoadUseTxlib telemetry.
      *    - SoLoadCore.reportThrowable: suppresses SO loading exception reporting.
-     * 3. MQPSecUtil & Integrity Check Strike (txlib/libmqpintchk.so):
+     * 2. MQPSecUtil & Integrity Check Strike (txlib/libmqpintchk.so):
      *    - MQPSecUtil.memchk: forced true (clean memory integrity).
      *    - MQPSecUtil.antitrace / do_report: neutralized.
      *    - MSFIntChkStrike.exec: neutralized (prevents punishment dialog & forced logout).
-     * 4. txPttlib Audio Codec Telemetry:
+     * 3. txPttlib Audio Codec Telemetry:
      *    - StatisticCollector.collectPerformance: sanitizes actPttSoUpdate to param_FailCode=0 and success=true;
      *      suppresses msf_core_EvtMsfLoadSoError and msf_core_EvtLoadUseTxlib.
      */
-    private static void hookTinkerTxlibAndPttProtection(XC_LoadPackage.LoadPackageParam lpparam) {
-        XposedEntry.log("[Tier6] Initializing Tinker, txlib, txPttlib & MQP integrity protection");
+    private static void hookTxlibAndPttProtection(XC_LoadPackage.LoadPackageParam lpparam) {
+        XposedEntry.log("[Tier6] Initializing txlib, txPttlib & MQP integrity protection");
 
-        // --- 1. Tinker Hotfix & SafeMode Protection ---
-        final String tinkerInternalsCls = "com.tencent.tinker.loader.shareutil.ShareTinkerInternals";
-        hookSafe(tinkerInternalsCls, "getSafeModeCount", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(0);
-                XposedEntry.log("[TinkerPatch] ShareTinkerInternals.getSafeModeCount -> 0 (safe mode protected)");
-            }
-        });
-
-        hookSafe(tinkerInternalsCls, "setSafeModeCount", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-                XposedEntry.log("[TinkerPatch] Suppressed ShareTinkerInternals.setSafeModeCount");
-            }
-        });
-
-        hookSafe(tinkerInternalsCls, "cleanPatch", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-                XposedEntry.log("[TinkerPatch] Suppressed ShareTinkerInternals.cleanPatch");
-            }
-        });
-
-        final String patchFileUtilCls = "com.tencent.tinker.loader.shareutil.SharePatchFileUtil";
-        hookSafe(patchFileUtilCls, "checkTinkerLastUncaughtCrash", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-                XposedEntry.log("[TinkerPatch] SharePatchFileUtil.checkTinkerLastUncaughtCrash -> null");
-            }
-        });
-
-        hookSafe(patchFileUtilCls, "verifyFileMd5", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(true);
-            }
-        });
-
-        hookSafe(patchFileUtilCls, "verifyDexFileMd5", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(true);
-            }
-        });
-
-        // --- 2. txlib & Dynamic SO Integrity Telemetry ---
+        // --- 1. txlib & Dynamic SO Integrity Telemetry ---
         final String msfReportJCls = "com.tencent.mobileqq.msf.core.report.j";
         hookSafe(msfReportJCls, "a", lpparam, new XC_MethodHook() {
             @Override
@@ -1157,7 +1102,7 @@ public class QQ950PatchHook {
             }
         });
 
-        // --- 3. MQPSecUtil & Integrity Strike (txlib/libmqpintchk.so) ---
+        // --- 2. MQPSecUtil & Integrity Strike (txlib/libmqpintchk.so) ---
         final String mqpSecUtilCls = "com.tencent.mqp.app.sec.MQPSecUtil";
         hookSafe(mqpSecUtilCls, "memchk", lpparam, new XC_MethodHook() {
             @Override
@@ -1192,7 +1137,7 @@ public class QQ950PatchHook {
             }
         });
 
-        // --- 4. txPttlib Audio Codec Telemetry ---
+        // --- 3. txPttlib Audio Codec Telemetry ---
         final String statCollectorCls = "com.tencent.mobileqq.statistics.StatisticCollector";
         hookSafe(statCollectorCls, "collectPerformance", lpparam, new XC_MethodHook() {
             @Override
