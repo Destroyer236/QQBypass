@@ -619,13 +619,15 @@ public class QQ950PatchHook {
             HookUtils.hookAllMethods(otvrmClass, "a", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    android.content.Context ctx = null;
-                    if (param.args != null && param.args.length > 1 && param.args[1] != null) {
-                        try {
-                            ctx = (android.content.Context) XposedHelpers.callMethod(param.args[1], "getContext");
-                        } catch (Throwable ignored) {}
+                    if (param.args != null && param.args.length >= 2 && param.args[0] instanceof android.hardware.Camera) {
+                        android.content.Context ctx = null;
+                        if (param.args[1] != null) {
+                            try {
+                                ctx = (android.content.Context) XposedHelpers.callMethod(param.args[1], "getContext");
+                            } catch (Throwable ignored) {}
+                        }
+                        ensureOtvrmInitialized(param.thisObject, cl, ctx);
                     }
-                    ensureOtvrmInitialized(param.thisObject, cl, ctx);
                 }
             });
             XposedEntry.log("[FacePatch] Hooked OTVRM.a methods with null-safe guard");
@@ -649,8 +651,11 @@ public class QQ950PatchHook {
             HookUtils.hookAllMethods(turingSdkImpClass, "a", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args == null || param.args.length == 0) {
-                        param.setResult(""); // a() -> return error string or ""
+                    if (param.method instanceof java.lang.reflect.Method) {
+                        java.lang.reflect.Method m = (java.lang.reflect.Method) param.method;
+                        if (m.getReturnType() == String.class && (param.args == null || param.args.length == 0)) {
+                            param.setResult(""); // Only String a() -> return error string or ""
+                        }
                     }
                 }
             });
@@ -770,8 +775,11 @@ public class QQ950PatchHook {
             HookUtils.hookAllMethods(arwpmClass, "a", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args == null || param.args.length == 0) {
-                        param.setResult(0); // public static int a() -> return 0 (initialized and healthy)
+                    if (param.method instanceof java.lang.reflect.Method) {
+                        java.lang.reflect.Method m = (java.lang.reflect.Method) param.method;
+                        if (m.getReturnType() == int.class && (param.args == null || param.args.length == 0)) {
+                            param.setResult(0); // public static int a() -> return 0 (initialized and healthy)
+                        }
                     }
                 }
             });
@@ -806,7 +814,14 @@ public class QQ950PatchHook {
             HookUtils.hookAllMethods(jd1ejClass, "a", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    param.setResult(0);
+                    if (param.method instanceof java.lang.reflect.Method) {
+                        java.lang.reflect.Method m = (java.lang.reflect.Method) param.method;
+                        // ONLY hook int a(TuringFaceBuilder) -> return 0
+                        // NEVER touch static JD1Ej a() or byte[] a(String)
+                        if (m.getReturnType() == int.class && param.args != null && param.args.length == 1) {
+                            param.setResult(0);
+                        }
+                    }
                 }
             });
             Class<?> skepoCls = XposedHelpers.findClassIfExists("com.tencent.turingcam.JD1Ej$SkEpO", cl);
