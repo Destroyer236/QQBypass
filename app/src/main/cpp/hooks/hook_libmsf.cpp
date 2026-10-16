@@ -19,7 +19,6 @@ namespace hook_libmsf {
  */
 
 typedef jboolean (*IsSignatureValid_t)(JNIEnv*, jobject);
-static IsSignatureValid_t original_IsSignatureValid = nullptr;
 
 static jboolean hooked_IsSignatureValid(JNIEnv* env, jobject context) {
     (void)env;
@@ -29,12 +28,12 @@ static jboolean hooked_IsSignatureValid(JNIEnv* env, jobject context) {
 }
 
 typedef void (*GetSignature_t)(JNIEnv*, jobject, void*);
-static GetSignature_t original_GetSignature = nullptr;
 
 static void hooked_GetSignature(JNIEnv* env, jobject context, void* vec) {
     LOGI("libcodecwrapperV2 GetSignature intercepted, executing with spoofed Java PackageManager signatures");
-    if (original_GetSignature) {
-        original_GetSignature(env, context, vec);
+    void* prev = bytehook_get_prev_func((void*)hooked_GetSignature);
+    if (prev) {
+        ((GetSignature_t)prev)(env, context, vec);
     }
 }
 
@@ -48,7 +47,7 @@ void install_hooks() {
         "_ZN12CMSFJavaUtil16IsSignatureValidEP7_JNIEnvP8_jobject",
         (void*)hooked_IsSignatureValid,
         nullptr,
-        (void**)&original_IsSignatureValid
+        nullptr
     );
 
     bytehook_hook_single(
@@ -57,7 +56,7 @@ void install_hooks() {
         "_ZN12CMSFJavaUtil16IsSignatureValidEP7_JNIEnvP8_jobject",
         (void*)hooked_IsSignatureValid,
         nullptr,
-        (void**)&original_IsSignatureValid
+        nullptr
     );
 
     bytehook_hook_all(
@@ -65,7 +64,7 @@ void install_hooks() {
         "_ZN12CMSFJavaUtil16IsSignatureValidEP7_JNIEnvP8_jobject",
         (void*)hooked_IsSignatureValid,
         nullptr,
-        (void**)&original_IsSignatureValid
+        nullptr
     );
 
     // 2. Hook GetSignature in libcodecwrapperV2.so (PLT hook)
@@ -75,7 +74,7 @@ void install_hooks() {
         "_Z12GetSignatureP7_JNIEnvP8_jobjectRNSt6__ndk16vectorINS3_12basic_stringIcNS3_11char_traitsIcEENS3_9allocatorIcEEEENS8_ISA_EEEE",
         (void*)hooked_GetSignature,
         nullptr,
-        (void**)&original_GetSignature
+        nullptr
     );
 
     LOGI("libmsf signature hooks installed successfully");

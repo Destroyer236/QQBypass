@@ -4,8 +4,6 @@
 #include "bytehook.h"
 
 // MSFKernel 关键函数的原始指针
-static void* original_setQimei36 = nullptr;
-
 /**
  * Hook MSFKernelBridge.native_setQimei36
  *
@@ -23,9 +21,10 @@ static void hooked_setQimei36(JNIEnv* env, jobject thiz, jstring qimei36) {
     // 3. 放行但记录（当前策略）
 
     // 当前：放行但记录，便于后续分析
-    if (original_setQimei36) {
+    void* prev = bytehook_get_prev_func((void*)hooked_setQimei36);
+    if (prev) {
         typedef void (*setQimei36_t)(JNIEnv*, jobject, jstring);
-        ((setQimei36_t)original_setQimei36)(env, thiz, qimei36);
+        ((setQimei36_t)prev)(env, thiz, qimei36);
     }
 
     if (qimei_str) {
@@ -53,7 +52,7 @@ void install_msfkernel_hooks() {
         "Java_com_tencent_mobileqq_msfcore_MSFKernelBridge_00024CppProxy_native_1setQimei36",
         (void*)hooked_setQimei36,
         nullptr,
-        &original_setQimei36
+        nullptr
     );
 
     if (stub == nullptr) {

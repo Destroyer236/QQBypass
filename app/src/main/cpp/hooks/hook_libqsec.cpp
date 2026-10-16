@@ -2,17 +2,14 @@
 #include <dlfcn.h>
 #include <string.h>
 #include "../utils/log.h"
+#include "../utils/safe_bytehook.h"
 #include "bytehook.h"
-
-// QSec 反 hook 检测函数的原始指针
-static void* (*original_dlopen)(const char*, int) = nullptr;
-static void* (*original_dlsym)(void*, const char*) = nullptr;
-static int (*original_dladdr)(const void*, Dl_info*) = nullptr;
 
 /**
  * Hook dlopen - 防止 QSec 检测 ByteHook 等 hook 框架
  */
 static void* hooked_dlopen(const char* filename, int flag) {
+    SAFE_BYTEHOOK_SCOPE();
     if (filename) {
         // 拦截对 hook 框架的检测
         if (strcasestr(filename, "bytehook") ||
@@ -33,13 +30,18 @@ static void* hooked_dlopen(const char* filename, int flag) {
             return nullptr;
         }
     }
-    return original_dlopen(filename, flag);
+    void* prev = bytehook_get_prev_func((void*)hooked_dlopen);
+    if (prev) {
+        return ((void* (*)(const char*, int))prev)(filename, flag);
+    }
+    return dlopen(filename, flag);
 }
 
 /**
  * Hook dlsym - 防止符号表扫描检测
  */
 static void* hooked_dlsym(void* handle, const char* symbol) {
+    SAFE_BYTEHOOK_SCOPE();
     if (symbol) {
         // 拦截对 hook 相关符号的查询（指定精确框架名，避免误杀正常函数）
         if (strcasestr(symbol, "bytehook") ||
@@ -58,14 +60,25 @@ static void* hooked_dlsym(void* handle, const char* symbol) {
             return nullptr;
         }
     }
-    return original_dlsym(handle, symbol);
+    void* prev = bytehook_get_prev_func((void*)hooked_dlsym);
+    if (prev) {
+        return ((void* (*)(void*, const char*))prev)(handle, symbol);
+    }
+    return dlsym(handle, symbol);
 }
 
 /**
  * Hook dladdr - 防止地址反查检测 hook 框架
  */
 static int hooked_dladdr(const void* addr, Dl_info* info) {
-    int ret = original_dladdr(addr, info);
+    SAFE_BYTEHOOK_SCOPE();
+    int ret = 0;
+    void* prev = bytehook_get_prev_func((void*)hooked_dladdr);
+    if (prev) {
+        ret = ((int (*)(const void*, Dl_info*))prev)(addr, info);
+    } else {
+        ret = dladdr(addr, info);
+    }
 
     if (ret != 0 && info && info->dli_fname) {
         const char* fname = info->dli_fname;
@@ -121,7 +134,7 @@ void install_qsec_hooks() {
             "dlopen",
             (void*)hooked_dlopen,
             nullptr,
-            (void**)&original_dlopen
+            nullptr
         );
         if (stub == nullptr) {
             LOGD("Failed to hook %s dlopen", target);
@@ -134,7 +147,7 @@ void install_qsec_hooks() {
             "dlsym",
             (void*)hooked_dlsym,
             nullptr,
-            (void**)&original_dlsym
+            nullptr
         );
         if (stub == nullptr) {
             LOGD("Failed to hook %s dlsym", target);
@@ -147,7 +160,7 @@ void install_qsec_hooks() {
             "dladdr",
             (void*)hooked_dladdr,
             nullptr,
-            (void**)&original_dladdr
+            nullptr
         );
         if (stub == nullptr) {
             LOGD("Failed to hook %s dladdr", target);

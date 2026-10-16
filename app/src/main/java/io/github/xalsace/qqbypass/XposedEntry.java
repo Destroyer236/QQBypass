@@ -196,9 +196,20 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
 
     public static void log(String message) {
         Log.i(TAG, message);
+        try {
+            de.robv.android.xposed.XposedBridge.log("[" + TAG + "] " + message);
+        } catch (Throwable ignored) {
+        }
     }
 
     public static void logError(String message, Throwable t) {
         Log.e(TAG, message, t);
+        try {
+            de.robv.android.xposed.XposedBridge.log("[" + TAG + "] " + message);
+            if (t != null) {
+                de.robv.android.xposed.XposedBridge.log(t);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 }
