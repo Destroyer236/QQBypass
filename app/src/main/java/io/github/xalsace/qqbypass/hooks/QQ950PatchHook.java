@@ -683,6 +683,56 @@ public class QQ950PatchHook {
         }
     }
 
+    private static Object getAppRuntime(ClassLoader cl) {
+        try {
+            Class<?> mobileQQCls = XposedHelpers.findClassIfExists("mqq.app.MobileQQ", cl);
+            if (mobileQQCls != null) {
+                Object mqq = XposedHelpers.callStaticMethod(mobileQQCls, "getMobileQQ");
+                if (mqq != null) {
+                    return XposedHelpers.callMethod(mqq, "peekAppRuntime");
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    private static boolean isAppLoggedIn(ClassLoader cl, String expectedUin) {
+        try {
+            Object rt = getAppRuntime(cl);
+            if (rt != null) {
+                Boolean isLogin = (Boolean) XposedHelpers.callMethod(rt, "isLogin");
+                if (Boolean.TRUE.equals(isLogin)) {
+                    return true;
+                }
+                String currentUin = (String) XposedHelpers.callMethod(rt, "getAccount");
+                if (expectedUin != null && !expectedUin.isEmpty() && !"0".equals(expectedUin) && expectedUin.equals(currentUin)) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    private static void reloadTicketsSilently(ClassLoader cl, Object appRuntime) {
+        try {
+            if (appRuntime == null) {
+                appRuntime = getAppRuntime(cl);
+            }
+            if (appRuntime == null) return;
+            Object tm = XposedHelpers.callMethod(appRuntime, "getManager", 2); // 2 = TICKET_MANAGER
+            if (tm != null) {
+                Class<?> mobileQQCls = XposedHelpers.findClassIfExists("mqq.app.MobileQQ", cl);
+                Object mqq = mobileQQCls != null ? XposedHelpers.callStaticMethod(mobileQQCls, "getMobileQQ") : null;
+                if (mqq != null) {
+                    XposedHelpers.callMethod(tm, "reloadCache", mqq);
+                    XposedEntry.log("[KickPatch] Silently reloaded TicketManager cache");
+                }
+            }
+        } catch (Throwable t) {
+            XposedEntry.log("[KickPatch] reloadTicketsSilently error: " + t.getMessage());
+        }
+    }
+
     public static void hookKickDiagnosticsAndProtection(ClassLoader cl) {
         if (cl == null) return;
         try {
@@ -697,6 +747,7 @@ public class QQ950PatchHook {
                             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                                 StringBuilder sb = new StringBuilder();
                                 sb.append("[NTKickProcessor] ").append(param.method.getName()).append(" invoked with args: ");
+                                int securityKickedType = 0;
                                 if (param.args != null) {
                                     for (Object arg : param.args) {
                                         if (arg == null) {
@@ -709,6 +760,9 @@ public class QQ950PatchHook {
                                             for (Field f : fields) {
                                                 f.setAccessible(true);
                                                 sb.append(f.getName()).append("=").append(f.get(arg)).append(", ");
+                                                if ("securityKickedType".equals(f.getName()) && f.get(arg) instanceof Number) {
+                                                    securityKickedType = ((Number) f.get(arg)).intValue();
+                                                }
                                             }
                                         } catch (Throwable ignored) {
                                             sb.append(arg.toString());
@@ -717,11 +771,18 @@ public class QQ950PatchHook {
                                     }
                                 }
                                 XposedEntry.log(sb.toString());
+
+                                // If this is an automated security kick from risk server and user has an active session, defend against kick
+                                if (param.method.getName().equals("a") && securityKickedType != 0 && isAppLoggedIn(cl, null)) {
+                                    param.setResult(null);
+                                    XposedEntry.log("[KickPatch] Suppressed NTKickProcessor security kick (securityKickedType=" + securityKickedType + ") and scheduled ticket reload");
+                                    reloadTicketsSilently(cl, param.args != null && param.args.length > 0 ? param.args[0] : null);
+                                }
                             }
                         });
                     }
                 }
-                XposedEntry.log("[KickPatch] Hooked NTKickProcessor methods for diagnostic logging");
+                XposedEntry.log("[KickPatch] Hooked NTKickProcessor methods for diagnostic logging & defense");
             }
 
             // 2. KickApiImpl: intercept kick & onKickedOffLine
@@ -751,6 +812,146 @@ public class QQ950PatchHook {
                         param.setResult(null);
                     }
                 });
+            }
+
+            // 4. MainService$MyErrorHandler: Intercept onUserTokenExpired (Root cause of ACCOUNT_EXPIRED kick)
+            Class<?> myErrorHandlerCls = XposedHelpers.findClassIfExists("mqq.app.MainService$MyErrorHandler", cl);
+            if (myErrorHandlerCls != null && sHookedKickClassNames.add(myErrorHandlerCls.getName() + "@" + cl.hashCode())) {
+                HookUtils.hookAllMethods(myErrorHandlerCls, "onUserTokenExpired", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        Object toServiceMsg = param.args != null && param.args.length > 0 ? param.args[0] : null;
+                        Object fromServiceMsg = param.args != null && param.args.length > 1 ? param.args[1] : null;
+                        String uin = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getUin") : "";
+                        String cmd = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd") : "";
+                        Object ssoErr = fromServiceMsg != null ? XposedHelpers.callMethod(fromServiceMsg, "getAttribute", "attr_sso_error_code", 0) : 0;
+                        String failMsg = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailMsg") : "";
+
+                        XposedEntry.log("[KickPatch] onUserTokenExpired invoked! uin=" + uin + ", cmd=" + cmd + ", ssoErr=" + ssoErr + ", msg=" + failMsg);
+
+                        if (isAppLoggedIn(cl, uin)) {
+                            param.setResult(null);
+                            XposedEntry.log("[KickPatch] Active session confirmed, suppressed onUserTokenExpired (preserved SimpleAccount login state & aborted popupNotification)");
+                            reloadTicketsSilently(cl, null);
+                        }
+                    }
+                });
+
+                // Hook popupNotification & popupNotificationEx to suppress ACCOUNT_EXPIRED UI popups
+                XC_MethodHook popupHook = new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        String action = param.args != null && param.args.length > 0 && param.args[0] instanceof String ? (String) param.args[0] : "";
+                        String uin = param.args != null && param.args.length > 1 && param.args[1] instanceof String ? (String) param.args[1] : "";
+                        Object reason = null;
+                        if (param.args != null) {
+                            for (Object arg : param.args) {
+                                if (arg != null && arg.getClass().getName().contains("LogoutReason")) {
+                                    reason = arg;
+                                    break;
+                                }
+                            }
+                        }
+                        XposedEntry.log("[KickPatch] popupNotification called: action=" + action + ", uin=" + uin + ", reason=" + reason);
+
+                        if ("mqq.intent.action.ACCOUNT_EXPIRED".equals(action) || 
+                            (reason != null && reason.toString().equalsIgnoreCase("expired"))) {
+                            if (isAppLoggedIn(cl, uin)) {
+                                param.setResult(null);
+                                XposedEntry.log("[KickPatch] Suppressed popupNotification for ACCOUNT_EXPIRED to prevent forced logout UI");
+                                reloadTicketsSilently(cl, null);
+                            }
+                        }
+                    }
+                };
+                HookUtils.hookAllMethods(myErrorHandlerCls, "popupNotification", popupHook);
+                HookUtils.hookAllMethods(myErrorHandlerCls, "popupNotificationEx", popupHook);
+
+                // Hook other kick methods on MyErrorHandler for observation & safety
+                String[] kickEventMethods = {"onKicked", "onKickedAndClearToken", "onGrayError", "onServerSuspended", "onNoTestEnvPermission"};
+                for (String km : kickEventMethods) {
+                    HookUtils.hookAllMethods(myErrorHandlerCls, km, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            Object fromServiceMsg = param.args != null && param.args.length > 1 ? param.args[1] : null;
+                            String uin = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getUin") : "";
+                            String cmd = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd") : "";
+                            XposedEntry.log("[KickPatch] MyErrorHandler." + param.method.getName() + " called! uin=" + uin + ", cmd=" + cmd);
+                        }
+                    });
+                }
+                XposedEntry.log("[KickPatch] Hooked mqq.app.MainService$MyErrorHandler kick methods");
+            }
+
+            // 5. com.tencent.mobileqq.msf.sdk.h: Intercept CODE_NO_LOGIN (2001) in MSF client SDK response handler
+            Class<?> msfSdkHCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.msf.sdk.h", cl);
+            if (msfSdkHCls != null && sHookedKickClassNames.add(msfSdkHCls.getName() + "@" + cl.hashCode())) {
+                HookUtils.hookAllMethods(msfSdkHCls, "e", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args == null || param.args.length < 2 || param.args[1] == null) return;
+                        Object fromServiceMsg = param.args[1];
+                        int failCode = (Integer) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailCode");
+                        String uin = (String) XposedHelpers.callMethod(fromServiceMsg, "getUin");
+                        String cmd = (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd");
+
+                        if (failCode == 2001) { // BaseConstants.CODE_NO_LOGIN
+                            XposedEntry.log("[KickPatch] msf.sdk.h.e intercepted CODE_NO_LOGIN (2001)! cmd=" + cmd + ", uin=" + uin);
+                            if (isAppLoggedIn(cl, uin)) {
+                                XposedEntry.log("[KickPatch] Account actively logged in, suppressing CODE_NO_LOGIN in msf.sdk.h.e");
+                                reloadTicketsSilently(cl, null);
+                                param.setResult(true);
+                            }
+                        } else if (failCode == 2011 || failCode == 2012 || failCode == 2013 || failCode == 2014 || 
+                                   failCode == 2008 || failCode == 2009 || failCode == 2903 || failCode == 3003) {
+                            XposedEntry.log("[KickPatch] msf.sdk.h.e diagnostic failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
+                        }
+                    }
+                });
+                XposedEntry.log("[KickPatch] Hooked com.tencent.mobileqq.msf.sdk.h.e");
+            }
+
+            // 6. AppRuntime.logout: Suppress automated logout triggered with LogoutReason.expired
+            Class<?> appRuntimeCls = XposedHelpers.findClassIfExists("mqq.app.AppRuntime", cl);
+            if (appRuntimeCls != null && sHookedKickClassNames.add(appRuntimeCls.getName() + "@" + cl.hashCode())) {
+                HookUtils.hookAllMethods(appRuntimeCls, "logout", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        Object reason = param.args != null && param.args.length > 0 ? param.args[0] : null;
+                        if (reason != null && reason.toString().equalsIgnoreCase("expired")) {
+                            Boolean isLogin = (Boolean) XposedHelpers.callMethod(param.thisObject, "isLogin");
+                            if (Boolean.TRUE.equals(isLogin)) {
+                                XposedEntry.log("[KickPatch] Suppressing automated AppRuntime.logout(expired)");
+                                param.setResult(null);
+                            }
+                        }
+                    }
+                });
+                XposedEntry.log("[KickPatch] Hooked AppRuntime.logout backstop");
+            }
+
+            // 7. NotificationActivity: Backstop against ACCOUNT_EXPIRED launch
+            Class<?> notifActivityCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.activity.NotificationActivity", cl);
+            if (notifActivityCls != null && sHookedKickClassNames.add(notifActivityCls.getName() + "@" + cl.hashCode())) {
+                HookUtils.hookAllMethods(notifActivityCls, "doInit", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        android.app.Activity act = (android.app.Activity) param.thisObject;
+                        android.content.Intent intent = act.getIntent();
+                        if (intent != null) {
+                            String action = intent.getAction();
+                            if ("mqq.intent.action.ACCOUNT_EXPIRED".equals(action)) {
+                                XposedEntry.log("[KickPatch] NotificationActivity.doInit intercepted for ACCOUNT_EXPIRED!");
+                                if (isAppLoggedIn(cl, null)) {
+                                    XposedEntry.log("[KickPatch] Active session detected, silently finishing NotificationActivity");
+                                    act.finish();
+                                    param.setResult(false);
+                                }
+                            }
+                        }
+                    }
+                });
+                XposedEntry.log("[KickPatch] Hooked NotificationActivity.doInit backstop");
             }
         } catch (Throwable t) {
             XposedEntry.log("[KickPatch] Failed to hook kick diagnostics: " + t.getMessage());
