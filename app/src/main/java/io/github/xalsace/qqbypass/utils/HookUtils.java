@@ -1,7 +1,5 @@
 package io.github.xalsace.qqbypass.utils;
 
-import android.util.Log;
-
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
@@ -132,7 +130,7 @@ public class HookUtils {
 
     public static void log(String message) {
         if (HookConfig.VERBOSE_LOGGING) {
-            Log.i(TAG, message);
+            io.github.xalsace.qqbypass.XposedEntry.log(message);
         }
     }
 }

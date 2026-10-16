@@ -49,6 +49,9 @@ public class DynamicRootDetectionHook {
 
         // Environment properties & package inventory checks
         hookInstalledPackages(lpparam);
+        hookActivityManager(lpparam);
+        hookInstalledAppListMonitor(lpparam);
+        hookUsageStatsManager(lpparam);
         hookSystemProperties();
 
         // Gatherer SDK root detection hook
@@ -638,6 +641,132 @@ public class DynamicRootDetectionHook {
                     }
                 });
             }
+
+            // Hook queryIntentActivities
+            HookUtils.hookAllMethods(pmsClass, "queryIntentActivities", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.ResolveInfo) {
+                                android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) item;
+                                String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
+                                if (!isSuspiciousPackage(pkg)) {
+                                    filtered.add(item);
+                                }
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook queryIntentServices
+            HookUtils.hookAllMethods(pmsClass, "queryIntentServices", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.ResolveInfo) {
+                                android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) item;
+                                String pkg = ri.serviceInfo != null ? ri.serviceInfo.packageName : null;
+                                if (!isSuspiciousPackage(pkg)) {
+                                    filtered.add(item);
+                                }
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook queryBroadcastReceivers
+            HookUtils.hookAllMethods(pmsClass, "queryBroadcastReceivers", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.ResolveInfo) {
+                                android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) item;
+                                String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
+                                if (!isSuspiciousPackage(pkg)) {
+                                    filtered.add(item);
+                                }
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook queryContentProviders
+            HookUtils.hookAllMethods(pmsClass, "queryContentProviders", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.ProviderInfo) {
+                                android.content.pm.ProviderInfo pi = (android.content.pm.ProviderInfo) item;
+                                if (!isSuspiciousPackage(pi.packageName)) {
+                                    filtered.add(item);
+                                }
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook resolveContentProvider
+            HookUtils.hookAllMethods(pmsClass, "resolveContentProvider", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof android.content.pm.ProviderInfo) {
+                        android.content.pm.ProviderInfo pi = (android.content.pm.ProviderInfo) res;
+                        if (isSuspiciousPackage(pi.packageName) || (pi.authority != null && (pi.authority.contains("qauxv") || pi.authority.contains("lsposed")))) {
+                            if (isCallerQAuxv()) return;
+                            param.setResult(null);
+                        }
+                    }
+                }
+            });
+
+            // Hook resolveActivity
+            HookUtils.hookAllMethods(pmsClass, "resolveActivity", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof android.content.pm.ResolveInfo) {
+                        android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) res;
+                        String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
+                        if (isSuspiciousPackage(pkg)) {
+                            if (isCallerQAuxv()) return;
+                            param.setResult(null);
+                        }
+                    }
+                }
+            });
         } catch (Throwable t) {
             XposedEntry.log("Failed to hook getInstalledPackages: " + t.getMessage());
         }
@@ -730,12 +859,421 @@ public class DynamicRootDetectionHook {
         }
     }
 
-    private static boolean isCallerQAuxv() {
+    private static void hookActivityManager(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> amClass = android.app.ActivityManager.class;
+
+            // Hook getRunningAppProcesses
+            HookUtils.hookAllMethods(amClass, "getRunningAppProcesses", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.app.ActivityManager.RunningAppProcessInfo) {
+                                android.app.ActivityManager.RunningAppProcessInfo pi =
+                                    (android.app.ActivityManager.RunningAppProcessInfo) item;
+                                if (isSuspiciousPackage(pi.processName)) continue;
+                                boolean hasSuspPkg = false;
+                                if (pi.pkgList != null) {
+                                    for (String p : pi.pkgList) {
+                                        if (isSuspiciousPackage(p)) {
+                                            hasSuspPkg = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (hasSuspPkg) continue;
+                                filtered.add(item);
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook getRunningTasks
+            HookUtils.hookAllMethods(amClass, "getRunningTasks", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.app.ActivityManager.RunningTaskInfo) {
+                                android.app.ActivityManager.RunningTaskInfo ti =
+                                    (android.app.ActivityManager.RunningTaskInfo) item;
+                                String topPkg = ti.topActivity != null ? ti.topActivity.getPackageName() : null;
+                                String basePkg = ti.baseActivity != null ? ti.baseActivity.getPackageName() : null;
+                                if (isSuspiciousPackage(topPkg) || isSuspiciousPackage(basePkg)) {
+                                    continue;
+                                }
+                                filtered.add(item);
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook getRecentTasks
+            HookUtils.hookAllMethods(amClass, "getRecentTasks", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.app.ActivityManager.RecentTaskInfo) {
+                                android.app.ActivityManager.RecentTaskInfo rti =
+                                    (android.app.ActivityManager.RecentTaskInfo) item;
+                                String pkg = rti.baseIntent != null && rti.baseIntent.getComponent() != null ?
+                                    rti.baseIntent.getComponent().getPackageName() : null;
+                                if (isSuspiciousPackage(pkg)) {
+                                    continue;
+                                }
+                                filtered.add(item);
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook getRunningServices
+            HookUtils.hookAllMethods(amClass, "getRunningServices", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.app.ActivityManager.RunningServiceInfo) {
+                                android.app.ActivityManager.RunningServiceInfo rsi =
+                                    (android.app.ActivityManager.RunningServiceInfo) item;
+                                String pkg = rsi.service != null ? rsi.service.getPackageName() : null;
+                                if (isSuspiciousPackage(pkg) || isSuspiciousPackage(rsi.process)) {
+                                    continue;
+                                }
+                                filtered.add(item);
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+            XposedEntry.log("[DynamicRoot] Hooked ActivityManager running processes/tasks/services");
+        } catch (Throwable t) {
+            XposedEntry.log("[DynamicRoot] Failed to hook ActivityManager: " + t.getMessage());
+        }
+    }
+
+    private static void hookInstalledAppListMonitor(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> monitorClass = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                "com.tencent.qmethod.pandoraex.monitor.InstalledAppListMonitor", lpparam.classLoader);
+            if (monitorClass == null) return;
+
+            // Hook getRunningAppProcesses
+            HookUtils.hookAllMethods(monitorClass, "getRunningAppProcesses", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.app.ActivityManager.RunningAppProcessInfo) {
+                                android.app.ActivityManager.RunningAppProcessInfo pi =
+                                    (android.app.ActivityManager.RunningAppProcessInfo) item;
+                                if (isSuspiciousPackage(pi.processName)) continue;
+                                boolean hasSuspPkg = false;
+                                if (pi.pkgList != null) {
+                                    for (String p : pi.pkgList) {
+                                        if (isSuspiciousPackage(p)) {
+                                            hasSuspPkg = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (hasSuspPkg) continue;
+                                filtered.add(item);
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook getRunTasks
+            HookUtils.hookAllMethods(monitorClass, "getRunTasks", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.app.ActivityManager.RunningTaskInfo) {
+                                android.app.ActivityManager.RunningTaskInfo ti =
+                                    (android.app.ActivityManager.RunningTaskInfo) item;
+                                String topPkg = ti.topActivity != null ? ti.topActivity.getPackageName() : null;
+                                String basePkg = ti.baseActivity != null ? ti.baseActivity.getPackageName() : null;
+                                if (isSuspiciousPackage(topPkg) || isSuspiciousPackage(basePkg)) {
+                                    continue;
+                                }
+                                filtered.add(item);
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook getInstalledPackages
+            HookUtils.hookAllMethods(monitorClass, "getInstalledPackages", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.PackageInfo) {
+                                String pn = ((android.content.pm.PackageInfo) item).packageName;
+                                if (!isSuspiciousPackage(pn)) {
+                                    filtered.add(item);
+                                }
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook getInstalledApplications
+            HookUtils.hookAllMethods(monitorClass, "getInstalledApplications", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.ApplicationInfo) {
+                                String pn = ((android.content.pm.ApplicationInfo) item).packageName;
+                                if (!isSuspiciousPackage(pn)) {
+                                    filtered.add(item);
+                                }
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook getPackageInfo
+            HookUtils.hookAllMethods(monitorClass, "getPackageInfo", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                        String pkg = (String) param.args[1];
+                        if (isSuspiciousPackage(pkg)) {
+                            if (isCallerQAuxv()) return;
+                            param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException(pkg));
+                        }
+                    }
+                }
+            });
+
+            // Hook getLaunchIntentForPackage
+            HookUtils.hookAllMethods(monitorClass, "getLaunchIntentForPackage", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                        String pkg = (String) param.args[1];
+                        if (isSuspiciousPackage(pkg)) {
+                            if (isCallerQAuxv()) return;
+                            param.setResult(null);
+                        }
+                    }
+                }
+            });
+
+            // Hook queryIntentActivities
+            HookUtils.hookAllMethods(monitorClass, "queryIntentActivities", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.ResolveInfo) {
+                                android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) item;
+                                String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
+                                if (!isSuspiciousPackage(pkg)) {
+                                    filtered.add(item);
+                                }
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook queryIntentServices
+            HookUtils.hookAllMethods(monitorClass, "queryIntentServices", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.ResolveInfo) {
+                                android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) item;
+                                String pkg = ri.serviceInfo != null ? ri.serviceInfo.packageName : null;
+                                if (!isSuspiciousPackage(pkg)) {
+                                    filtered.add(item);
+                                }
+                            } else {
+                                filtered.add(item);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            // Hook getLastApplicationInfoList & getLastPackageInfoList
+            HookUtils.hookAllMethods(monitorClass, "getLastApplicationInfoList", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.ApplicationInfo) {
+                                String pn = ((android.content.pm.ApplicationInfo) item).packageName;
+                                if (!isSuspiciousPackage(pn)) filtered.add(item);
+                            } else filtered.add(item);
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            HookUtils.hookAllMethods(monitorClass, "getLastPackageInfoList", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.content.pm.PackageInfo) {
+                                String pn = ((android.content.pm.PackageInfo) item).packageName;
+                                if (!isSuspiciousPackage(pn)) filtered.add(item);
+                            } else filtered.add(item);
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+            XposedEntry.log("[DynamicRoot] Hooked InstalledAppListMonitor");
+        } catch (Throwable t) {
+            XposedEntry.log("[DynamicRoot] Failed to hook InstalledAppListMonitor: " + t.getMessage());
+        }
+    }
+
+    private static void hookUsageStatsManager(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> usmClass = android.app.usage.UsageStatsManager.class;
+            HookUtils.hookAllMethods(usmClass, "queryUsageStats", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof List) {
+                        List<?> list = (List<?>) res;
+                        List<Object> filtered = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item instanceof android.app.usage.UsageStats) {
+                                String pn = ((android.app.usage.UsageStats) item).getPackageName();
+                                if (!isSuspiciousPackage(pn)) filtered.add(item);
+                            } else filtered.add(item);
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+            HookUtils.hookAllMethods(usmClass, "queryAndAggregateUsageStats", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof java.util.Map) {
+                        @SuppressWarnings("unchecked")
+                        java.util.Map<String, android.app.usage.UsageStats> map =
+                            (java.util.Map<String, android.app.usage.UsageStats>) res;
+                        java.util.Map<String, android.app.usage.UsageStats> filtered = new java.util.HashMap<>();
+                        for (java.util.Map.Entry<String, android.app.usage.UsageStats> entry : map.entrySet()) {
+                            if (!isSuspiciousPackage(entry.getKey())) {
+                                filtered.put(entry.getKey(), entry.getValue());
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+            XposedEntry.log("[DynamicRoot] Hooked UsageStatsManager");
+        } catch (Throwable t) {
+            XposedEntry.log("[DynamicRoot] Failed to hook UsageStatsManager: " + t.getMessage());
+        }
+    }
+
+    public static boolean isCallerQAuxv() {
         try {
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
             for (StackTraceElement elem : stack) {
                 String cls = elem.getClassName();
-                if (cls != null && (cls.startsWith("io.github.qauxv.") || cls.startsWith("cc.ioctl."))) {
+                if (cls != null && (
+                    cls.startsWith("io.github.qauxv.") ||
+                    cls.startsWith("cc.ioctl.") ||
+                    cls.startsWith("me.singleneuron.") ||
+                    cls.startsWith("nep.timeline.") ||
+                    cls.startsWith("me.ketal.") ||
+                    cls.startsWith("me.hd.") ||
+                    cls.startsWith("xyz.nextalone.") ||
+                    cls.startsWith("top.linl.") ||
+                    cls.startsWith("net.bytebuddy.") ||
+                    cls.startsWith("io.github.libxposed.") ||
+                    cls.startsWith("com.android.dx.")
+                )) {
                     return true;
                 }
             }
@@ -743,9 +1281,33 @@ public class DynamicRootDetectionHook {
         return false;
     }
 
-    private static boolean isSuspiciousPath(String path) {
+    public static boolean isSuspiciousPath(String path) {
         if (path == null) return false;
         String lower = path.toLowerCase();
+
+        // QAuxiliary storage and private directories: allow QAuxv, block QQ
+        if (lower.contains("qa_mmkv") || lower.contains("tmp_qa_")
+                || lower.contains("qa_dyn_lib") || lower.contains("qa_misc")) {
+            if (isCallerQAuxv()) {
+                return false;
+            }
+            return true;
+        }
+
+        if (lower.contains("io.github.qauxv")) {
+            if (isCallerQAuxv()) {
+                return false;
+            }
+            return true;
+        }
+
+        // MT Manager paths & storage
+        if (lower.contains("bin.mt.plus") || lower.contains("bin.mt.manager")
+                || lower.contains("bin.mt.termex") || lower.contains("bin.mt.")
+                || lower.contains("/mt2") || lower.contains("npatch")
+                || lower.contains("top.nkbe.npatch") || lower.contains("org.lsposed.manager")) {
+            return true;
+        }
 
         for (String suPath : SU_PATHS) {
             if (lower.contains(suPath)) return true;
@@ -762,7 +1324,7 @@ public class DynamicRootDetectionHook {
             || lower.contains("bytehook") || lower.contains("xalsace");
     }
 
-    private static boolean isSuspiciousPackage(String pkg) {
+    public static boolean isSuspiciousPackage(String pkg) {
         if (pkg == null) return false;
         String lower = pkg.toLowerCase();
 
@@ -775,9 +1337,13 @@ public class DynamicRootDetectionHook {
             || lower.contains("sandhook") || lower.contains("taichi")
             || lower.contains("top.canyie") || lower.contains("xalsace")
             || lower.contains("qqbypass") || lower.contains("dexkit")
-            || lower.contains("bin.mt.plus") || lower.contains("youqu.android.todesk")
+            || lower.contains("bin.mt") || lower.contains("bin.mt.plus")
+            || lower.contains("bin.mt.manager") || lower.contains("bin.mt.termex")
+            || lower.contains("top.nkbe.npatch") || lower.contains("npatch")
+            || lower.contains("org.lsposed.manager") || lower.contains("youqu.android.todesk")
             || lower.contains("com.netease.uuremote") || lower.contains("com.topjohnwu.magisk")
             || lower.contains("io.github.qauxv") || lower.contains("qauxv")
-            || lower.contains("qnotified") || lower.contains("cc.ioctl");
+            || lower.contains("qnotified") || lower.contains("cc.ioctl")
+            || lower.contains("me.singleneuron") || lower.contains("nep.timeline");
     }
 }

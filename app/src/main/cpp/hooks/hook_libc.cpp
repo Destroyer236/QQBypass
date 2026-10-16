@@ -72,6 +72,29 @@ static void ensure_real_funcs() {
     if (!real_syscall_ptr) real_syscall_ptr = (syscall_func_t)dlsym(RTLD_DEFAULT, "syscall");
 }
 
+static bool is_caller_security_dso(void* return_address) {
+    if (!return_address) return false;
+    Dl_info info;
+    if (dladdr(return_address, &info) && info.dli_fname) {
+        const char* f = info.dli_fname;
+        if (strstr(f, "libfekit") || strstr(f, "libturing") ||
+            strstr(f, "libqqdid") || strstr(f, "libmsf") ||
+            strstr(f, "libqsec") || strstr(f, "libsec") ||
+            strstr(f, "libtears") || strstr(f, "libbeacon")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool is_qa_private_path(const char* path) {
+    if (!path || !path[0]) return false;
+    return strstr(path, "qa_mmkv") != nullptr ||
+           strstr(path, "tmp_qa_") != nullptr ||
+           strstr(path, "qa_dyn_lib") != nullptr ||
+           strstr(path, "qa_misc") != nullptr;
+}
+
 bool is_sensitive_path(const char* path) {
     if (!path) return false;
     const char* hidden[] = {
@@ -89,7 +112,11 @@ bool is_sensitive_path(const char* path) {
         "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
         "epic", "pine", "taichi", "liblspd", "lsposed", "edxposed",
         "qqbypass", "libnative-bypass", "libbytehook", "xalsace",
-        "zygisk_lsposed", "zygisksu", "bin.mt.plus",
+        "zygisk_lsposed", "zygisksu",
+        "bin.mt.", "bin.mt.plus", "bin.mt.manager", "bin.mt.termex",
+        "/MT2", "/sdcard/MT2", "/storage/emulated/0/MT2",
+        "top.nkbe.npatch", "npatch", "org.lsposed.manager",
+        "libqauxv-core0", "libqauxv-core1", "libqauxv",
         "bytehook", "native-bypass", "apatch",
         nullptr
     };
@@ -115,7 +142,9 @@ bool is_sensitive_name(const char* name) {
         "magisk", "lsposed", "xposed", "edxposed", "dexkit",
         "sandhook", "yahfa", "epic", "pine", "taichi",
         "liblspd", "qqbypass", "native-bypass", "bytehook",
-        "qauxv", "qnotified", "shamiko", "apatch", nullptr
+        "qauxv", "libqauxv", "qnotified", "shamiko", "apatch",
+        "qa_mmkv", "qa_", "tmp_qa_", "bin.mt", "mt2", "npatch",
+        "singleneuron", "bytebuddy", nullptr
     };
     for (int i = 0; patterns[i]; i++) {
         if (strcasestr(name, patterns[i])) return true;
@@ -125,13 +154,14 @@ bool is_sensitive_name(const char* name) {
 
 static bool is_root_pid(const char* pid_str) {
     if (!pid_str || !pid_str[0]) return false;
+    // Check comm
     char comm_path[64];
     snprintf(comm_path, sizeof(comm_path), "/proc/%s/comm", pid_str);
     int fd = -1;
     if (real_open_ptr) fd = real_open_ptr(comm_path, O_RDONLY, 0);
     else fd = open(comm_path, O_RDONLY);
     if (fd >= 0) {
-        char buf[64];
+        char buf[128];
         ssize_t n = read(fd, buf, sizeof(buf) - 1);
         close(fd);
         if (n > 0) {
@@ -139,7 +169,28 @@ static bool is_root_pid(const char* pid_str) {
             if (buf[n - 1] == '\n') buf[n - 1] = '\0';
             if (strcmp(buf, "magiskd") == 0 || strcmp(buf, "ksud") == 0 ||
                 strcmp(buf, "su") == 0 || strcmp(buf, "daemonsu") == 0 ||
-                strcmp(buf, "frida-server") == 0) {
+                strcmp(buf, "frida-server") == 0 ||
+                strstr(buf, "bin.mt") || strstr(buf, "mt.plus") ||
+                strstr(buf, "qauxv") || strstr(buf, "lsposed") ||
+                strstr(buf, "npatch")) {
+                return true;
+            }
+        }
+    }
+    // Check cmdline
+    char cmd_path[64];
+    snprintf(cmd_path, sizeof(cmd_path), "/proc/%s/cmdline", pid_str);
+    if (real_open_ptr) fd = real_open_ptr(cmd_path, O_RDONLY, 0);
+    else fd = open(cmd_path, O_RDONLY);
+    if (fd >= 0) {
+        char buf[256];
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            if (strstr(buf, "bin.mt") || strstr(buf, "io.github.qauxv") ||
+                strstr(buf, "org.lsposed.manager") || strstr(buf, "top.nkbe.npatch") ||
+                strstr(buf, "magisk") || strstr(buf, "ksud") || strstr(buf, "daemonsu")) {
                 return true;
             }
         }
@@ -196,9 +247,12 @@ FILE* build_filtered_maps() {
         "libnative-bypass", "libbytehook", "xalsace", "qq_hook",
         "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
         "epic", "pine", "taichi", "top.canyie", "liblspd", "qqbypass",
-        "zygisk_lsposed", "zygisksu", "/data/adb", "bin.mt.plus",
+        "zygisk_lsposed", "zygisksu", "/data/adb",
+        "bin.mt.", "bin.mt.plus", "bin.mt.manager", "bin.mt.termex", "MT2",
+        "top.nkbe.npatch", "npatch", "org.lsposed.manager",
         "bytehook", "trampoline", "native-bypass", "apatch", "libxposed",
-        "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "cc.ioctl", "qnotified",
+        "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "libqauxv-core1",
+        "cc.ioctl", "qnotified", "bytebuddy", "net.bytebuddy", "singleneuron", "timeline",
         nullptr
     };
 
@@ -241,9 +295,12 @@ FILE* build_filtered_smaps() {
         "libnative-bypass", "libbytehook", "xalsace", "qq_hook",
         "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
         "epic", "pine", "taichi", "top.canyie", "liblspd", "qqbypass",
-        "zygisk_lsposed", "zygisksu", "/data/adb", "bin.mt.plus",
+        "zygisk_lsposed", "zygisksu", "/data/adb",
+        "bin.mt.", "bin.mt.plus", "bin.mt.manager", "bin.mt.termex", "MT2",
+        "top.nkbe.npatch", "npatch", "org.lsposed.manager",
         "bytehook", "trampoline", "native-bypass", "apatch", "libxposed",
-        "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "cc.ioctl", "qnotified",
+        "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "libqauxv-core1",
+        "cc.ioctl", "qnotified", "bytebuddy", "net.bytebuddy", "singleneuron", "timeline",
         nullptr
     };
 
@@ -350,7 +407,8 @@ static FILE* fake_fopen(const char* pathname, const char* mode) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
 
-    if (is_sensitive_path(pathname)) {
+    if (is_sensitive_path(pathname) ||
+        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
         LOGD("Hidden path fopen: %s", pathname);
         errno = ENOENT;
         return nullptr;
@@ -444,7 +502,8 @@ static int fake_open(const char* pathname, int flags, ...) {
         va_end(args);
     }
 
-    if (is_sensitive_path(pathname)) {
+    if (is_sensitive_path(pathname) ||
+        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
         LOGD("Hidden path open: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -535,7 +594,8 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
         va_end(args);
     }
 
-    if (is_sensitive_path(pathname)) {
+    if (is_sensitive_path(pathname) ||
+        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
         LOGD("Hidden path openat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -837,7 +897,9 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
     if (result != 0 && info && info->dli_fname) {
         const char* hidden[] = {
             "libnative-bypass", "libbytehook", "xalsace",
-            "lsposed", "dexkit", "libdexkit", nullptr
+            "lsposed", "dexkit", "libdexkit",
+            "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
+            "bin.mt", "npatch", "bytebuddy", nullptr
         };
         for (int i = 0; hidden[i]; i++) {
             if (strstr(info->dli_fname, hidden[i])) {
@@ -863,7 +925,9 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
     if (info && info->dlpi_name) {
         const char* hidden[] = {
             "libnative-bypass", "libbytehook", "xalsace",
-            "lsposed", "dexkit", "libdexkit", nullptr
+            "lsposed", "dexkit", "libdexkit",
+            "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
+            "bin.mt", "npatch", "bytebuddy", nullptr
         };
         for (int i = 0; hidden[i]; i++) {
             if (strstr(info->dlpi_name, hidden[i])) {
@@ -885,7 +949,8 @@ static int fake_dl_iterate_phdr(int (*callback)(struct dl_phdr_info*, size_t, vo
 
 static int fake_access(const char* pathname, int mode) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname)) {
+    if (is_sensitive_path(pathname) ||
+        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
         LOGD("Hidden path access: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -897,7 +962,8 @@ static int fake_access(const char* pathname, int mode) {
 
 static int fake_faccessat(int dirfd, const char* pathname, int mode, int flags) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname)) {
+    if (is_sensitive_path(pathname) ||
+        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
         LOGD("Hidden path faccessat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -909,7 +975,8 @@ static int fake_faccessat(int dirfd, const char* pathname, int mode, int flags) 
 
 static int fake_stat(const char* pathname, struct stat* statbuf) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname)) {
+    if (is_sensitive_path(pathname) ||
+        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
         LOGD("Hidden path stat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -921,7 +988,8 @@ static int fake_stat(const char* pathname, struct stat* statbuf) {
 
 static int fake_lstat(const char* pathname, struct stat* statbuf) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname)) {
+    if (is_sensitive_path(pathname) ||
+        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
         LOGD("Hidden path lstat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -933,7 +1001,8 @@ static int fake_lstat(const char* pathname, struct stat* statbuf) {
 
 static int fake_fstatat(int dirfd, const char* pathname, struct stat* statbuf, int flags) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname)) {
+    if (is_sensitive_path(pathname) ||
+        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
         LOGD("Hidden path fstatat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -1022,8 +1091,8 @@ static void fake_system_property_read_callback(const prop_info* pi, void (*callb
         BYTEHOOK_CALL_PREV(fake_system_property_read_callback, pi, prop_read_callback_wrapper, &pcc);
     } else {
         typedef void (*pfn_read_cb)(const prop_info*, void (*)(void*, const char*, const char*, uint32_t), void*);
-        static pfn_read_cb s_fn = (pfn_read_cb)dlsym(RTLD_DEFAULT, "__system_property_read_callback");
-        if (s_fn) s_fn(pi, prop_read_callback_wrapper, &pcc);
+        pfn_read_cb fn = (pfn_read_cb)dlsym(RTLD_DEFAULT, "__system_property_read_callback");
+        if (fn) fn(pi, prop_read_callback_wrapper, &pcc);
     }
 }
 
@@ -1035,7 +1104,8 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     if (number == 56 || number == 437 || number == 322) {
         const char* path = (const char*)a2;
         if (path) {
-            if (is_sensitive_path(path)) {
+            if (is_sensitive_path(path) ||
+                (is_qa_private_path(path) && is_caller_security_dso(__builtin_return_address(0)))) {
                 LOGD("fake_syscall: openat blocked sensitive: %s", path);
                 errno = ENOENT;
                 return -1;
@@ -1111,7 +1181,8 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     // 79: __NR_newfstatat
     else if (number == 79) {
         const char* path = (const char*)a2;
-        if (path && is_sensitive_path(path)) {
+        if (path && (is_sensitive_path(path) ||
+            (is_qa_private_path(path) && is_caller_security_dso(__builtin_return_address(0))))) {
             LOGD("fake_syscall: newfstatat blocked sensitive: %s", path);
             errno = ENOENT;
             return -1;
@@ -1120,7 +1191,8 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     // 48 / 439: __NR_faccessat, __NR_faccessat2
     else if (number == 48 || number == 439) {
         const char* path = (const char*)a2;
-        if (path && is_sensitive_path(path)) {
+        if (path && (is_sensitive_path(path) ||
+            (is_qa_private_path(path) && is_caller_security_dso(__builtin_return_address(0))))) {
             LOGD("fake_syscall: faccessat blocked sensitive: %s", path);
             errno = ENOENT;
             return -1;

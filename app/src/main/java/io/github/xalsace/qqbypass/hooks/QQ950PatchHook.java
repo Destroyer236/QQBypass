@@ -1850,8 +1850,10 @@ public class QQ950PatchHook {
 
         // 5. Accessibility Services & Dtc Telemetry Sanitization (prevents bin.mt.plus / todesk / uuremote detection)
         final String[] suspiciousAssistKeywords = {
-            "bin.mt.plus", "todesk", "uuremote", "xposed", "lsposed", "magisk", "xalsace", "qqbypass", "dexkit",
-            "qauxv", "io.github.qauxv", "qnotified", "cc.ioctl"
+            "bin.mt.", "bin.mt.plus", "bin.mt.manager", "bin.mt.termex", "mt2",
+            "top.nkbe.npatch", "npatch", "org.lsposed", "todesk", "uuremote",
+            "xposed", "lsposed", "magisk", "ksu", "apatch", "xalsace", "qqbypass", "dexkit",
+            "qauxv", "io.github.qauxv", "qnotified", "cc.ioctl", "singleneuron", "bytebuddy"
         };
 
         HookUtils.hookAllMethods("android.view.accessibility.AccessibilityManager", "getInstalledAccessibilityServiceList", new XC_MethodHook() {
@@ -1944,6 +1946,42 @@ public class QQ950PatchHook {
                         if (pkg.contains(kw)) {
                             p.setResult(false);
                             return;
+                        }
+                    }
+                }
+            }
+        });
+        hookSafe(dtcCls, "getTopActivity", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res instanceof android.app.Activity) {
+                    String pkg = ((android.app.Activity) res).getPackageName();
+                    if (pkg != null) {
+                        String lower = pkg.toLowerCase();
+                        for (String kw : suspiciousAssistKeywords) {
+                            if (lower.contains(kw)) {
+                                p.setResult(null);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        hookSafe("com.tencent.mobileqq.dt.model.VmInterface", "getTopActivity", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res instanceof android.app.Activity) {
+                    String pkg = ((android.app.Activity) res).getPackageName();
+                    if (pkg != null) {
+                        String lower = pkg.toLowerCase();
+                        for (String kw : suspiciousAssistKeywords) {
+                            if (lower.contains(kw)) {
+                                p.setResult(null);
+                                return;
+                            }
                         }
                     }
                 }

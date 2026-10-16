@@ -1,7 +1,5 @@
 package io.github.xalsace.qqbypass;
 
-import android.util.Log;
-
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
@@ -147,7 +145,6 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
         if (cl == null || sObservedLoaders.contains(cl)) return;
         sObservedLoaders.add(cl);
         try {
-            log("[Lifecycle] New ClassLoader observed: " + cl.getClass().getName() + ", dispatching late-stage hooks");
             QQ950PatchHook.hookLateStage(cl);
             DynamicRootDetectionHook.hookLateStage(cl);
         } catch (Throwable t) {
@@ -195,17 +192,17 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
     }
 
     public static void log(String message) {
-        Log.i(TAG, message);
+        if (!HookConfig.VERBOSE_LOGGING) return;
         try {
-            de.robv.android.xposed.XposedBridge.log("[" + TAG + "] " + message);
+            de.robv.android.xposed.XposedBridge.log(message);
         } catch (Throwable ignored) {
         }
     }
 
     public static void logError(String message, Throwable t) {
-        Log.e(TAG, message, t);
+        if (!HookConfig.VERBOSE_LOGGING) return;
         try {
-            de.robv.android.xposed.XposedBridge.log("[" + TAG + "] " + message);
+            de.robv.android.xposed.XposedBridge.log(message);
             if (t != null) {
                 de.robv.android.xposed.XposedBridge.log(t);
             }

@@ -5,9 +5,10 @@
 
 #define TAG "QQNativeBypass"
 
-#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+// 确保模块日志不写入系统 logcat，防止被 QQ/Bugly/APM 抓取上传
+#define LOGD(...) ((void)0)
+#define LOGI(...) ((void)0)
+#define LOGW(...) ((void)0)
+#define LOGE(...) ((void)0)
 
 #endif // NATIVE_BYPASS_LOG_H

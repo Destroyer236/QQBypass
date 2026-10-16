@@ -20,7 +20,9 @@ static char* (*real_fekit_strstr_ptr)(const char*, const char*) = nullptr;
 static int fake_system(const char* command) {
     SAFE_BYTEHOOK_SCOPE();
 
-    if (command && (strstr(command, "magisk") || strstr(command, "su") ||
+    if (command && (strstr(command, "logcat") || strstr(command, "bin.mt") ||
+                    strstr(command, "mt.plus") || strstr(command, "io.github.qauxv") ||
+                    strstr(command, "magisk") || strstr(command, "su") ||
                     strstr(command, "mount") || strstr(command, "/proc/mounts") ||
                     strstr(command, "which") || strstr(command, "getprop") ||
                     strstr(command, "ksu") || strstr(command, "apatch") ||
@@ -43,7 +45,9 @@ static FILE* fake_popen(const char* command, const char* type) {
             LOGI("Redirected popen mount: %s", command);
             return hook_libc::build_filtered_mounts();
         }
-        if (strstr(command, "magisk") || strstr(command, "su") ||
+        if (strstr(command, "logcat") || strstr(command, "bin.mt") ||
+            strstr(command, "mt.plus") || strstr(command, "io.github.qauxv") ||
+            strstr(command, "magisk") || strstr(command, "su") ||
             strstr(command, "which") || strstr(command, "getprop") ||
             strstr(command, "ksu") || strstr(command, "apatch") ||
             strstr(command, "/data/adb") || strstr(command, "daemonsu") ||
@@ -68,7 +72,9 @@ static char* fake_strstr(const char* haystack, const char* needle) {
             "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", "ksu", "apatch", "shamiko",
             "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa", "epic", "pine", "taichi", "liblspd",
             "qqbypass", "xalsace", "libnative-bypass", "libbytehook", "bytehook", "trampoline",
-            "qauxv", "io.github.qauxv", "libqauxv", "cc.ioctl", "qnotified", nullptr
+            "qauxv", "io.github.qauxv", "libqauxv", "cc.ioctl", "qnotified",
+            "bin.mt", "mt.plus", "top.nkbe.npatch", "npatch", "singleneuron", "bytebuddy",
+            "nep.timeline", "me.ketal", "me.hd", "xyz.nextalone", "top.linl", nullptr
         };
         for (int i = 0; sensitive[i]; i++) {
             if (strcasecmp(needle, sensitive[i]) == 0 || strstr(needle, sensitive[i])) {

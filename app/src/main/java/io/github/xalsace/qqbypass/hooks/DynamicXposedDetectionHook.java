@@ -292,9 +292,20 @@ public class DynamicXposedDetectionHook {
                 lower.contains("com.google.flatbuffers") ||
                 lower.contains("com.elderdrivers.riru") ||
                 lower.contains("bytehook") ||
+                lower.contains("bin.mt") ||
+                lower.contains("top.nkbe.npatch") ||
+                lower.contains("npatch") ||
                 lower.contains("io.github.qauxv") ||
                 lower.contains("qauxv") ||
                 lower.contains("cc.ioctl") ||
+                lower.contains("me.singleneuron") ||
+                lower.contains("nep.timeline") ||
+                lower.contains("me.ketal") ||
+                lower.contains("me.hd") ||
+                lower.contains("xyz.nextalone") ||
+                lower.contains("top.linl") ||
+                lower.contains("net.bytebuddy") ||
+                lower.contains("io.github.libxposed") ||
                 lower.contains("qnotified")) {
                 continue;
             }
@@ -397,7 +408,15 @@ public class DynamicXposedDetectionHook {
             || lower.startsWith("top.canyie.pine.")
             || lower.startsWith("lab.galaxy.yahfa.")
             || lower.startsWith("me.ele.epic.")
-            || lower.startsWith("me.weishu.exposed.");
+            || lower.startsWith("me.weishu.exposed.")
+            || lower.startsWith("bin.mt.")
+            || lower.startsWith("top.nkbe.npatch.")
+            || lower.startsWith("io.github.qauxv.")
+            || lower.startsWith("cc.ioctl.")
+            || lower.startsWith("me.singleneuron.")
+            || lower.startsWith("nep.timeline.")
+            || lower.startsWith("net.bytebuddy.")
+            || lower.startsWith("io.github.libxposed.");
     }
 
     private static boolean isCallerWhitelisted() {
@@ -419,6 +438,14 @@ public class DynamicXposedDetectionHook {
                 if (cls.startsWith("io.github.xalsace.")
                     || cls.startsWith("io.github.qauxv.")
                     || cls.startsWith("cc.ioctl.")
+                    || cls.startsWith("me.singleneuron.")
+                    || cls.startsWith("nep.timeline.")
+                    || cls.startsWith("me.ketal.")
+                    || cls.startsWith("xyz.nextalone.")
+                    || cls.startsWith("top.linl.")
+                    || cls.startsWith("net.bytebuddy.")
+                    || cls.startsWith("io.github.libxposed.")
+                    || cls.startsWith("bin.mt.")
                     || cls.startsWith("de.robv.android.xposed.")
                     || cls.startsWith("org.lsposed.")) {
                     return true;
@@ -502,6 +529,16 @@ public class DynamicXposedDetectionHook {
         }
     }
 
+    private static boolean containsSensitiveLog(String s) {
+        if (s == null) return false;
+        String lower = s.toLowerCase();
+        return lower.contains("xposed") || lower.contains("lsposed") || lower.contains("qauxv")
+            || lower.contains("qqbypass") || lower.contains("nativebypass") || lower.contains("native-bypass")
+            || lower.contains("dexkit") || lower.contains("bin.mt") || lower.contains("npatch")
+            || lower.contains("bytebuddy") || lower.contains("singleneuron") || lower.contains("magisk")
+            || lower.contains("shamiko") || lower.contains("kernel_su") || lower.contains("apatch");
+    }
+
     private static void hookBuglyCrashReporter(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> crashHandlerClass = de.robv.android.xposed.XposedHelpers.findClassIfExists(
@@ -525,5 +562,80 @@ public class DynamicXposedDetectionHook {
         } catch (Throwable t) {
             XposedEntry.log("Failed to hook Bugly crash reporter: " + t.getMessage());
         }
+
+        // Sanitize BuglyLog to drop sensitive framework logs
+        try {
+            Class<?> buglyLogClass = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                "com.tencent.bugly.crashreport.BuglyLog", lpparam.classLoader);
+            if (buglyLogClass != null) {
+                XC_MethodHook buglyFilter = new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null) {
+                            for (Object arg : param.args) {
+                                if (arg instanceof String && containsSensitiveLog((String) arg)) {
+                                    param.setResult(null);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                };
+                for (String m : new String[]{"v", "d", "i", "w", "e"}) {
+                    HookUtils.hookAllMethods(buglyLogClass, m, buglyFilter);
+                }
+                XposedEntry.log("BuglyLog sanitization installed");
+            }
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook BuglyLog: " + t.getMessage());
+        }
+
+        // Sanitize QLog to drop sensitive module/framework logs
+        try {
+            Class<?> qLogClass = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                "com.tencent.qphone.base.util.QLog", lpparam.classLoader);
+            if (qLogClass != null) {
+                XC_MethodHook qlogFilter = new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null) {
+                            for (Object arg : param.args) {
+                                if (arg instanceof String && containsSensitiveLog((String) arg)) {
+                                    param.setResult(null);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                };
+                for (String m : new String[]{"d", "i", "w", "e"}) {
+                    HookUtils.hookAllMethods(qLogClass, m, qlogFilter);
+                }
+                XposedEntry.log("QLog sanitization installed");
+            }
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook QLog: " + t.getMessage());
+        }
+
+        // Sanitize CrashReport.putUserData
+        try {
+            Class<?> crashReportCls = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                "com.tencent.bugly.crashreport.CrashReport", lpparam.classLoader);
+            if (crashReportCls != null) {
+                HookUtils.hookAllMethods(crashReportCls, "putUserData", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null) {
+                            for (Object arg : param.args) {
+                                if (arg instanceof String && containsSensitiveLog((String) arg)) {
+                                    param.setResult(null);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        } catch (Throwable ignored) {}
     }
 }

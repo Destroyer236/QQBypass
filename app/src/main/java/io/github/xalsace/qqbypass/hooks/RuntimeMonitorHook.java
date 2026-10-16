@@ -130,16 +130,22 @@ public class RuntimeMonitorHook {
 
                     String joined = joinCommand(command);
 
+                    if (joined.contains("logcat")) {
+                        pb.command("/system/bin/sh", "-c", "exit 0");
+                        XposedEntry.log("Suppressed ProcessBuilder logcat capture: " + joined);
+                        return;
+                    }
+
+                    if (isSensitiveProbe(joined)) {
+                        pb.command("/system/bin/sh", "-c", "echo 'Package not found'; exit 1");
+                        XposedEntry.log("Neutralized ProcessBuilder sensitive probe: " + joined);
+                        return;
+                    }
+
                     if (isRootProbe(joined)) {
-                        // Rewrite the command IN PLACE to a harmless no-op that yields
-                        // empty stdout + non-zero exit - exactly what an UNROOTED device
-                        // returns for `type su` / `which su` (su not found). We let the
-                        // real start() proceed with the neutralized command, so there is
-                        // no fake Process object and no recursion into this hook.
                         pb.command("/system/bin/sh", "-c", "echo 'sh: type: su: not found'; exit 127");
                         XposedEntry.log("Neutralized ProcessBuilder root probe: " + joined);
                     } else if (isMonitoredCommand(joined)) {
-                        // Non-root monitored command: observe only, don't break it.
                         XposedEntry.log("ProcessBuilder command intercepted: " + joined);
                     }
                 }
@@ -161,6 +167,14 @@ public class RuntimeMonitorHook {
      * Kept narrow (token-level "su" + known root-manager names) so legitimate
      * shell commands QQ needs are never rewritten.
      */
+    private static boolean isSensitiveProbe(String joined) {
+        if (joined == null) return false;
+        String s = joined.toLowerCase();
+        return s.contains("bin.mt") || s.contains("io.github.qauxv") || s.contains("org.lsposed")
+                || s.contains("top.nkbe.npatch") || s.contains("bytebuddy") || s.contains("singleneuron")
+                || s.contains("xalsace") || s.contains("qqbypass") || s.contains("libqauxv");
+    }
+
     private static boolean isRootProbe(String joined) {
         if (joined == null) return false;
         String s = joined.toLowerCase();

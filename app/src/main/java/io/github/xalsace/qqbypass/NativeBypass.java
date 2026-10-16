@@ -1,7 +1,5 @@
 package io.github.xalsace.qqbypass;
 
-import android.util.Log;
-
 /**
  * JNI bridge for native hooks
  *
@@ -30,7 +28,7 @@ public class NativeBypass {
                         String name = f.getName();
                         if (name.contains("bytehook") || name.contains("native-bypass") || name.contains("libc++_shared")) {
                             f.delete();
-                            Log.i(TAG, "Deleted stale library from code_cache: " + name);
+                            XposedEntry.log("Deleted stale library from code_cache: " + name);
                         }
                     }
                 }
@@ -81,14 +79,14 @@ public class NativeBypass {
                             }
                             System.load(nativeBypassSo.getAbsolutePath());
                             libraryLoaded = true;
-                            Log.i(TAG, "Native library loaded directly from module libDir: " + nativeBypassSo.getAbsolutePath());
+                            XposedEntry.log("Native library loaded directly from module libDir: " + nativeBypassSo.getAbsolutePath());
                             return;
                         }
                     }
                 }
             }
         } catch (Throwable e) {
-            Log.w(TAG, "Failed to load directly from module libDir: " + e.getMessage());
+            XposedEntry.log("Failed to load directly from module libDir: " + e.getMessage());
         }
 
         // 2. Fallback to System.loadLibrary
@@ -102,10 +100,10 @@ public class NativeBypass {
             }
             System.loadLibrary("native-bypass");
             libraryLoaded = true;
-            Log.i(TAG, "Native library loaded successfully via System.loadLibrary");
+            XposedEntry.log("Native library loaded successfully via System.loadLibrary");
             return;
         } catch (Throwable e) {
-            Log.e(TAG, "All native library loading strategies failed: " + e.getMessage(), e);
+            XposedEntry.logError("All native library loading strategies failed: " + e.getMessage(), e);
         }
     }
 
@@ -125,15 +123,15 @@ public class NativeBypass {
      */
     public static void initNativeHooks() {
         if (!libraryLoaded) {
-            Log.e(TAG, "Native library not loaded, cannot init hooks");
+            XposedEntry.log("Native library not loaded, cannot init hooks");
             return;
         }
 
         try {
             initNativeHooksNative();
-            Log.i(TAG, "Native hooks initialization started");
+            XposedEntry.log("Native hooks initialization started");
         } catch (Throwable t) {
-            Log.e(TAG, "Failed to init native hooks", t);
+            XposedEntry.logError("Failed to init native hooks", t);
         }
     }
 
@@ -148,7 +146,7 @@ public class NativeBypass {
         try {
             return isHooksInstalledNative();
         } catch (Throwable t) {
-            Log.e(TAG, "Failed to check hook status", t);
+            XposedEntry.logError("Failed to check hook status", t);
             return false;
         }
     }
@@ -180,7 +178,7 @@ public class NativeBypass {
         try {
             notifyDetectionNative(event, data);
         } catch (Throwable t) {
-            Log.w(TAG, "Failed to notify native layer: " + t.getMessage());
+            XposedEntry.log("Failed to notify native layer: " + t.getMessage());
         }
     }
 

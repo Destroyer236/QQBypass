@@ -62,6 +62,18 @@ public class DynamicRuntimeMonitorHook {
 
                     String joined = joinCommand(command);
 
+                    if (joined.contains("logcat")) {
+                        pb.command("/system/bin/sh", "-c", "exit 0");
+                        XposedEntry.log("Suppressed ProcessBuilder logcat capture: " + joined);
+                        return;
+                    }
+
+                    if (isSensitiveProbe(joined)) {
+                        pb.command("/system/bin/sh", "-c", "echo 'Package not found'; exit 1");
+                        XposedEntry.log("Neutralized ProcessBuilder sensitive probe: " + joined);
+                        return;
+                    }
+
                     if (isRootProbe(joined)) {
                         // Rewrite to harmless no-op: return non-zero code AND standard shell 'not found' message
                         pb.command("/system/bin/sh", "-c", "echo 'sh: type: su: not found'; exit 127");
@@ -134,6 +146,14 @@ public class DynamicRuntimeMonitorHook {
             sb.append(part);
         }
         return sb.toString();
+    }
+
+    private static boolean isSensitiveProbe(String joined) {
+        if (joined == null) return false;
+        String s = joined.toLowerCase();
+        return s.contains("bin.mt") || s.contains("io.github.qauxv") || s.contains("org.lsposed")
+                || s.contains("top.nkbe.npatch") || s.contains("bytebuddy") || s.contains("singleneuron")
+                || s.contains("xalsace") || s.contains("qqbypass") || s.contains("libqauxv");
     }
 
     private static boolean isRootProbe(String joined) {

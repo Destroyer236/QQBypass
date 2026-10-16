@@ -168,3 +168,17 @@ Java_io_github_xalsace_qqbypass_NativeBypass_notifyDetectionNative(
     env->ReleaseStringUTFChars(event, event_str);
     env->ReleaseStringUTFChars(data, data_str);
 }
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_xalsace_qqbypass_NativeBypass_getHookStatisticsNative(JNIEnv* env, jclass clazz) {
+    (void)clazz;
+    return env->NewStringUTF("ByteHook PLT hooks active");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_xalsace_qqbypass_NativeBypass_isHookActiveNative(JNIEnv* env, jclass clazz, jstring hook_name) {
+    (void)env;
+    (void)clazz;
+    (void)hook_name;
+    return g_bytehook_hooks_installed;
+}

@@ -25,7 +25,11 @@ static void* hooked_dlopen(const char* filename, int flag) {
             strcasestr(filename, "pine") ||
             strcasestr(filename, "taichi") ||
             strcasestr(filename, "qqbypass") ||
-            strcasestr(filename, "xalsace")) {
+            strcasestr(filename, "xalsace") ||
+            strcasestr(filename, "bin.mt") ||
+            strcasestr(filename, "npatch") ||
+            strcasestr(filename, "qauxv") ||
+            strcasestr(filename, "bytebuddy")) {
             LOGI("QSec dlopen blocked: %s", filename);
             return nullptr;
         }
@@ -65,7 +69,11 @@ static void* hooked_dlsym(void* handle, const char* symbol) {
             strcasestr(symbol, "dobby") ||
             strcasestr(symbol, "riru") ||
             strcasestr(symbol, "zygisk") ||
-            strcasestr(symbol, "qauxv")) {
+            strcasestr(symbol, "qauxv") ||
+            strcasestr(symbol, "bin.mt") ||
+            strcasestr(symbol, "npatch") ||
+            strcasestr(symbol, "libqauxv") ||
+            strcasestr(symbol, "bytebuddy")) {
             LOGI("QSec dlsym blocked: %s", symbol);
             return nullptr;
         }
@@ -110,6 +118,10 @@ static int hooked_dladdr(const void* addr, Dl_info* info) {
             strcasestr(fname, "qauxv") ||
             strcasestr(fname, "io.github.qauxv") ||
             strcasestr(fname, "libqauxv") ||
+            strcasestr(fname, "libqauxv-core") ||
+            strcasestr(fname, "bin.mt") ||
+            strcasestr(fname, "npatch") ||
+            strcasestr(fname, "bytebuddy") ||
             strcasestr(fname, "cc.ioctl") ||
             strcasestr(fname, "qnotified")) {
             LOGI("QSec dladdr spoofed: %s -> libc.so", info->dli_fname);
