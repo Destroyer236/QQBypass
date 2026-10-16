@@ -106,6 +106,18 @@ public class HookUtils {
         }
     }
 
+    public static void hookAllConstructors(Class<?> clazz, XC_MethodHook callback) {
+        if (clazz == null) return;
+        try {
+            XposedBridge.hookAllConstructors(clazz, callback);
+            log("Hooked all constructors: " + clazz.getName());
+        } catch (Throwable t) {
+            if (HookConfig.VERBOSE_LOGGING) {
+                log("Failed to hook all constructors: " + clazz.getName() + " - " + t.getMessage());
+            }
+        }
+    }
+
     /**
      * Check if class exists
      */

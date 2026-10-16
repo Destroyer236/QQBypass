@@ -74,9 +74,6 @@ public class QQ950PatchHook {
 
         // Tier 7: RFix & Hotfix Failure Sanitization and Telemetry Drop
         hookRFixFailureSanitization(lpparam);
-
-        // Tier 8: Security Push Challenge Interception & NT Kernel / MSF Kick Defense in Depth
-        hookSecurityChallengeAndKickDefense(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -617,8 +614,16 @@ public class QQ950PatchHook {
     private static void ensureOtvrmInitialized(Object otvrm, ClassLoader cl, android.content.Context fallbackContext) {
         if (otvrm == null) return;
         try {
-            Object h = XposedHelpers.getObjectField(otvrm, "h");
-            Object b = XposedHelpers.getObjectField(otvrm, "b");
+            Object h = null;
+            try {
+                h = XposedHelpers.getObjectField(otvrm, "h");
+            } catch (Throwable ignored) {}
+
+            Object b = null;
+            try {
+                b = XposedHelpers.getObjectField(otvrm, "b");
+            } catch (Throwable ignored) {}
+
             if (h == null || b == null) {
                 XposedEntry.log("[FacePatch] OTVRM uninitialized (h=" + (h != null) + ", b=" + (b != null) + "), repairing state...");
                 android.content.Context ctx = fallbackContext;
@@ -633,13 +638,23 @@ public class QQ950PatchHook {
                 if (builderCls != null) {
                     Object builder = XposedHelpers.callStaticMethod(builderCls, "build");
                     if (ctx != null) {
-                        XposedHelpers.callMethod(builder, "setContext", ctx);
+                        try {
+                            XposedHelpers.callMethod(builder, "setContext", ctx);
+                        } catch (Throwable ignored) {}
                     }
-                    XposedHelpers.callMethod(builder, "setIsHardwareAcceleration", true);
-                    XposedHelpers.setObjectField(otvrm, "h", builder);
                     try {
-                        XposedHelpers.callMethod(otvrm, "a", builder);
+                        XposedHelpers.callMethod(builder, "setIsHardwareAcceleration", true);
                     } catch (Throwable ignored) {}
+                    if (h == null) {
+                        try {
+                            XposedHelpers.setObjectField(otvrm, "h", builder);
+                        } catch (Throwable ignored) {}
+                    }
+                    if (b == null) {
+                        try {
+                            XposedHelpers.callMethod(otvrm, "a", builder);
+                        } catch (Throwable ignored) {}
+                    }
                     XposedEntry.log("[FacePatch] OTVRM successfully initialized via fallback builder!");
                 }
             }
@@ -780,29 +795,52 @@ public class QQ950PatchHook {
             XposedEntry.log("[FacePatch] Hooked TuringFaceDefender for face recognition safety");
         }
 
-        // 1.1 OTVRM: direct defense in depth for setPreviewDisplay and start methods
+        // 1.1 OTVRM: direct defense in depth for constructors, setPreviewDisplay and start methods
         final String otvrmCls = "com.tencent.turingcam.OTVRM";
         Class<?> otvrmClass = XposedHelpers.findClassIfExists(otvrmCls, cl);
         if (otvrmClass != null && !sHookedFaceClasses.contains(otvrmClass)) {
             sHookedFaceClasses.add(otvrmClass);
-            HookUtils.hookAllMethods(otvrmClass, "a", new XC_MethodHook() {
+            HookUtils.hookAllConstructors(otvrmClass, new XC_MethodHook() {
                 @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args != null && param.args.length >= 2 && param.args[0] instanceof android.hardware.Camera) {
-                        android.content.Context ctx = null;
-                        if (param.args[1] != null) {
-                            try {
-                                ctx = (android.content.Context) XposedHelpers.callMethod(param.args[1], "getContext");
-                            } catch (Throwable ignored) {}
-                        }
-                        ensureOtvrmInitialized(param.thisObject, cl, ctx);
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.thisObject != null) {
+                        ensureOtvrmInitialized(param.thisObject, cl, null);
                     }
                 }
             });
-            XposedEntry.log("[FacePatch] Hooked OTVRM.a methods with null-safe guard");
+            HookUtils.hookAllMethods(otvrmClass, "a", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.thisObject != null) {
+                        try {
+                            android.content.Context ctx = null;
+                            if (param.args != null) {
+                                for (Object arg : param.args) {
+                                    if (arg instanceof android.content.Context) {
+                                        ctx = (android.content.Context) arg;
+                                        break;
+                                    } else if (arg != null) {
+                                        try {
+                                            Object possibleCtx = XposedHelpers.callMethod(arg, "getContext");
+                                            if (possibleCtx instanceof android.content.Context) {
+                                                ctx = (android.content.Context) possibleCtx;
+                                                break;
+                                            }
+                                        } catch (Throwable ignored) {}
+                                    }
+                                }
+                            }
+                            ensureOtvrmInitialized(param.thisObject, cl, ctx);
+                        } catch (Throwable t) {
+                            XposedEntry.log("[FacePatch] Error in OTVRM.a pre-check: " + t.getMessage());
+                        }
+                    }
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked OTVRM constructors & a methods with universal null-safe guard");
         }
 
-        // 2. TuringSdkImp: b(Context) hardware init & a() status / a(String, String) sign
+        // 2. TuringSdkImp: b(Context) hardware init & a() status / a(String, String) sign / a(View, CameraHolder, String) start
         final String turingSdkImpCls = "com.tencent.could.huiyansdk.turingmodule.TuringSdkImp";
         Class<?> turingSdkImpClass = XposedHelpers.findClassIfExists(turingSdkImpCls, cl);
         if (turingSdkImpClass != null && !sHookedFaceClasses.contains(turingSdkImpClass)) {
@@ -824,6 +862,24 @@ public class QQ950PatchHook {
                         java.lang.reflect.Method m = (java.lang.reflect.Method) param.method;
                         if (m.getReturnType() == String.class && (param.args == null || param.args.length == 0)) {
                             param.setResult(""); // Only String a() -> return error string or ""
+                        } else if (param.args != null && param.args.length == 2) {
+                            if (param.args[0] == null) param.args[0] = "";
+                            if (param.args[1] == null) param.args[1] = "";
+                        } else if (m.getReturnType() == int.class && param.args != null && param.args.length == 3) {
+                            // a(View, CameraHolder, String) defender start
+                            try {
+                                android.content.Context ctx = null;
+                                if (param.args[0] instanceof android.view.View) {
+                                    ctx = ((android.view.View) param.args[0]).getContext();
+                                }
+                                Class<?> bi3eTClass = XposedHelpers.findClassIfExists("com.tencent.turingcam.OTVRM$Bi3eT", cl);
+                                if (bi3eTClass != null) {
+                                    Object otvrm = XposedHelpers.getStaticObjectField(bi3eTClass, "a");
+                                    ensureOtvrmInitialized(otvrm, cl, ctx);
+                                }
+                            } catch (Throwable t) {
+                                XposedEntry.log("[FacePatch] Error pre-initializing OTVRM before TuringSdkImp.a: " + t.getMessage());
+                            }
                         }
                     }
                 }
@@ -832,19 +888,24 @@ public class QQ950PatchHook {
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     if (param.method instanceof java.lang.reflect.Method) {
                         java.lang.reflect.Method m = (java.lang.reflect.Method) param.method;
-                        if (m.getReturnType() == String.class && param.args != null && param.args.length == 2
-                                && param.args[0] instanceof String && param.args[1] instanceof String) {
+                        if (m.getReturnType() == String.class && param.args != null && param.args.length == 2) {
                             Object res = param.getResult();
                             if (res == null || "".equals(res) || (res instanceof String && ((String) res).startsWith("error"))) {
                                 String safeSign = generateSafeTuringSignMsg();
                                 param.setResult(safeSign);
                                 XposedEntry.log("[FacePatch] Sanitized TuringSdkImp.a(String, String) -> safe token (was " + res + ")");
                             }
+                        } else if (m.getReturnType() == int.class && param.args != null && param.args.length == 3) {
+                            Object res = param.getResult();
+                            if (res instanceof Number && ((Number) res).intValue() != 0) {
+                                XposedEntry.log("[FacePatch] Normalized TuringSdkImp.a(View, CameraHolder, String) return " + res + " -> 0");
+                                param.setResult(0);
+                            }
                         }
                     }
                 }
             });
-            XposedEntry.log("[FacePatch] Hooked TuringSdkImp for face hardware status and sign");
+            XposedEntry.log("[FacePatch] Hooked TuringSdkImp for face hardware status, sign, and defender start");
         }
 
         // 2.1 Turing base class: com.tencent.could.huiyansdk.turing.b
@@ -868,7 +929,7 @@ public class QQ950PatchHook {
             });
         }
 
-        // 2.2 HuiYanAuthImp: argument null-safety for getSendResultRequest
+        // 2.2 HuiYanAuthImp: argument null-safety for getSendResultRequest & getTuringActiveParam
         final String huiyanAuthImpCls = "com.tencent.could.huiyansdk.api.HuiYanAuthImp";
         Class<?> huiyanAuthImpClass = XposedHelpers.findClassIfExists(huiyanAuthImpCls, cl);
         if (huiyanAuthImpClass != null && !sHookedFaceClasses.contains(huiyanAuthImpClass)) {
@@ -884,9 +945,43 @@ public class QQ950PatchHook {
                             param.args[1] = "";
                         }
                     }
+                    try {
+                        Class<?> fClass = XposedHelpers.findClassIfExists("com.tencent.could.huiyansdk.turing.f", cl);
+                        if (fClass != null) {
+                            Object fSingleton = XposedHelpers.getStaticObjectField(fClass, "a");
+                            if (fSingleton != null) {
+                                Object fInstance = null;
+                                try {
+                                    fInstance = XposedHelpers.getObjectField(fSingleton, "a");
+                                } catch (Throwable ignored) {
+                                    fInstance = fSingleton;
+                                }
+                                if (fInstance != null) {
+                                    Object g = XposedHelpers.getObjectField(fInstance, "g");
+                                    if (g == null) {
+                                        Class<?> impCls = XposedHelpers.findClassIfExists("com.tencent.could.huiyansdk.turingmodule.TuringSdkImp", cl);
+                                        if (impCls != null) {
+                                            XposedHelpers.setObjectField(fInstance, "g", impCls.newInstance());
+                                            XposedEntry.log("[FacePatch] Injected default TuringSdkImp into f.g");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        XposedEntry.log("[FacePatch] Error preparing f.g before getSendResultRequest: " + t.getMessage());
+                    }
                 }
             });
-            XposedEntry.log("[FacePatch] Hooked HuiYanAuthImp.getSendResultRequest for argument null-safety");
+            HookUtils.hookAllMethods(huiyanAuthImpClass, "getTuringActiveParam", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.getResult() == null) {
+                        param.setResult("");
+                    }
+                }
+            });
+            XposedEntry.log("[FacePatch] Hooked HuiYanAuthImp.getSendResultRequest & getTuringActiveParam for argument null-safety");
         }
 
         // 2.3 CommonDataCache: getTuringActiveParam null-safety
@@ -2274,135 +2369,6 @@ public class QQ950PatchHook {
                             }
                         }
                     } catch (Throwable ignored) {}
-                }
-            }
-        });
-    }
-
-    /**
-     * Tier 8: Security Push Challenge Interception & NT Kernel / MSF Kick Defense in Depth.
-     *
-     * Directly addresses server-side periodic challenges, social lock checks, and soft session invalidation:
-     * 1. NTKickProcessor.a(AppRuntime, KickedInfo):
-     *    - When server sends a security kick (securityKickedType != 0 or tipsDesc mentions security/protection/anomaly),
-     *      suppress NTKickProcessor.a to prevent de-authenticating local account state,
-     *      clearing login data via reportClearLoginData("2004"), and killing the active NT session.
-     * 2. MainService$MyErrorHandler.onUserTokenExpired(ToServiceMsg, FromServiceMsg, boolean):
-     *    - When an SSO token error arrives (not an authoritative multi-login kick -10135/10136),
-     *      suppress onUserTokenExpired to prevent updateSimpleAccount(uin, false) from marking MSF unlogged,
-     *      and suppress popupNotification(ACTION_ACCOUNT_EXPIRED).
-     * 3. MainService.kick(KickParams):
-     *    - When isTokenExpired is true, suppress kick to avoid session teardown.
-     * 4. NotificationActivity:
-     *    - Auto-dismiss if launched with ACTION_ACCOUNT_EXPIRED or security kick action.
-     */
-    private static void hookSecurityChallengeAndKickDefense(XC_LoadPackage.LoadPackageParam lpparam) {
-        XposedEntry.log("[Tier8] Initializing Security Push Challenge & Kick Defense in Depth");
-
-        // 1. NTKickProcessor.a(AppRuntime, KickedInfo)
-        final String ntKickProcessorCls = "com.tencent.mobileqq.kick.NTKickProcessor";
-        hookSafe(ntKickProcessorCls, "a", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
-                    Object kickedInfo = p.args[1];
-                    try {
-                        int secType = XposedHelpers.getIntField(kickedInfo, "securityKickedType");
-                        String desc = (String) XposedHelpers.getObjectField(kickedInfo, "tipsDesc");
-                        String title = (String) XposedHelpers.getObjectField(kickedInfo, "tipsTitle");
-                        if (desc == null) desc = "";
-                        if (title == null) title = "";
-
-                        boolean isSecurityKick = secType != 0 ||
-                            desc.contains("安全") || desc.contains("环境") || desc.contains("异常") ||
-                            desc.contains("保护") || desc.contains("风险") || desc.contains("风控") ||
-                            title.contains("安全") || title.contains("风险") || title.contains("保护");
-
-                        if (isSecurityKick) {
-                            p.setResult(null);
-                            XposedEntry.log("[KickDefense] Preempted security kick in NTKickProcessor.a: secType=" + secType + ", title=" + title + ", desc=" + desc);
-                        }
-                    } catch (Throwable t) {
-                        XposedEntry.log("[KickDefense] Error inspecting KickedInfo: " + t.getMessage());
-                    }
-                }
-            }
-        });
-
-        // 2. MainService$MyErrorHandler.onUserTokenExpired
-        final String myErrorHandlerCls = "mqq.app.MainService$MyErrorHandler";
-        hookSafe(myErrorHandlerCls, "onUserTokenExpired", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
-                    try {
-                        Object fromServiceMsg = p.args[1];
-                        int ssoErrorCode = 0;
-                        try {
-                            Object attr = XposedHelpers.callMethod(fromServiceMsg, "getAttribute", "attr_sso_error_code", 0);
-                            if (attr instanceof Number) {
-                                ssoErrorCode = ((Number) attr).intValue();
-                            }
-                        } catch (Throwable ignored) {}
-
-                        // -10135 and 10136 are authoritative multi-device kicks (ACTION_ACCOUNT_KICKED).
-                        // All other codes are token expiration or server challenge failures (ACTION_ACCOUNT_EXPIRED).
-                        if (ssoErrorCode != -10135 && ssoErrorCode != 10136) {
-                            p.setResult(null);
-                            XposedEntry.log("[KickDefense] Suppressed onUserTokenExpired (ssoErrorCode=" + ssoErrorCode + "), preserved active session");
-                        }
-                    } catch (Throwable t) {
-                        XposedEntry.log("[KickDefense] Error in onUserTokenExpired hook: " + t.getMessage());
-                    }
-                }
-            }
-        });
-
-        // 3. MainService.kick(KickParams)
-        hookSafe("mqq.app.MainService", "kick", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length >= 1 && p.args[0] != null) {
-                    try {
-                        Object kickParams = p.args[0];
-                        boolean isTokenExpired = XposedHelpers.getBooleanField(kickParams, "isTokenExpired");
-                        if (isTokenExpired) {
-                            p.setResult(null);
-                            XposedEntry.log("[KickDefense] Suppressed MainService.kick (isTokenExpired=true)");
-                        }
-                    } catch (Throwable ignored) {}
-                }
-            }
-        });
-
-        // 4. NotificationActivity auto-dismiss for security kick & expired tokens
-        final String notifActCls = "com.tencent.mobileqq.activity.NotificationActivity";
-        hookSafe(notifActCls, "doOnCreate", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    android.app.Activity act = (android.app.Activity) p.thisObject;
-                    android.content.Intent intent = act.getIntent();
-                    if (intent != null) {
-                        String action = intent.getAction();
-                        String msg = intent.getStringExtra("msg");
-                        if (msg == null) msg = intent.getStringExtra("title");
-                        if (msg == null) msg = "";
-
-                        boolean isExpiredOrSecKick = "mqq.intent.action.ACCOUNT_EXPIRED".equals(action) ||
-                            "mqq.intent.action.ACCOUNT_KICKED".equals(action) ||
-                            "mqq.intent.action.KICK_TO_LOGIN".equals(action);
-
-                        if (isExpiredOrSecKick && (msg.contains("安全") || msg.contains("环境") || msg.contains("异常") ||
-                                msg.contains("保护") || msg.contains("风险") || msg.contains("凭证") || msg.contains("失效") ||
-                                "mqq.intent.action.ACCOUNT_EXPIRED".equals(action))) {
-                            p.setResult(false);
-                            act.finish();
-                            XposedEntry.log("[KickDefense] Auto-dismissed NotificationActivity for action=" + action + ", msg=" + msg);
-                        }
-                    }
-                } catch (Throwable t) {
-                    XposedEntry.log("[KickDefense] Error in NotificationActivity.doOnCreate hook: " + t.getMessage());
                 }
             }
         });

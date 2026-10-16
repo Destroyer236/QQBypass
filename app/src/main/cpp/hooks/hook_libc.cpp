@@ -186,6 +186,44 @@ FILE* build_filtered_mounts() {
     return fake;
 }
 
+// 构造过滤掉 TracerPid / 跟踪调试状态的 status 虚拟文件
+FILE* build_filtered_status() {
+    ensure_real_funcs();
+    if (!real_fopen_ptr || !real_fgets_ptr) return nullptr;
+
+    FILE* real = real_fopen_ptr("/proc/self/status", "r");
+    if (!real) return nullptr;
+
+    FILE* fake = create_memory_file("status");
+    if (!fake) {
+        fclose(real);
+        return nullptr;
+    }
+
+    char line[512];
+    while (real_fgets_ptr(line, sizeof(line), real)) {
+        if (strstr(line, "TracerPid:")) {
+            fputs("TracerPid:\t0\n", fake);
+        } else if (strstr(line, "State:") && strstr(line, "T (tracing stop)")) {
+            fputs("State:\tS (sleeping)\n", fake);
+        } else {
+            fputs(line, fake);
+        }
+    }
+    fclose(real);
+    rewind(fake);
+    return fake;
+}
+
+// 构造过滤掉 ptrace_stop 的 wchan 虚拟文件
+FILE* build_filtered_wchan() {
+    FILE* fake = create_memory_file("wchan");
+    if (!fake) return nullptr;
+    fputs("sys_epoll_wait\n", fake);
+    rewind(fake);
+    return fake;
+}
+
 // ==================== 统一 Hook 实现 ====================
 
 static FILE* fake_fopen(const char* pathname, const char* mode) {
@@ -210,6 +248,18 @@ static FILE* fake_fopen(const char* pathname, const char* mode) {
             strcmp(pathname, "/proc/self/mountinfo") == 0) {
             LOGI("Intercepted fopen mounts: %s", pathname);
             FILE* fake = build_filtered_mounts();
+            if (fake) return fake;
+        }
+        if (strcmp(pathname, "/proc/self/status") == 0 ||
+            (strstr(pathname, "/proc/") && strstr(pathname, "/status"))) {
+            LOGI("Intercepted fopen status: %s", pathname);
+            FILE* fake = build_filtered_status();
+            if (fake) return fake;
+        }
+        if (strcmp(pathname, "/proc/self/wchan") == 0 ||
+            (strstr(pathname, "/proc/") && strstr(pathname, "/wchan"))) {
+            LOGI("Intercepted fopen wchan: %s", pathname);
+            FILE* fake = build_filtered_wchan();
             if (fake) return fake;
         }
     }
@@ -281,6 +331,26 @@ static int fake_open(const char* pathname, int flags, ...) {
                 return fd;
             }
         }
+        if (strcmp(pathname, "/proc/self/status") == 0 ||
+            (strstr(pathname, "/proc/") && strstr(pathname, "/status"))) {
+            LOGI("Intercepted open status: %s", pathname);
+            FILE* fake = build_filtered_status();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (strcmp(pathname, "/proc/self/wchan") == 0 ||
+            (strstr(pathname, "/proc/") && strstr(pathname, "/wchan"))) {
+            LOGI("Intercepted open wchan: %s", pathname);
+            FILE* fake = build_filtered_wchan();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
     }
 
     if (real_open_ptr) return real_open_ptr(pathname, flags, mode);
@@ -321,6 +391,26 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
             strcmp(pathname, "/proc/self/mountinfo") == 0) {
             LOGI("Intercepted openat mounts: %s", pathname);
             FILE* fake = build_filtered_mounts();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (strcmp(pathname, "/proc/self/status") == 0 ||
+            (strstr(pathname, "/proc/") && strstr(pathname, "/status"))) {
+            LOGI("Intercepted openat status: %s", pathname);
+            FILE* fake = build_filtered_status();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (strcmp(pathname, "/proc/self/wchan") == 0 ||
+            (strstr(pathname, "/proc/") && strstr(pathname, "/wchan"))) {
+            LOGI("Intercepted openat wchan: %s", pathname);
+            FILE* fake = build_filtered_wchan();
             if (fake) {
                 int fd = dup(fileno(fake));
                 fclose(fake);
@@ -578,6 +668,26 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
                     return fd;
                 }
             }
+            if (strcmp(path, "/proc/self/status") == 0 ||
+                (strstr(path, "/proc/") && strstr(path, "/status"))) {
+                LOGI("fake_syscall: openat status redirected: %s", path);
+                FILE* fake = build_filtered_status();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
+            }
+            if (strcmp(path, "/proc/self/wchan") == 0 ||
+                (strstr(path, "/proc/") && strstr(path, "/wchan"))) {
+                LOGI("fake_syscall: openat wchan redirected: %s", path);
+                FILE* fake = build_filtered_wchan();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
+            }
         }
     }
     // 79: __NR_newfstatat
@@ -605,6 +715,20 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
             LOGD("fake_syscall: readlinkat blocked sensitive: %s", path);
             errno = ENOENT;
             return -1;
+        }
+    }
+    // 117: __NR_ptrace on aarch64, 26 on arm
+#if defined(__aarch64__)
+    else if (number == 117) {
+#elif defined(__arm__)
+    else if (number == 26) {
+#else
+    else if (number == __NR_ptrace) {
+#endif
+        // PTRACE_TRACEME = 0
+        if ((long)a1 == 0) {
+            LOGI("fake_syscall: ptrace(PTRACE_TRACEME) neutralized");
+            return 0;
         }
     }
 

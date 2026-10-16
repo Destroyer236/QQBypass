@@ -17,6 +17,8 @@ void install_hooks();
 bool is_sensitive_path(const char* path);
 FILE* build_filtered_maps();
 FILE* build_filtered_mounts();
+FILE* build_filtered_status();
+FILE* build_filtered_wchan();
 
 long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6);
 
