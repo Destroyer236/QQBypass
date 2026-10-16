@@ -424,6 +424,41 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
     return (int)syscall(__NR_openat, dirfd, pathname, flags, mode);
 }
 
+static ssize_t sanitize_readlink_buffer(char* buf, size_t bufsiz, ssize_t ret) {
+    if (ret <= 0 || !buf || (size_t)ret >= bufsiz) return ret;
+    buf[ret] = '\0';
+    if (strstr(buf, "memfd:maps")) {
+        const char* rep = "/proc/self/maps";
+        size_t rlen = strlen(rep);
+        if (bufsiz > rlen) {
+            strncpy(buf, rep, bufsiz);
+            return rlen;
+        }
+    } else if (strstr(buf, "memfd:status")) {
+        const char* rep = "/proc/self/status";
+        size_t rlen = strlen(rep);
+        if (bufsiz > rlen) {
+            strncpy(buf, rep, bufsiz);
+            return rlen;
+        }
+    } else if (strstr(buf, "memfd:mounts")) {
+        const char* rep = "/proc/mounts";
+        size_t rlen = strlen(rep);
+        if (bufsiz > rlen) {
+            strncpy(buf, rep, bufsiz);
+            return rlen;
+        }
+    } else if (strstr(buf, "memfd:wchan")) {
+        const char* rep = "/proc/self/wchan";
+        size_t rlen = strlen(rep);
+        if (bufsiz > rlen) {
+            strncpy(buf, rep, bufsiz);
+            return rlen;
+        }
+    }
+    return ret;
+}
+
 static ssize_t fake_readlink(const char* pathname, char* buf, size_t bufsiz) {
     SAFE_BYTEHOOK_SCOPE();
 
@@ -444,9 +479,12 @@ static ssize_t fake_readlink(const char* pathname, char* buf, size_t bufsiz) {
         return -1;
     }
 
-    if (real_readlink_ptr) return real_readlink_ptr(pathname, buf, bufsiz);
-    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_readlink, pathname, buf, bufsiz);
-    return (ssize_t)syscall(__NR_readlinkat, AT_FDCWD, pathname, buf, bufsiz);
+    ssize_t ret;
+    if (real_readlink_ptr) ret = real_readlink_ptr(pathname, buf, bufsiz);
+    else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_readlink, pathname, buf, bufsiz);
+    else ret = (ssize_t)syscall(__NR_readlinkat, AT_FDCWD, pathname, buf, bufsiz);
+
+    return sanitize_readlink_buffer(buf, bufsiz, ret);
 }
 
 static ssize_t fake_readlinkat(int dirfd, const char* pathname, char* buf, size_t bufsiz) {
@@ -469,9 +507,12 @@ static ssize_t fake_readlinkat(int dirfd, const char* pathname, char* buf, size_
         return -1;
     }
 
-    if (real_readlinkat_ptr) return real_readlinkat_ptr(dirfd, pathname, buf, bufsiz);
-    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_readlinkat, dirfd, pathname, buf, bufsiz);
-    return (ssize_t)syscall(__NR_readlinkat, dirfd, pathname, buf, bufsiz);
+    ssize_t ret;
+    if (real_readlinkat_ptr) ret = real_readlinkat_ptr(dirfd, pathname, buf, bufsiz);
+    else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_readlinkat, dirfd, pathname, buf, bufsiz);
+    else ret = (ssize_t)syscall(__NR_readlinkat, dirfd, pathname, buf, bufsiz);
+
+    return sanitize_readlink_buffer(buf, bufsiz, ret);
 }
 
 static int fake_dladdr(const void* addr, Dl_info* info) {
@@ -716,6 +757,7 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
             errno = ENOENT;
             return -1;
         }
+        return fake_readlinkat((int)(uintptr_t)a1, path, (char*)a3, (size_t)(uintptr_t)a4);
     }
     // 117: __NR_ptrace on aarch64, 26 on arm
 #if defined(__aarch64__)

@@ -27,21 +27,52 @@ import io.github.xalsace.qqbypass.utils.HookUtils;
  */
 public class QQ950PatchHook {
 
-    private static volatile String sLastKnownDeviceToken = "0123456789abcdef0123456789abcdef01234567";
-    private static volatile String sLastKnownOpenIdTicket = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private static volatile String sLastKnownDeviceToken = null;
+    private static volatile String sLastKnownOpenIdTicket = null;
 
     public static String getOrGenerateDeviceToken() {
         if (sLastKnownDeviceToken != null && sLastKnownDeviceToken.length() >= 16) {
             return sLastKnownDeviceToken;
         }
-        return "0123456789abcdef0123456789abcdef01234567";
+        try {
+            Class<?> fClass = XposedHelpers.findClassIfExists("com.tencent.mobileqq.fe.f", HookConfig.getClassLoader());
+            if (fClass != null) {
+                Object fb = XposedHelpers.callStaticMethod(fClass, "b");
+                if (fb != null) {
+                    String cached = (String) XposedHelpers.callMethod(fb, "d", "DeviceToken-TuringCache-V001", "");
+                    if (cached != null && cached.length() >= 16) {
+                        sLastKnownDeviceToken = cached;
+                        return cached;
+                    }
+                    cached = (String) XposedHelpers.callMethod(fb, "d", "TuringRiskID-TuringCache-20230511", "");
+                    if (cached != null && cached.length() >= 16) {
+                        sLastKnownDeviceToken = cached;
+                        return cached;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        return "";
     }
 
     public static String getOrGenerateOpenIdTicket() {
         if (sLastKnownOpenIdTicket != null && sLastKnownOpenIdTicket.length() >= 16) {
             return sLastKnownOpenIdTicket;
         }
-        return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        try {
+            Class<?> fClass = XposedHelpers.findClassIfExists("com.tencent.mobileqq.fe.f", HookConfig.getClassLoader());
+            if (fClass != null) {
+                Object fb = XposedHelpers.callStaticMethod(fClass, "b");
+                if (fb != null) {
+                    String cached = (String) XposedHelpers.callMethod(fb, "d", "DeviceToken-TuringCache-V001", "");
+                    if (cached != null && cached.length() >= 16) {
+                        sLastKnownOpenIdTicket = cached;
+                        return cached;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        return "";
     }
 
     public static void hook(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -51,6 +82,7 @@ public class QQ950PatchHook {
 
         // Tier 1: void-return, crash-safe backstops
         hookMsfTelemetry();
+        hookMsfCheckWTSig();
         hookTuringWrapper();
         hookChannelReport();
         hookSignatureAndIntegrity();
@@ -106,25 +138,48 @@ public class QQ950PatchHook {
     }
 
     /**
-     * Turing cache writers: TuringWrapper.b()/c() : void.
+     * Defend checkWTSig in com.tencent.mobileqq.msf.core.auth.k:
+     * When checkWTSig runs (k.h(ToServiceMsg)), in NT login mode it unconditionally
+     * triggers CODE_NO_LOGIN (2001) kick even though NT tickets are valid.
+     * We suppress this kick if the account has an active session.
+     */
+    private static void hookMsfCheckWTSig() {
+        final String cls = "com.tencent.mobileqq.msf.core.auth.k";
+        if (!HookUtils.classExists(cls)) return;
+        HookUtils.hookAllMethods(cls, "h", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 0 && p.args[0] != null) {
+                    Object req = p.args[0];
+                    try {
+                        String uin = (String) XposedHelpers.callMethod(req, "getUin");
+                        if (uin != null && !uin.isEmpty() && !"0".equals(uin)) {
+                            p.setResult(null);
+                            XposedEntry.log("[MSFPatch] Defended against checkWTSig kick for uin: " + uin);
+                        }
+                    } catch (Throwable t) {
+                        XposedEntry.log("[MSFPatch] Error checking checkWTSig ToServiceMsg: " + t.getMessage());
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Turing cache writers: TuringWrapper.b()/c()
+     * Allow real TuringWrapper execution so authentic device tokens are written to MMKV (DeviceToken-TuringCache-V001).
      */
     private static void hookTuringWrapper() {
         final String cls = "com.tencent.mobileqq.dt.model.TuringWrapper";
         Class<?> clazz = XposedHelpers.findClassIfExists(cls, HookConfig.getClassLoader());
         if (clazz == null) return;
 
-        for (Method m : clazz.getDeclaredMethods()) {
-            if (!Modifier.isStatic(m.getModifiers())) continue;
-            if (m.getReturnType() != void.class) continue;
-            if (m.getParameterTypes().length != 0) continue;
-            XposedBridge.hookMethod(m, new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            XposedEntry.log("[TuringPatch] Hooked TuringWrapper switch: " + m.getName());
-        }
+        HookUtils.hookAllMethods(clazz, "b", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                XposedEntry.log("[TuringPatch] TuringWrapper.b executed (MMKV cache populated)");
+            }
+        });
     }
 
     /**
@@ -278,9 +333,13 @@ public class QQ950PatchHook {
                                     String dt = (String) fb.get(wild);
                                     if (dt != null && !dt.isEmpty()) {
                                         sLastKnownDeviceToken = dt;
+                                        XposedEntry.log("[TuringPatch] Preserved authentic Wild.b deviceToken");
                                     } else {
-                                        fb.set(wild, getOrGenerateDeviceToken());
-                                        XposedEntry.log("[TuringPatch] Injected valid fallback deviceToken into Wild.b");
+                                        String tok = getOrGenerateDeviceToken();
+                                        if (!tok.isEmpty()) {
+                                            fb.set(wild, tok);
+                                            XposedEntry.log("[TuringPatch] Injected cached deviceToken into Wild.b");
+                                        }
                                     }
                                 } catch (Throwable ignored) {}
                             }
@@ -320,10 +379,13 @@ public class QQ950PatchHook {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                     Object res = p.getResult();
-                    if (res == null || "".equals(res)) {
-                        p.setResult(getOrGenerateDeviceToken());
-                    } else if (res instanceof String) {
+                    if (res instanceof String && !((String) res).isEmpty()) {
                         sLastKnownDeviceToken = (String) res;
+                    } else {
+                        String tok = getOrGenerateDeviceToken();
+                        if (!tok.isEmpty()) {
+                            p.setResult(tok);
+                        }
                     }
                 }
             });
@@ -401,9 +463,13 @@ public class QQ950PatchHook {
                                     String ticket = (String) XposedHelpers.getObjectField(t1, "a");
                                     if (ticket != null && !ticket.isEmpty()) {
                                         sLastKnownOpenIdTicket = ticket;
+                                        XposedEntry.log("[TuringPatch] Preserved authentic t1.a openIdTicket");
                                     } else {
-                                        XposedHelpers.setObjectField(t1, "a", getOrGenerateOpenIdTicket());
-                                        XposedEntry.log("[TuringPatch] Injected non-empty openIdTicket into t1.a");
+                                        String tok = getOrGenerateOpenIdTicket();
+                                        if (!tok.isEmpty()) {
+                                            XposedHelpers.setObjectField(t1, "a", tok);
+                                            XposedEntry.log("[TuringPatch] Injected cached openIdTicket into t1.a");
+                                        }
                                     }
                                 }
                             } catch (Throwable t) {
@@ -451,10 +517,13 @@ public class QQ950PatchHook {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                     Object res = p.getResult();
-                    if (res == null || "".equals(res)) {
-                        p.setResult(getOrGenerateOpenIdTicket());
-                    } else if (res instanceof String) {
+                    if (res instanceof String && !((String) res).isEmpty()) {
                         sLastKnownOpenIdTicket = (String) res;
+                    } else {
+                        String tok = getOrGenerateOpenIdTicket();
+                        if (!tok.isEmpty()) {
+                            p.setResult(tok);
+                        }
                     }
                 }
             });

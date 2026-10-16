@@ -105,49 +105,55 @@ static int hooked_dladdr(const void* addr, Dl_info* info) {
 }
 
 /**
- * 安装 libQSec 的 hook
+ * 安装 libQSec 及 libfekit 的 anti-hook 防护
  */
 void install_qsec_hooks() {
-    LOGI("Installing libQSec hooks (ByteHook)...");
+    LOGI("Installing libQSec & libfekit anti-hook hooks (ByteHook)...");
 
-    // Hook dlopen
-    bytehook_stub_t stub = bytehook_hook_single(
-        "libQSec.so",
-        nullptr,
-        "dlopen",
-        (void*)hooked_dlopen,
-        nullptr,
-        (void**)&original_dlopen
-    );
-    if (stub == nullptr) {
-        LOGE("Failed to hook libQSec dlopen");
+    const char* targets[] = { "libQSec.so", "libfekit.so", nullptr };
+    for (int i = 0; targets[i]; i++) {
+        const char* target = targets[i];
+
+        // Hook dlopen
+        bytehook_stub_t stub = bytehook_hook_single(
+            target,
+            nullptr,
+            "dlopen",
+            (void*)hooked_dlopen,
+            nullptr,
+            (void**)&original_dlopen
+        );
+        if (stub == nullptr) {
+            LOGD("Failed to hook %s dlopen", target);
+        }
+
+        // Hook dlsym
+        stub = bytehook_hook_single(
+            target,
+            nullptr,
+            "dlsym",
+            (void*)hooked_dlsym,
+            nullptr,
+            (void**)&original_dlsym
+        );
+        if (stub == nullptr) {
+            LOGD("Failed to hook %s dlsym", target);
+        }
+
+        // Hook dladdr
+        stub = bytehook_hook_single(
+            target,
+            nullptr,
+            "dladdr",
+            (void*)hooked_dladdr,
+            nullptr,
+            (void**)&original_dladdr
+        );
+        if (stub == nullptr) {
+            LOGD("Failed to hook %s dladdr", target);
+        }
     }
 
-    // Hook dlsym
-    stub = bytehook_hook_single(
-        "libQSec.so",
-        nullptr,
-        "dlsym",
-        (void*)hooked_dlsym,
-        nullptr,
-        (void**)&original_dlsym
-    );
-    if (stub == nullptr) {
-        LOGE("Failed to hook libQSec dlsym");
-    }
-
-    // Hook dladdr
-    stub = bytehook_hook_single(
-        "libQSec.so",
-        nullptr,
-        "dladdr",
-        (void*)hooked_dladdr,
-        nullptr,
-        (void**)&original_dladdr
-    );
-    if (stub == nullptr) {
-        LOGE("Failed to hook libQSec dladdr");
-    }
-
-    LOGI("libQSec hooks installed");
+    LOGI("libQSec & libfekit anti-hook hooks installed");
 }
+
