@@ -87,24 +87,38 @@ static bool is_caller_security_dso(void* return_address) {
     return false;
 }
 
+static bool is_caller_qa(void* return_address) {
+    if (!return_address) return false;
+    Dl_info info;
+    if (dladdr(return_address, &info) && info.dli_fname) {
+        const char* f = info.dli_fname;
+        if (strstr(f, "qauxv") || strstr(f, "qa_dyn_lib") || strstr(f, "libqauxv") || strstr(f, "io.github.qauxv")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool is_qa_private_path(const char* path) {
     if (!path || !path[0]) return false;
-    return strstr(path, "qa_mmkv") != nullptr ||
-           strstr(path, "tmp_qa_") != nullptr ||
-           strstr(path, "qa_dyn_lib") != nullptr ||
-           strstr(path, "qa_misc") != nullptr ||
-           strstr(path, "libqauxv") != nullptr ||
-           strstr(path, "libqauxv-core0") != nullptr ||
-           strstr(path, "libqauxv-core1") != nullptr ||
-           strstr(path, "io.github.qauxv") != nullptr;
+    return strcasestr(path, "qa_mmkv") != nullptr ||
+           strcasestr(path, "tmp_qa_") != nullptr ||
+           strcasestr(path, "qa_dyn_lib") != nullptr ||
+           strcasestr(path, "qa_misc") != nullptr ||
+           strcasestr(path, "libqauxv") != nullptr ||
+           strcasestr(path, "libqauxv-core0") != nullptr ||
+           strcasestr(path, "libqauxv-core1") != nullptr ||
+           strcasestr(path, "io.github.qauxv") != nullptr ||
+           strcasestr(path, "qnotified") != nullptr;
 }
 
 static bool is_mt_private_path(const char* path) {
     if (!path || !path[0]) return false;
-    return strstr(path, "bin.mt.") != nullptr ||
-           strstr(path, "/MT2") != nullptr ||
-           strstr(path, "/sdcard/MT2") != nullptr ||
-           strstr(path, "/storage/emulated/0/MT2") != nullptr;
+    return strcasestr(path, "bin.mt.") != nullptr ||
+           strcasestr(path, "bin.mt") != nullptr ||
+           strcasestr(path, "/MT2") != nullptr ||
+           strcasestr(path, "/sdcard/MT2") != nullptr ||
+           strcasestr(path, "/storage/emulated/0/MT2") != nullptr;
 }
 
 bool is_sensitive_path(const char* path) {
@@ -114,9 +128,8 @@ bool is_sensitive_path(const char* path) {
         "/data/local/su", "/data/local/bin/su", "/data/local/xbin/su",
         "/system/sd/xbin/su", "/system/bin/failsafe/su",
         "/data/local/tmp/su", "/data/local/tmp/frida", "re.frida.server",
-        "/system/xposed", "/data/adb/lsposed", "/data/adb/modules",
-        "/data/adb/magisk", "/data/adb/ksu", "/data/adb/ap", "/data/adb/apatch",
-        "/data/adb/shamiko", "libriru", "libzygisk",
+        "/system/xposed", "/data/adb",
+        "libriru", "libzygisk",
         "Superuser.apk", "SuperSU.apk", "Magisk.apk",
         "/system/bin/install-recovery.sh", "/system/etc/install-recovery.sh",
         "/system/bin/debuggerd", "/system/bin/debuggerd64", "/system/bin/ddexe",
@@ -125,8 +138,10 @@ bool is_sensitive_path(const char* path) {
         "epic", "pine", "taichi", "liblspd", "lsposed", "edxposed",
         "qqbypass", "libnative-bypass", "libbytehook", "xalsace",
         "zygisk_lsposed", "zygisksu",
-        "top.nkbe.npatch", "npatch", "org.lsposed.manager",
-        "bytehook", "native-bypass", "apatch",
+        "top.nkbe.npatch", "npatch", "org.lsposed.manager", "lspilot",
+        "bytehook", "native-bypass", "apatch", "fusehide", "simplehook",
+        "libchecker", "shizuku", "vtools", "bin.mt", "bin.mt.plus", "bin.mt.termex",
+        "thanos", "termux", "duckusb",
         nullptr
     };
     for (int i = 0; hidden[i]; i++) {
@@ -138,7 +153,11 @@ bool is_sensitive_path(const char* path) {
 static inline bool is_security_hidden_path(const char* path, void* return_address) {
     if (!path) return false;
     if (is_sensitive_path(path)) return true;
-    if ((is_qa_private_path(path) || is_mt_private_path(path)) && is_caller_security_dso(return_address)) {
+    if (is_mt_private_path(path)) return true;
+    if (is_qa_private_path(path)) {
+        if (is_caller_qa(return_address)) {
+            return false;
+        }
         return true;
     }
     return false;
@@ -160,20 +179,20 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "magisk", "lsposed", "xposed", "edxposed", "dexkit",
         "sandhook", "yahfa", "epic", "pine", "taichi",
         "liblspd", "qqbypass", "native-bypass", "bytehook",
-        "shamiko", "apatch", "npatch", nullptr
+        "shamiko", "apatch", "npatch", "lspilot", "fusehide",
+        "simplehook", "libchecker", "shizuku", "vtools",
+        "bin.mt", "mt2", "singleneuron", "bytebuddy",
+        "thanos", "termux", "duckusb", nullptr
     };
     for (int i = 0; root_patterns[i]; i++) {
         if (strcasestr(name, root_patterns[i])) return true;
     }
 
-    if (is_caller_security_dso(return_address)) {
-        const char* sec_patterns[] = {
-            "qauxv", "libqauxv", "qnotified", "qa_mmkv", "qa_", "tmp_qa_",
-            "bin.mt", "mt2", "singleneuron", "bytebuddy", nullptr
-        };
-        for (int i = 0; sec_patterns[i]; i++) {
-            if (strcasestr(name, sec_patterns[i])) return true;
+    if (is_qa_private_path(name)) {
+        if (is_caller_qa(return_address)) {
+            return false;
         }
+        return true;
     }
     return false;
 }
@@ -279,10 +298,12 @@ FILE* build_filtered_maps() {
         "epic", "pine", "taichi", "top.canyie", "liblspd", "qqbypass",
         "zygisk_lsposed", "zygisksu", "/data/adb",
         "bin.mt.", "bin.mt.plus", "bin.mt.manager", "bin.mt.termex", "MT2",
-        "top.nkbe.npatch", "npatch", "org.lsposed.manager",
+        "top.nkbe.npatch", "npatch", "org.lsposed.manager", "lspilot",
         "bytehook", "trampoline", "native-bypass", "apatch", "libxposed",
+        "fusehide", "simplehook", "libchecker", "shizuku", "vtools", "thanos", "termux",
         "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "libqauxv-core1",
         "cc.ioctl", "qnotified", "bytebuddy", "net.bytebuddy", "singleneuron", "timeline",
+        "qa_mmkv", "qa_dyn_lib", "tmp_qa_",
         nullptr
     };
 
@@ -327,10 +348,12 @@ FILE* build_filtered_smaps() {
         "epic", "pine", "taichi", "top.canyie", "liblspd", "qqbypass",
         "zygisk_lsposed", "zygisksu", "/data/adb",
         "bin.mt.", "bin.mt.plus", "bin.mt.manager", "bin.mt.termex", "MT2",
-        "top.nkbe.npatch", "npatch", "org.lsposed.manager",
+        "top.nkbe.npatch", "npatch", "org.lsposed.manager", "lspilot",
         "bytehook", "trampoline", "native-bypass", "apatch", "libxposed",
+        "fusehide", "simplehook", "libchecker", "shizuku", "vtools", "thanos", "termux",
         "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "libqauxv-core1",
         "cc.ioctl", "qnotified", "bytebuddy", "net.bytebuddy", "singleneuron", "timeline",
+        "qa_mmkv", "qa_dyn_lib", "tmp_qa_",
         nullptr
     };
 
@@ -940,13 +963,13 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
                 return result;
             }
         }
-        if (is_caller_security_dso(__builtin_return_address(0))) {
-            const char* sec_hidden[] = {
-                "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
-                "bin.mt", "npatch", "bytebuddy", nullptr
-            };
-            for (int i = 0; sec_hidden[i]; i++) {
-                if (strstr(info->dli_fname, sec_hidden[i])) {
+        const char* qa_mt_hidden[] = {
+            "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
+            "bin.mt", "npatch", "bytebuddy", "lspilot", nullptr
+        };
+        for (int i = 0; qa_mt_hidden[i]; i++) {
+            if (strstr(info->dli_fname, qa_mt_hidden[i])) {
+                if (!is_caller_qa(__builtin_return_address(0))) {
                     LOGD("Hidden dladdr QA/MT library: %s", info->dli_fname);
                     info->dli_fname = "/system/lib64/libc.so";
                     info->dli_fbase = nullptr;
@@ -979,13 +1002,13 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
                 return 0; // 跳过此条目
             }
         }
-        if (cookie->is_security) {
-            const char* sec_hidden[] = {
-                "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
-                "bin.mt", "npatch", "bytebuddy", nullptr
-            };
-            for (int i = 0; sec_hidden[i]; i++) {
-                if (strstr(info->dlpi_name, sec_hidden[i])) {
+        const char* qa_mt_hidden[] = {
+            "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
+            "bin.mt", "npatch", "bytebuddy", "lspilot", nullptr
+        };
+        for (int i = 0; qa_mt_hidden[i]; i++) {
+            if (strstr(info->dlpi_name, qa_mt_hidden[i])) {
+                if (!is_caller_qa(__builtin_return_address(0))) {
                     LOGD("Hidden QA/MT library in dl_iterate_phdr: %s", info->dlpi_name);
                     return 0;
                 }
@@ -1083,9 +1106,17 @@ static int fake_system_property_get(const char* name, char* value) {
         strcpy(value, "1");
         return 1;
     }
+    if (strcmp(name, "ro.boot.vbmeta.device_state") == 0) {
+        strcpy(value, "locked");
+        return strlen("locked");
+    }
     if (strcmp(name, "ro.boot.verifiedbootstate") == 0) {
         strcpy(value, "green");
         return strlen("green");
+    }
+    if (strcmp(name, "persist.sys.adb.engineermode") == 0) {
+        strcpy(value, "0");
+        return 1;
     }
     if (strcmp(name, "sys.usb.config") == 0 || strcmp(name, "sys.usb.state") == 0 || strcmp(name, "persist.sys.usb.config") == 0) {
         strcpy(value, "none");
@@ -1132,7 +1163,9 @@ static void prop_read_callback_wrapper(void* cookie, const char* name, const cha
     else if (strcmp(name, "ro.secure") == 0) spoof_val = "1";
     else if (strcmp(name, "ro.build.tags") == 0) spoof_val = "release-keys";
     else if (strcmp(name, "ro.boot.flash.locked") == 0) spoof_val = "1";
+    else if (strcmp(name, "ro.boot.vbmeta.device_state") == 0) spoof_val = "locked";
     else if (strcmp(name, "ro.boot.verifiedbootstate") == 0) spoof_val = "green";
+    else if (strcmp(name, "persist.sys.adb.engineermode") == 0) spoof_val = "0";
     else if (strcmp(name, "sys.usb.config") == 0 || strcmp(name, "sys.usb.state") == 0 || strcmp(name, "persist.sys.usb.config") == 0) spoof_val = "none";
     else if (strcmp(name, "init.svc.adbd") == 0) spoof_val = "stopped";
     else if (strstr(name, "magisk") || strstr(name, "ksu") || strstr(name, "apatch")) spoof_val = "";

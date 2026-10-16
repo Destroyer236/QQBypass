@@ -32,6 +32,7 @@ public class DynamicRootDetectionHook {
         "/data/local/xbin/su",
         "/system/sd/xbin/su",
         "/system/bin/failsafe/su",
+        "/data/adb",
         "/data/adb/magisk",
         "/data/adb/ksu",
         "/data/adb/ap",
@@ -53,6 +54,8 @@ public class DynamicRootDetectionHook {
         hookInstalledAppListMonitor(lpparam);
         hookUsageStatsManager(lpparam);
         hookSystemProperties();
+        hookSettingsSecureAndGlobal();
+        hookProcessExecution();
 
         // Gatherer SDK root detection hook
         hookGathererRootCheck(lpparam);
@@ -96,6 +99,8 @@ public class DynamicRootDetectionHook {
         HookUtils.hookMethod(File.class, "canRead", booleanFileHook);
         HookUtils.hookMethod(File.class, "canExecute", booleanFileHook);
         HookUtils.hookMethod(File.class, "isFile", booleanFileHook);
+        HookUtils.hookMethod(File.class, "isDirectory", booleanFileHook);
+        HookUtils.hookMethod(File.class, "canWrite", booleanFileHook);
 
         HookUtils.hookMethod(File.class, "length", new XC_MethodHook() {
             @Override
@@ -110,37 +115,47 @@ public class DynamicRootDetectionHook {
             }
         });
 
-        HookUtils.hookMethod(File.class, "list", new XC_MethodHook() {
+        XC_MethodHook listHook = new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                String[] list = (String[]) param.getResult();
-                if (list == null || list.length == 0) return;
-                List<String> filtered = new ArrayList<>(list.length);
-                for (String name : list) {
-                    if (isSuspiciousPath(name)) continue;
-                    filtered.add(name);
-                }
-                if (filtered.size() != list.length) {
-                    param.setResult(filtered.toArray(new String[0]));
+                Object res = param.getResult();
+                if (res instanceof String[]) {
+                    String[] list = (String[]) res;
+                    if (list.length == 0) return;
+                    File dir = param.thisObject instanceof File ? (File) param.thisObject : null;
+                    List<String> filtered = new ArrayList<>(list.length);
+                    for (String name : list) {
+                        if (isSuspiciousPath(name)) continue;
+                        if (dir != null && isSuspiciousPath(new File(dir, name).getAbsolutePath())) continue;
+                        filtered.add(name);
+                    }
+                    if (filtered.size() != list.length) {
+                        param.setResult(filtered.toArray(new String[0]));
+                    }
                 }
             }
-        });
+        };
+        HookUtils.hookAllMethods(File.class, "list", listHook);
 
-        HookUtils.hookMethod(File.class, "listFiles", new XC_MethodHook() {
+        XC_MethodHook listFilesHook = new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                File[] list = (File[]) param.getResult();
-                if (list == null || list.length == 0) return;
-                List<File> filtered = new ArrayList<>(list.length);
-                for (File f : list) {
-                    if (f != null && isSuspiciousPath(f.getAbsolutePath())) continue;
-                    filtered.add(f);
-                }
-                if (filtered.size() != list.length) {
-                    param.setResult(filtered.toArray(new File[0]));
+                Object res = param.getResult();
+                if (res instanceof File[]) {
+                    File[] list = (File[]) res;
+                    if (list.length == 0) return;
+                    List<File> filtered = new ArrayList<>(list.length);
+                    for (File f : list) {
+                        if (f != null && isSuspiciousPath(f.getAbsolutePath())) continue;
+                        filtered.add(f);
+                    }
+                    if (filtered.size() != list.length) {
+                        param.setResult(filtered.toArray(new File[0]));
+                    }
                 }
             }
-        });
+        };
+        HookUtils.hookAllMethods(File.class, "listFiles", listFilesHook);
     }
 
     private static void hookGathererRootCheck(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -556,9 +571,6 @@ public class DynamicRootDetectionHook {
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String pkg = (String) param.args[0];
-                        if (isMtManagerPackage(pkg) && !isCallerSecurityComponent()) {
-                            return;
-                        }
                         if (isSuspiciousPackage(pkg)) {
                             if (isCallerQAuxv()) {
                                 return;
@@ -610,9 +622,6 @@ public class DynamicRootDetectionHook {
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String pkg = (String) param.args[0];
-                        if (isMtManagerPackage(pkg) && !isCallerSecurityComponent()) {
-                            return;
-                        }
                         if (isSuspiciousPackage(pkg)) {
                             if (isCallerQAuxv()) {
                                 return;
@@ -637,13 +646,10 @@ public class DynamicRootDetectionHook {
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
                             String pkg = (String) param.args[1];
-                            if (isMtManagerPackage(pkg) && !isCallerSecurityComponent()) {
+                            if (isCallerQAuxv()) {
                                 return;
                             }
                             if (isSuspiciousPackage(pkg)) {
-                                if (isCallerQAuxv()) {
-                                    return;
-                                }
                                 param.setResult(false);
                             }
                         }
@@ -651,8 +657,8 @@ public class DynamicRootDetectionHook {
                 });
             }
 
-            // Hook queryIntentActivities
-            HookUtils.hookAllMethods(pmsClass, "queryIntentActivities", new XC_MethodHook() {
+            // Hook queryIntentActivities & queryIntentActivitiesAsUser
+            XC_MethodHook queryActivitiesHook = new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     Object res = param.getResult();
@@ -665,7 +671,7 @@ public class DynamicRootDetectionHook {
                                 android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) item;
                                 String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
                                 if (isMtManagerPackage(pkg)) {
-                                    if (isFileIntent || !isCallerSecurityComponent()) {
+                                    if (isFileIntent) {
                                         filtered.add(item);
                                         continue;
                                     }
@@ -680,7 +686,9 @@ public class DynamicRootDetectionHook {
                         param.setResult(filtered);
                     }
                 }
-            });
+            };
+            HookUtils.hookAllMethods(pmsClass, "queryIntentActivities", queryActivitiesHook);
+            HookUtils.hookAllMethods(pmsClass, "queryIntentActivitiesAsUser", queryActivitiesHook);
 
             // Hook queryIntentServices
             HookUtils.hookAllMethods(pmsClass, "queryIntentServices", new XC_MethodHook() {
@@ -777,7 +785,7 @@ public class DynamicRootDetectionHook {
                         android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) res;
                         String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
                         if (isMtManagerPackage(pkg)) {
-                            if (isFileShareOrViewIntent(param.args) || !isCallerSecurityComponent()) {
+                            if (isFileShareOrViewIntent(param.args)) {
                                 return;
                             }
                         }
@@ -839,8 +847,12 @@ public class DynamicRootDetectionHook {
                         param.setResult("release-keys");
                     } else if ("ro.boot.flash.locked".equals(key)) {
                         param.setResult("1");
+                    } else if ("ro.boot.vbmeta.device_state".equals(key)) {
+                        param.setResult("locked");
                     } else if ("ro.boot.verifiedbootstate".equals(key)) {
                         param.setResult("green");
+                    } else if ("persist.sys.adb.engineermode".equals(key)) {
+                        param.setResult("0");
                     } else if ("sys.usb.config".equals(key) || "sys.usb.state".equals(key) || "persist.sys.usb.config".equals(key)) {
                         param.setResult("none");
                     } else if ("init.svc.adbd".equals(key)) {
@@ -863,6 +875,8 @@ public class DynamicRootDetectionHook {
                         param.setResult(1);
                     } else if ("ro.boot.flash.locked".equals(key)) {
                         param.setResult(1);
+                    } else if ("persist.sys.adb.engineermode".equals(key)) {
+                        param.setResult(0);
                     } else if ("sys.usb.config".equals(key) || "sys.usb.state".equals(key)) {
                         param.setResult(0);
                     }
@@ -878,6 +892,8 @@ public class DynamicRootDetectionHook {
                         param.setResult(false);
                     } else if ("ro.secure".equals(key)) {
                         param.setResult(true);
+                    } else if ("persist.sys.adb.engineermode".equals(key)) {
+                        param.setResult(false);
                     } else if ("sys.usb.config".equals(key) || "sys.usb.state".equals(key)) {
                         param.setResult(false);
                     }
@@ -885,6 +901,95 @@ public class DynamicRootDetectionHook {
             });
         } catch (Throwable t) {
             XposedEntry.log("Failed to hook SystemProperties: " + t.getMessage());
+        }
+    }
+
+    private static void hookSettingsSecureAndGlobal() {
+        try {
+            XC_MethodHook adbSettingsHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                        String name = (String) param.args[1];
+                        if ("adb_enabled".equals(name) || "development_settings_enabled".equals(name)) {
+                            Class<?> returnType = param.method instanceof java.lang.reflect.Method ?
+                                ((java.lang.reflect.Method) param.method).getReturnType() : int.class;
+                            if (returnType == int.class) {
+                                param.setResult(0);
+                            } else if (returnType == String.class) {
+                                param.setResult("0");
+                            } else if (returnType == float.class) {
+                                param.setResult(0f);
+                            } else if (returnType == long.class) {
+                                param.setResult(0L);
+                            }
+                        }
+                    }
+                }
+            };
+
+            HookUtils.hookAllMethods("android.provider.Settings.Global", "getInt", adbSettingsHook);
+            HookUtils.hookAllMethods("android.provider.Settings.Global", "getString", adbSettingsHook);
+            HookUtils.hookAllMethods("android.provider.Settings.Secure", "getInt", adbSettingsHook);
+            HookUtils.hookAllMethods("android.provider.Settings.Secure", "getString", adbSettingsHook);
+            XposedEntry.log("[DynamicRoot] Hooked Settings.Global & Settings.Secure adb_enabled/development_settings_enabled");
+        } catch (Throwable t) {
+            XposedEntry.log("[DynamicRoot] Failed to hook Settings: " + t.getMessage());
+        }
+    }
+
+    private static void hookProcessExecution() {
+        try {
+            HookUtils.hookMethod(ProcessBuilder.class, "start", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
+                    ProcessBuilder pb = (ProcessBuilder) param.thisObject;
+                    List<String> command = pb.command();
+                    if (command != null && !command.isEmpty()) {
+                        for (String arg : command) {
+                            if (arg == null) continue;
+                            String lower = arg.toLowerCase();
+                            if (lower.equals("su") || lower.endsWith("/su") || lower.contains("busybox")
+                                    || lower.contains("magisk") || lower.contains("ksud")
+                                    || lower.contains("which su") || lower.contains("type su")) {
+                                throw new java.io.IOException("Cannot run program \"" + arg + "\": error=2, No such file or directory");
+                            }
+                        }
+                    }
+                }
+            });
+
+            HookUtils.hookAllMethods(Runtime.class, "exec", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
+                    if (param.args == null || param.args.length == 0) return;
+                    Object cmdObj = param.args[0];
+                    if (cmdObj instanceof String) {
+                        String cmd = ((String) cmdObj).toLowerCase();
+                        if (cmd.equals("su") || cmd.startsWith("su ") || cmd.endsWith("/su")
+                                || cmd.contains("busybox") || cmd.contains("magisk") || cmd.contains("ksud")
+                                || cmd.contains("type su") || cmd.contains("which su")) {
+                            throw new java.io.IOException("Cannot run program \"" + cmdObj + "\": error=2, No such file or directory");
+                        }
+                    } else if (cmdObj instanceof String[]) {
+                        String[] cmdarray = (String[]) cmdObj;
+                        for (String arg : cmdarray) {
+                            if (arg == null) continue;
+                            String lower = arg.toLowerCase();
+                            if (lower.equals("su") || lower.endsWith("/su") || lower.contains("busybox")
+                                    || lower.contains("magisk") || lower.contains("ksud")
+                                    || lower.contains("which su") || lower.contains("type su")) {
+                                throw new java.io.IOException("Cannot run program \"" + arg + "\": error=2, No such file or directory");
+                            }
+                        }
+                    }
+                }
+            });
+            XposedEntry.log("[DynamicRoot] Hooked ProcessBuilder.start & Runtime.exec");
+        } catch (Throwable t) {
+            XposedEntry.log("[DynamicRoot] Failed to hook ProcessBuilder/Runtime.exec: " + t.getMessage());
         }
     }
 
@@ -1367,6 +1472,14 @@ public class DynamicRootDetectionHook {
                 if (intent.getData() != null || intent.getType() != null) {
                     return true;
                 }
+                if (intent.hasExtra(android.content.Intent.EXTRA_INTENT)) {
+                    try {
+                        android.os.Parcelable p = intent.getParcelableExtra(android.content.Intent.EXTRA_INTENT);
+                        if (p instanceof android.content.Intent) {
+                            return isFileShareOrViewIntent(new Object[]{p});
+                        }
+                    } catch (Throwable ignored) {}
+                }
             }
         }
         return false;
@@ -1376,25 +1489,26 @@ public class DynamicRootDetectionHook {
         if (path == null) return false;
         String lower = path.toLowerCase();
 
-        // QAuxiliary storage and private directories: allow QAuxv, hide ONLY from security components
+        // QAuxiliary storage and private directories: allow QAuxv, hide from ALL other callers in QQ
         if (lower.contains("qa_mmkv") || lower.contains("tmp_qa_")
                 || lower.contains("qa_dyn_lib") || lower.contains("qa_misc")
-                || lower.contains("io.github.qauxv") || lower.contains("libqauxv")) {
+                || lower.contains("io.github.qauxv") || lower.contains("libqauxv")
+                || lower.contains("qnotified")) {
             if (isCallerQAuxv()) {
                 return false;
             }
-            return isCallerSecurityComponent();
+            return true;
         }
 
-        // MT Manager paths & storage: hide only from security components, allow user/file actions
+        // MT Manager paths & storage: hide from QQ
         if (lower.contains("bin.mt.plus") || lower.contains("bin.mt.manager")
                 || lower.contains("bin.mt.termex") || lower.contains("bin.mt.")
-                || lower.contains("/mt2")) {
-            return isCallerSecurityComponent();
+                || lower.contains("/mt2") || lower.contains("/sdcard/mt2")) {
+            return true;
         }
 
         if (lower.contains("top.nkbe.npatch") || lower.contains("npatch")
-                || lower.contains("org.lsposed.manager")) {
+                || lower.contains("org.lsposed.manager") || lower.contains("lspilot")) {
             return true;
         }
 
@@ -1410,16 +1524,21 @@ public class DynamicRootDetectionHook {
             || lower.contains("dexkit") || lower.contains("sandhook")
             || lower.contains("yahfa") || lower.contains("liblspd")
             || lower.contains("qqbypass") || lower.contains("native-bypass")
-            || lower.contains("bytehook") || lower.contains("xalsace");
+            || lower.contains("bytehook") || lower.contains("xalsace")
+            || lower.contains("fusehide") || lower.contains("simplehook")
+            || lower.contains("libchecker") || lower.contains("shizuku")
+            || lower.contains("vtools") || lower.contains("thanos")
+            || lower.contains("puredupan") || lower.contains("developertools")
+            || lower.contains("duckusb") || lower.contains("termux");
     }
 
     public static boolean isSuspiciousPackage(String pkg) {
         if (pkg == null) return false;
         String lower = pkg.toLowerCase();
 
-        // MT Manager: hide from security scanners (QSec, Turing, Beacon, Pandora), but allow in file viewer/UI chooser
+        // MT Manager: hidden from all general app queries, allowed only in file intents
         if (isMtManagerPackage(lower)) {
-            return isCallerSecurityComponent();
+            return true;
         }
 
         return lower.contains("magisk") || lower.contains("supersu")
@@ -1432,10 +1551,26 @@ public class DynamicRootDetectionHook {
             || lower.contains("top.canyie") || lower.contains("xalsace")
             || lower.contains("qqbypass") || lower.contains("dexkit")
             || lower.contains("top.nkbe.npatch") || lower.contains("npatch")
-            || lower.contains("org.lsposed.manager") || lower.contains("youqu.android.todesk")
-            || lower.contains("com.netease.uuremote") || lower.contains("com.topjohnwu.magisk")
+            || lower.contains("org.lsposed.manager") || lower.contains("lspilot")
+            || lower.contains("youqu.android.todesk") || lower.contains("com.netease.uuremote")
+            || lower.contains("com.topjohnwu.magisk")
             || lower.contains("io.github.qauxv") || lower.contains("qauxv")
             || lower.contains("qnotified") || lower.contains("cc.ioctl")
-            || lower.contains("me.singleneuron") || lower.contains("nep.timeline");
+            || lower.contains("me.singleneuron") || lower.contains("nep.timeline")
+            || lower.contains("disableflagsecure") || lower.contains("disable_flag_secure")
+            || lower.contains("fusehide") || lower.contains("lively.xp")
+            || lower.contains("simplehook") || lower.contains("gptweaks")
+            || lower.contains("naipinghook") || lower.contains("hma_oss")
+            || lower.contains("hooknext") || lower.contains("hookvip")
+            || lower.contains("fckvip") || lower.contains("hujiayucc.hook")
+            || lower.contains("shizuku") || lower.contains("vtools")
+            || lower.contains("merxury.blocker") || lower.contains("thanos")
+            || lower.contains("pan123.enhance") || lower.contains("puredupan")
+            || lower.contains("tiktokplugin") || lower.contains("dsmod.probe")
+            || lower.contains("x1y9.probe") || lower.contains("developertools")
+            || lower.contains("layoutinspect") || lower.contains("devcheck")
+            || lower.contains("libchecker") || lower.contains("luckytool")
+            || lower.contains("duckusb") || lower.contains("droidvnc")
+            || lower.contains("termux") || lower.contains(".hook");
     }
 }
