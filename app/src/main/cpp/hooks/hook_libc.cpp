@@ -92,7 +92,11 @@ static bool is_qa_private_path(const char* path) {
     return strstr(path, "qa_mmkv") != nullptr ||
            strstr(path, "tmp_qa_") != nullptr ||
            strstr(path, "qa_dyn_lib") != nullptr ||
-           strstr(path, "qa_misc") != nullptr;
+           strstr(path, "qa_misc") != nullptr ||
+           strstr(path, "libqauxv") != nullptr ||
+           strstr(path, "libqauxv-core0") != nullptr ||
+           strstr(path, "libqauxv-core1") != nullptr ||
+           strstr(path, "io.github.qauxv") != nullptr;
 }
 
 static bool is_mt_private_path(const char* path) {
@@ -122,7 +126,6 @@ bool is_sensitive_path(const char* path) {
         "qqbypass", "libnative-bypass", "libbytehook", "xalsace",
         "zygisk_lsposed", "zygisksu",
         "top.nkbe.npatch", "npatch", "org.lsposed.manager",
-        "libqauxv-core0", "libqauxv-core1", "libqauxv",
         "bytehook", "native-bypass", "apatch",
         nullptr
     };
@@ -141,7 +144,7 @@ static inline bool is_security_hidden_path(const char* path, void* return_addres
     return false;
 }
 
-bool is_sensitive_name(const char* name) {
+static bool is_sensitive_name_for_caller(const char* name, void* return_address) {
     if (!name || !name[0]) return false;
     if (strcmp(name, "su") == 0 ||
         strcmp(name, "magisk") == 0 ||
@@ -153,18 +156,30 @@ bool is_sensitive_name(const char* name) {
         strcmp(name, "busybox") == 0) {
         return true;
     }
-    const char* patterns[] = {
+    const char* root_patterns[] = {
         "magisk", "lsposed", "xposed", "edxposed", "dexkit",
         "sandhook", "yahfa", "epic", "pine", "taichi",
         "liblspd", "qqbypass", "native-bypass", "bytehook",
-        "qauxv", "libqauxv", "qnotified", "shamiko", "apatch",
-        "qa_mmkv", "qa_", "tmp_qa_", "bin.mt", "mt2", "npatch",
-        "singleneuron", "bytebuddy", nullptr
+        "shamiko", "apatch", "npatch", nullptr
     };
-    for (int i = 0; patterns[i]; i++) {
-        if (strcasestr(name, patterns[i])) return true;
+    for (int i = 0; root_patterns[i]; i++) {
+        if (strcasestr(name, root_patterns[i])) return true;
+    }
+
+    if (is_caller_security_dso(return_address)) {
+        const char* sec_patterns[] = {
+            "qauxv", "libqauxv", "qnotified", "qa_mmkv", "qa_", "tmp_qa_",
+            "bin.mt", "mt2", "singleneuron", "bytebuddy", nullptr
+        };
+        for (int i = 0; sec_patterns[i]; i++) {
+            if (strcasestr(name, sec_patterns[i])) return true;
+        }
     }
     return false;
+}
+
+bool is_sensitive_name(const char* name) {
+    return is_sensitive_name_for_caller(name, nullptr);
 }
 
 static bool is_root_pid(const char* pid_str) {
@@ -698,7 +713,7 @@ static int fake_openat_2(int dirfd, const char* pathname, int flags) {
 static DIR* fake_opendir(const char* name) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
-    if (is_sensitive_path(name)) {
+    if (is_security_hidden_path(name, __builtin_return_address(0))) {
         LOGD("Hidden opendir: %s", name);
         errno = ENOENT;
         return nullptr;
@@ -711,6 +726,7 @@ static DIR* fake_opendir(const char* name) {
 static struct dirent* fake_readdir(DIR* dirp) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
+    void* ret_addr = __builtin_return_address(0);
     struct dirent* entry = nullptr;
     while (true) {
         if (real_readdir_ptr) entry = real_readdir_ptr(dirp);
@@ -719,7 +735,7 @@ static struct dirent* fake_readdir(DIR* dirp) {
 
         if (!entry) break;
 
-        if (is_sensitive_name(entry->d_name)) {
+        if (is_sensitive_name_for_caller(entry->d_name, ret_addr)) {
             continue;
         }
         if (entry->d_name[0] >= '0' && entry->d_name[0] <= '9') {
@@ -735,6 +751,7 @@ static struct dirent* fake_readdir(DIR* dirp) {
 static struct dirent64* fake_readdir64(DIR* dirp) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
+    void* ret_addr = __builtin_return_address(0);
     struct dirent64* entry = nullptr;
     while (true) {
         if (real_readdir64_ptr) entry = real_readdir64_ptr(dirp);
@@ -743,7 +760,7 @@ static struct dirent64* fake_readdir64(DIR* dirp) {
 
         if (!entry) break;
 
-        if (is_sensitive_name(entry->d_name)) {
+        if (is_sensitive_name_for_caller(entry->d_name, ret_addr)) {
             continue;
         }
         if (entry->d_name[0] >= '0' && entry->d_name[0] <= '9') {
@@ -759,6 +776,7 @@ static struct dirent64* fake_readdir64(DIR* dirp) {
 static int fake_readdir_r(DIR* dirp, struct dirent* entry, struct dirent** result) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
+    void* ret_addr = __builtin_return_address(0);
     while (true) {
         int ret = 0;
         if (real_readdir_r_ptr) ret = real_readdir_r_ptr(dirp, entry, result);
@@ -767,7 +785,7 @@ static int fake_readdir_r(DIR* dirp, struct dirent* entry, struct dirent** resul
 
         if (ret != 0 || !result || !*result) return ret;
 
-        if (is_sensitive_name((*result)->d_name)) {
+        if (is_sensitive_name_for_caller((*result)->d_name, ret_addr)) {
             continue;
         }
         if ((*result)->d_name[0] >= '0' && (*result)->d_name[0] <= '9') {
@@ -782,6 +800,7 @@ static int fake_readdir_r(DIR* dirp, struct dirent* entry, struct dirent** resul
 static int fake_readdir64_r(DIR* dirp, struct dirent64* entry, struct dirent64** result) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
+    void* ret_addr = __builtin_return_address(0);
     while (true) {
         int ret = 0;
         if (real_readdir64_r_ptr) ret = real_readdir64_r_ptr(dirp, entry, result);
@@ -790,7 +809,7 @@ static int fake_readdir64_r(DIR* dirp, struct dirent64* entry, struct dirent64**
 
         if (ret != 0 || !result || !*result) return ret;
 
-        if (is_sensitive_name((*result)->d_name)) {
+        if (is_sensitive_name_for_caller((*result)->d_name, ret_addr)) {
             continue;
         }
         if ((*result)->d_name[0] >= '0' && (*result)->d_name[0] <= '9') {
@@ -859,7 +878,7 @@ static ssize_t fake_readlink(const char* pathname, char* buf, size_t bufsiz) {
         return len;
     }
 
-    if (is_sensitive_path(pathname)) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         errno = ENOENT;
         return -1;
     }
@@ -887,7 +906,7 @@ static ssize_t fake_readlinkat(int dirfd, const char* pathname, char* buf, size_
         return len;
     }
 
-    if (is_sensitive_path(pathname)) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         errno = ENOENT;
         return -1;
     }
@@ -909,9 +928,7 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
     if (result != 0 && info && info->dli_fname) {
         const char* hidden[] = {
             "libnative-bypass", "libbytehook", "xalsace",
-            "lsposed", "dexkit", "libdexkit",
-            "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
-            "bin.mt", "npatch", "bytebuddy", nullptr
+            "lsposed", "dexkit", "libdexkit", nullptr
         };
         for (int i = 0; hidden[i]; i++) {
             if (strstr(info->dli_fname, hidden[i])) {
@@ -920,7 +937,23 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
                 info->dli_fbase = nullptr;
                 info->dli_sname = nullptr;
                 info->dli_saddr = nullptr;
-                break;
+                return result;
+            }
+        }
+        if (is_caller_security_dso(__builtin_return_address(0))) {
+            const char* sec_hidden[] = {
+                "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
+                "bin.mt", "npatch", "bytebuddy", nullptr
+            };
+            for (int i = 0; sec_hidden[i]; i++) {
+                if (strstr(info->dli_fname, sec_hidden[i])) {
+                    LOGD("Hidden dladdr QA/MT library: %s", info->dli_fname);
+                    info->dli_fname = "/system/lib64/libc.so";
+                    info->dli_fbase = nullptr;
+                    info->dli_sname = nullptr;
+                    info->dli_saddr = nullptr;
+                    return result;
+                }
             }
         }
     }
@@ -930,6 +963,7 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
 struct dl_iterate_cookie {
     int (*callback)(struct dl_phdr_info*, size_t, void*);
     void* data;
+    bool is_security;
 };
 
 static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, void* data) {
@@ -937,14 +971,24 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
     if (info && info->dlpi_name) {
         const char* hidden[] = {
             "libnative-bypass", "libbytehook", "xalsace",
-            "lsposed", "dexkit", "libdexkit",
-            "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
-            "bin.mt", "npatch", "bytebuddy", nullptr
+            "lsposed", "dexkit", "libdexkit", nullptr
         };
         for (int i = 0; hidden[i]; i++) {
             if (strstr(info->dlpi_name, hidden[i])) {
                 LOGD("Hidden library in dl_iterate_phdr: %s", info->dlpi_name);
                 return 0; // 跳过此条目
+            }
+        }
+        if (cookie->is_security) {
+            const char* sec_hidden[] = {
+                "libqauxv", "libqauxv-core0", "libqauxv-core1", "qauxv",
+                "bin.mt", "npatch", "bytebuddy", nullptr
+            };
+            for (int i = 0; sec_hidden[i]; i++) {
+                if (strstr(info->dlpi_name, sec_hidden[i])) {
+                    LOGD("Hidden QA/MT library in dl_iterate_phdr: %s", info->dlpi_name);
+                    return 0;
+                }
             }
         }
     }
@@ -953,7 +997,7 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
 
 static int fake_dl_iterate_phdr(int (*callback)(struct dl_phdr_info*, size_t, void*), void* data) {
     SAFE_BYTEHOOK_SCOPE();
-    dl_iterate_cookie cookie{callback, data};
+    dl_iterate_cookie cookie{callback, data, is_caller_security_dso(__builtin_return_address(0))};
     if (real_dl_iterate_phdr_ptr) return real_dl_iterate_phdr_ptr(dl_iterate_callback_wrapper, &cookie);
     if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_dl_iterate_phdr, dl_iterate_callback_wrapper, &cookie);
     return dl_iterate_phdr(dl_iterate_callback_wrapper, &cookie);
@@ -1043,6 +1087,14 @@ static int fake_system_property_get(const char* name, char* value) {
         strcpy(value, "green");
         return strlen("green");
     }
+    if (strcmp(name, "sys.usb.config") == 0 || strcmp(name, "sys.usb.state") == 0 || strcmp(name, "persist.sys.usb.config") == 0) {
+        strcpy(value, "none");
+        return strlen("none");
+    }
+    if (strcmp(name, "init.svc.adbd") == 0) {
+        strcpy(value, "stopped");
+        return strlen("stopped");
+    }
     if (strstr(name, "magisk") || strstr(name, "ksu") || strstr(name, "apatch")) {
         value[0] = '\0';
         return 0;
@@ -1081,6 +1133,8 @@ static void prop_read_callback_wrapper(void* cookie, const char* name, const cha
     else if (strcmp(name, "ro.build.tags") == 0) spoof_val = "release-keys";
     else if (strcmp(name, "ro.boot.flash.locked") == 0) spoof_val = "1";
     else if (strcmp(name, "ro.boot.verifiedbootstate") == 0) spoof_val = "green";
+    else if (strcmp(name, "sys.usb.config") == 0 || strcmp(name, "sys.usb.state") == 0 || strcmp(name, "persist.sys.usb.config") == 0) spoof_val = "none";
+    else if (strcmp(name, "init.svc.adbd") == 0) spoof_val = "stopped";
     else if (strstr(name, "magisk") || strstr(name, "ksu") || strstr(name, "apatch")) spoof_val = "";
 
     if (pcc && pcc->orig_callback) {
@@ -1205,7 +1259,7 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     // 78: __NR_readlinkat
     else if (number == 78) {
         const char* path = (const char*)a2;
-        if (path && is_sensitive_path(path)) {
+        if (path && is_security_hidden_path(path, __builtin_return_address(0))) {
             LOGD("fake_syscall: readlinkat blocked sensitive: %s", path);
             errno = ENOENT;
             return -1;
@@ -1233,12 +1287,13 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
             long pos = 0;
             char* write_ptr = buf;
             long new_ret = 0;
+            void* ret_addr = __builtin_return_address(0);
             while (pos < ret) {
                 struct linux_dirent64* dent = (struct linux_dirent64*)(buf + pos);
                 unsigned short reclen = dent->d_reclen;
                 if (reclen == 0) break;
                 bool hide = false;
-                if (is_sensitive_name(dent->d_name)) {
+                if (is_sensitive_name_for_caller(dent->d_name, ret_addr)) {
                     hide = true;
                 } else if (dent->d_name[0] >= '0' && dent->d_name[0] <= '9') {
                     if (is_root_pid(dent->d_name)) {
@@ -1280,6 +1335,19 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     return syscall(number, a1, a2, a3, a4, a5, a6);
 }
 
+static long fake_ptrace(int request, pid_t pid, void* addr, void* data) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (request == 0 /* PTRACE_TRACEME */) {
+        LOGI("fake_ptrace: PTRACE_TRACEME neutralized");
+        return 0;
+    }
+    typedef long (*ptrace_func_t)(int, pid_t, void*, void*);
+    static ptrace_func_t real_ptrace_ptr = nullptr;
+    if (!real_ptrace_ptr) real_ptrace_ptr = (ptrace_func_t)dlsym(RTLD_DEFAULT, "ptrace");
+    if (real_ptrace_ptr) return real_ptrace_ptr(request, pid, addr, data);
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_ptrace, request, pid, addr, data);
+    return syscall(__NR_ptrace, request, pid, addr, data);
+}
 
 void install_hooks() {
     LOGI("Installing libc hooks (ByteHook)...");
@@ -1312,6 +1380,7 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "fstatat", (void*)fake_fstatat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "fstatat64", (void*)fake_fstatat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "syscall", (void*)fake_syscall, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "ptrace", (void*)fake_ptrace, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_get", (void*)fake_system_property_get, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_find", (void*)fake_system_property_find, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_read_callback", (void*)fake_system_property_read_callback, nullptr, nullptr);

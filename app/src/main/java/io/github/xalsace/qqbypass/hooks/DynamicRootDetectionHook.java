@@ -841,6 +841,10 @@ public class DynamicRootDetectionHook {
                         param.setResult("1");
                     } else if ("ro.boot.verifiedbootstate".equals(key)) {
                         param.setResult("green");
+                    } else if ("sys.usb.config".equals(key) || "sys.usb.state".equals(key) || "persist.sys.usb.config".equals(key)) {
+                        param.setResult("none");
+                    } else if ("init.svc.adbd".equals(key)) {
+                        param.setResult("stopped");
                     } else if (key.contains("magisk") || key.contains("ksu") || key.contains("apatch")) {
                         String def = param.args.length > 1 && param.args[1] instanceof String ? (String) param.args[1] : "";
                         param.setResult(def);
@@ -859,6 +863,8 @@ public class DynamicRootDetectionHook {
                         param.setResult(1);
                     } else if ("ro.boot.flash.locked".equals(key)) {
                         param.setResult(1);
+                    } else if ("sys.usb.config".equals(key) || "sys.usb.state".equals(key)) {
+                        param.setResult(0);
                     }
                 }
             });
@@ -872,6 +878,8 @@ public class DynamicRootDetectionHook {
                         param.setResult(false);
                     } else if ("ro.secure".equals(key)) {
                         param.setResult(true);
+                    } else if ("sys.usb.config".equals(key) || "sys.usb.state".equals(key)) {
+                        param.setResult(false);
                     }
                 }
             });
@@ -1368,20 +1376,14 @@ public class DynamicRootDetectionHook {
         if (path == null) return false;
         String lower = path.toLowerCase();
 
-        // QAuxiliary storage and private directories: allow QAuxv, block QQ
+        // QAuxiliary storage and private directories: allow QAuxv, hide ONLY from security components
         if (lower.contains("qa_mmkv") || lower.contains("tmp_qa_")
-                || lower.contains("qa_dyn_lib") || lower.contains("qa_misc")) {
+                || lower.contains("qa_dyn_lib") || lower.contains("qa_misc")
+                || lower.contains("io.github.qauxv") || lower.contains("libqauxv")) {
             if (isCallerQAuxv()) {
                 return false;
             }
-            return true;
-        }
-
-        if (lower.contains("io.github.qauxv")) {
-            if (isCallerQAuxv()) {
-                return false;
-            }
-            return true;
+            return isCallerSecurityComponent();
         }
 
         // MT Manager paths & storage: hide only from security components, allow user/file actions

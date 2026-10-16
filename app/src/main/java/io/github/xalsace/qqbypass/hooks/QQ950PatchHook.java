@@ -109,6 +109,9 @@ public class QQ950PatchHook {
 
         // Tier 8: QSec detectMethod and FeKitAttach fallback
         hookQSecDefenses(lpparam);
+
+        // Tier 9: NT Kick Diagnostics & Protective Hooks
+        hookKickDiagnosticsAndProtection(lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader());
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -667,12 +670,90 @@ public class QQ950PatchHook {
     private static final java.util.Set<Class<?>> sHookedFaceClasses =
         java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
+    private static final java.util.Set<String> sHookedKickClassNames =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     public static void hookLateStage(ClassLoader cl) {
         if (cl == null) return;
         try {
             hookFaceRecognitionAndMFAWithClassLoader(cl);
+            hookKickDiagnosticsAndProtection(cl);
         } catch (Throwable t) {
-            XposedEntry.log("[FacePatch] hookLateStage error: " + t.getMessage());
+            XposedEntry.log("[LateStage] hookLateStage error: " + t.getMessage());
+        }
+    }
+
+    public static void hookKickDiagnosticsAndProtection(ClassLoader cl) {
+        if (cl == null) return;
+        try {
+            // 1. NTKickProcessor: logs exact kickedInfo fields (securityKickedType, kickedType, tipsTitle, tipsDesc)
+            Class<?> ntKickProcessorCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.kick.NTKickProcessor", cl);
+            if (ntKickProcessorCls != null && sHookedKickClassNames.add(ntKickProcessorCls.getName() + "@" + cl.hashCode())) {
+                Method[] methods = ntKickProcessorCls.getDeclaredMethods();
+                for (Method m : methods) {
+                    if (Modifier.isStatic(m.getModifiers()) || m.getName().equals("a")) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                StringBuilder sb = new StringBuilder();
+                                sb.append("[NTKickProcessor] ").append(param.method.getName()).append(" invoked with args: ");
+                                if (param.args != null) {
+                                    for (Object arg : param.args) {
+                                        if (arg == null) {
+                                            sb.append("null, ");
+                                            continue;
+                                        }
+                                        sb.append(arg.getClass().getSimpleName()).append("{");
+                                        try {
+                                            Field[] fields = arg.getClass().getDeclaredFields();
+                                            for (Field f : fields) {
+                                                f.setAccessible(true);
+                                                sb.append(f.getName()).append("=").append(f.get(arg)).append(", ");
+                                            }
+                                        } catch (Throwable ignored) {
+                                            sb.append(arg.toString());
+                                        }
+                                        sb.append("}, ");
+                                    }
+                                }
+                                XposedEntry.log(sb.toString());
+                            }
+                        });
+                    }
+                }
+                XposedEntry.log("[KickPatch] Hooked NTKickProcessor methods for diagnostic logging");
+            }
+
+            // 2. KickApiImpl: intercept kick & onKickedOffLine
+            Class<?> kickApiImplCls = XposedHelpers.findClassIfExists("com.tencent.qqnt.kernel.api.impl.KickApiImpl", cl);
+            if (kickApiImplCls != null && sHookedKickClassNames.add(kickApiImplCls.getName() + "@" + cl.hashCode())) {
+                HookUtils.hookAllMethods(kickApiImplCls, "kick", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        XposedEntry.log("[KickPatch] KickApiImpl.kick called! args=" + java.util.Arrays.toString(param.args));
+                    }
+                });
+                HookUtils.hookAllMethods(kickApiImplCls, "onKickedOffLine", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        XposedEntry.log("[KickPatch] KickApiImpl.onKickedOffLine called! args=" + java.util.Arrays.toString(param.args));
+                    }
+                });
+                XposedEntry.log("[KickPatch] Hooked KickApiImpl for diagnostic logging");
+            }
+
+            // 3. WtloginHelper: prevent device event reporting on kick
+            Class<?> wtloginHelperCls = XposedHelpers.findClassIfExists("oicq.wlogin_sdk.request.WtloginHelper", cl);
+            if (wtloginHelperCls != null && sHookedKickClassNames.add(wtloginHelperCls.getName() + "@" + cl.hashCode())) {
+                HookUtils.hookAllMethods(wtloginHelperCls, "reportDevEvent", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(null);
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedEntry.log("[KickPatch] Failed to hook kick diagnostics: " + t.getMessage());
         }
     }
 

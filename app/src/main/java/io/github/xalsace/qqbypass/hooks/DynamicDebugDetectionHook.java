@@ -80,6 +80,18 @@ public class DynamicDebugDetectionHook {
                 }
             });
 
+            HookUtils.hookAllMethods("android.provider.Settings$Global", "getString", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                        String name = (String) param.args[1];
+                        if ("adb_enabled".equals(name) || "development_settings_enabled".equals(name)) {
+                            param.setResult("0");
+                        }
+                    }
+                }
+            });
+
             HookUtils.hookAllMethods("android.provider.Settings$Secure", "getInt", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -87,6 +99,18 @@ public class DynamicDebugDetectionHook {
                         String name = (String) param.args[1];
                         if ("adb_enabled".equals(name) || "development_settings_enabled".equals(name)) {
                             param.setResult(0);
+                        }
+                    }
+                }
+            });
+
+            HookUtils.hookAllMethods("android.provider.Settings$Secure", "getString", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                        String name = (String) param.args[1];
+                        if ("adb_enabled".equals(name) || "development_settings_enabled".equals(name)) {
+                            param.setResult("0");
                         }
                     }
                 }

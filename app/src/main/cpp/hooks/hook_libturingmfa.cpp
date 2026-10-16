@@ -32,25 +32,11 @@ static char* (*real_mfa_strstr_ptr)(const char*, const char*) = nullptr;
  * 保证人脸认证与网络通信正常放行。
  */
 static long hooked_mfa_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6) {
-    long ret = hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
-    if (ret != -1 || (number != 56 && number != 79 && number != 48 && number != 439 && number != 78)) {
-        return ret;
-    }
-    if (original_syscall_mfa) {
-        return original_syscall_mfa(number, a1, a2, a3, a4, a5, a6);
-    }
-    return ret;
+    return hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
 }
 
 static long hooked_mfa_real_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6) {
-    long ret = hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
-    if (ret != -1 || (number != 56 && number != 79 && number != 48 && number != 439 && number != 78)) {
-        return ret;
-    }
-    if (original_real_syscall_mfa) {
-        return original_real_syscall_mfa(number, a1, a2, a3, a4, a5, a6);
-    }
-    return ret;
+    return hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
 }
 
 /**

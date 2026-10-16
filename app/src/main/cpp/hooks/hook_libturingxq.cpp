@@ -18,25 +18,11 @@ static real_syscall_t original_real_syscall = nullptr;
 static char* (*real_xq_strstr_ptr)(const char*, const char*) = nullptr;
 
 static long hooked_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6) {
-    long ret = hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
-    if (ret != -1 || (number != 56 && number != 79 && number != 48 && number != 439 && number != 78)) {
-        return ret;
-    }
-    if (original_syscall) {
-        return original_syscall(number, a1, a2, a3, a4, a5, a6);
-    }
-    return ret;
+    return hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
 }
 
 static long hooked_real_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6) {
-    long ret = hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
-    if (ret != -1 || (number != 56 && number != 79 && number != 48 && number != 439 && number != 78)) {
-        return ret;
-    }
-    if (original_real_syscall) {
-        return original_real_syscall(number, a1, a2, a3, a4, a5, a6);
-    }
-    return ret;
+    return hook_libc::fake_syscall(number, a1, a2, a3, a4, a5, a6);
 }
 
 static char* fake_xq_strstr(const char* haystack, const char* needle) {
