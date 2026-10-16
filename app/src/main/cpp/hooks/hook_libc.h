@@ -15,7 +15,9 @@ namespace hook_libc {
 void install_hooks();
 
 bool is_sensitive_path(const char* path);
+bool is_sensitive_name(const char* name);
 FILE* build_filtered_maps();
+FILE* build_filtered_smaps();
 FILE* build_filtered_mounts();
 FILE* build_filtered_status();
 FILE* build_filtered_wchan();

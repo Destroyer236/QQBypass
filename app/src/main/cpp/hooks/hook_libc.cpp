@@ -13,6 +13,7 @@
 #include <sys/system_properties.h>
 #include <sys/syscall.h>
 #include <link.h>
+#include <dirent.h>
 
 namespace hook_libc {
 
@@ -21,6 +22,13 @@ static FILE* (*real_fopen_ptr)(const char*, const char*) = nullptr;
 static char* (*real_fgets_ptr)(char*, int, FILE*) = nullptr;
 static int (*real_open_ptr)(const char*, int, mode_t) = nullptr;
 static int (*real_openat_ptr)(int, const char*, int, mode_t) = nullptr;
+static int (*real_open_2_ptr)(const char*, int) = nullptr;
+static int (*real_openat_2_ptr)(int, const char*, int) = nullptr;
+static DIR* (*real_opendir_ptr)(const char*) = nullptr;
+static struct dirent* (*real_readdir_ptr)(DIR*) = nullptr;
+static struct dirent64* (*real_readdir64_ptr)(DIR*) = nullptr;
+static int (*real_readdir_r_ptr)(DIR*, struct dirent*, struct dirent**) = nullptr;
+static int (*real_readdir64_r_ptr)(DIR*, struct dirent64*, struct dirent64**) = nullptr;
 static int (*real_access_ptr)(const char*, int) = nullptr;
 static int (*real_faccessat_ptr)(int, const char*, int, int) = nullptr;
 static int (*real_stat_ptr)(const char*, struct stat*) = nullptr;
@@ -32,6 +40,8 @@ static int (*real_dladdr_ptr)(const void*, Dl_info*) = nullptr;
 static int (*real_dl_iterate_phdr_ptr)(int (*)(struct dl_phdr_info*, size_t, void*), void*) = nullptr;
 static int (*real_system_property_get_ptr)(const char*, char*) = nullptr;
 static const prop_info* (*real_system_property_find_ptr)(const char*) = nullptr;
+typedef void (*prop_read_cb_t)(void* cookie, const char* name, const char* value, uint32_t serial);
+static void (*real_system_property_read_callback_ptr)(const prop_info*, prop_read_cb_t, void*) = nullptr;
 typedef long (*syscall_func_t)(long, void*, void*, void*, void*, void*, void*);
 static syscall_func_t real_syscall_ptr = nullptr;
 
@@ -40,6 +50,13 @@ static void ensure_real_funcs() {
     if (!real_fgets_ptr) real_fgets_ptr = (char* (*)(char*, int, FILE*))dlsym(RTLD_DEFAULT, "fgets");
     if (!real_open_ptr) real_open_ptr = (int (*)(const char*, int, mode_t))dlsym(RTLD_DEFAULT, "open");
     if (!real_openat_ptr) real_openat_ptr = (int (*)(int, const char*, int, mode_t))dlsym(RTLD_DEFAULT, "openat");
+    if (!real_open_2_ptr) real_open_2_ptr = (int (*)(const char*, int))dlsym(RTLD_DEFAULT, "__open_2");
+    if (!real_openat_2_ptr) real_openat_2_ptr = (int (*)(int, const char*, int))dlsym(RTLD_DEFAULT, "__openat_2");
+    if (!real_opendir_ptr) real_opendir_ptr = (DIR* (*)(const char*))dlsym(RTLD_DEFAULT, "opendir");
+    if (!real_readdir_ptr) real_readdir_ptr = (struct dirent* (*)(DIR*))dlsym(RTLD_DEFAULT, "readdir");
+    if (!real_readdir64_ptr) real_readdir64_ptr = (struct dirent64* (*)(DIR*))dlsym(RTLD_DEFAULT, "readdir64");
+    if (!real_readdir_r_ptr) real_readdir_r_ptr = (int (*)(DIR*, struct dirent*, struct dirent**))dlsym(RTLD_DEFAULT, "readdir_r");
+    if (!real_readdir64_r_ptr) real_readdir64_r_ptr = (int (*)(DIR*, struct dirent64*, struct dirent64**))dlsym(RTLD_DEFAULT, "readdir64_r");
     if (!real_access_ptr) real_access_ptr = (int (*)(const char*, int))dlsym(RTLD_DEFAULT, "access");
     if (!real_faccessat_ptr) real_faccessat_ptr = (int (*)(int, const char*, int, int))dlsym(RTLD_DEFAULT, "faccessat");
     if (!real_stat_ptr) real_stat_ptr = (int (*)(const char*, struct stat*))dlsym(RTLD_DEFAULT, "stat");
@@ -51,6 +68,7 @@ static void ensure_real_funcs() {
     if (!real_dl_iterate_phdr_ptr) real_dl_iterate_phdr_ptr = (int (*)(int (*)(struct dl_phdr_info*, size_t, void*), void*))dlsym(RTLD_DEFAULT, "dl_iterate_phdr");
     if (!real_system_property_get_ptr) real_system_property_get_ptr = (int (*)(const char*, char*))dlsym(RTLD_DEFAULT, "__system_property_get");
     if (!real_system_property_find_ptr) real_system_property_find_ptr = (const prop_info* (*)(const char*))dlsym(RTLD_DEFAULT, "__system_property_find");
+    if (!real_system_property_read_callback_ptr) real_system_property_read_callback_ptr = (void (*)(const prop_info*, prop_read_cb_t, void*))dlsym(RTLD_DEFAULT, "__system_property_read_callback");
     if (!real_syscall_ptr) real_syscall_ptr = (syscall_func_t)dlsym(RTLD_DEFAULT, "syscall");
 }
 
@@ -77,6 +95,54 @@ bool is_sensitive_path(const char* path) {
     };
     for (int i = 0; hidden[i]; i++) {
         if (strcasestr(path, hidden[i])) return true;
+    }
+    return false;
+}
+
+bool is_sensitive_name(const char* name) {
+    if (!name || !name[0]) return false;
+    if (strcmp(name, "su") == 0 ||
+        strcmp(name, "magisk") == 0 ||
+        strcmp(name, "magiskd") == 0 ||
+        strcmp(name, "ksud") == 0 ||
+        strcmp(name, "daemonsu") == 0 ||
+        strcmp(name, "supersu") == 0 ||
+        strcmp(name, "superuser") == 0 ||
+        strcmp(name, "busybox") == 0) {
+        return true;
+    }
+    const char* patterns[] = {
+        "magisk", "lsposed", "xposed", "edxposed", "dexkit",
+        "sandhook", "yahfa", "epic", "pine", "taichi",
+        "liblspd", "qqbypass", "native-bypass", "bytehook",
+        "qauxv", "qnotified", "shamiko", "apatch", nullptr
+    };
+    for (int i = 0; patterns[i]; i++) {
+        if (strcasestr(name, patterns[i])) return true;
+    }
+    return false;
+}
+
+static bool is_root_pid(const char* pid_str) {
+    if (!pid_str || !pid_str[0]) return false;
+    char comm_path[64];
+    snprintf(comm_path, sizeof(comm_path), "/proc/%s/comm", pid_str);
+    int fd = -1;
+    if (real_open_ptr) fd = real_open_ptr(comm_path, O_RDONLY, 0);
+    else fd = open(comm_path, O_RDONLY);
+    if (fd >= 0) {
+        char buf[64];
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            if (buf[n - 1] == '\n') buf[n - 1] = '\0';
+            if (strcmp(buf, "magiskd") == 0 || strcmp(buf, "ksud") == 0 ||
+                strcmp(buf, "su") == 0 || strcmp(buf, "daemonsu") == 0 ||
+                strcmp(buf, "frida-server") == 0) {
+                return true;
+            }
+        }
     }
     return false;
 }
@@ -146,6 +212,60 @@ FILE* build_filtered_maps() {
             filter = true;
         }
         if (!filter) fputs(line, fake);
+    }
+    fclose(real);
+    rewind(fake);
+    return fake;
+}
+
+// 构造过滤掉 hook 特征库与 rwxp 蹦床的 smaps 临时文件
+FILE* build_filtered_smaps() {
+    ensure_real_funcs();
+    if (!real_fopen_ptr || !real_fgets_ptr) return nullptr;
+
+    FILE* real = real_fopen_ptr("/proc/self/smaps", "r");
+    if (!real) real = real_fopen_ptr("/proc/self/maps", "r");
+    if (!real) return nullptr;
+
+    FILE* fake = create_memory_file("smaps");
+    if (!fake) {
+        fclose(real);
+        return nullptr;
+    }
+
+    char line[2048];
+    const char* blacklist[] = {
+        "lsposed", "xposed", "riru", "zygisk", "edxposed",
+        "frida", "substrate", "libDalvikLoader", "libAndroidCydia",
+        "magisk", "ksu", "kernelsu", "supersu", "superuser",
+        "libnative-bypass", "libbytehook", "xalsace", "qq_hook",
+        "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
+        "epic", "pine", "taichi", "top.canyie", "liblspd", "qqbypass",
+        "zygisk_lsposed", "zygisksu", "/data/adb", "bin.mt.plus",
+        "bytehook", "trampoline", "native-bypass", "apatch", "libxposed",
+        "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "cc.ioctl", "qnotified",
+        nullptr
+    };
+
+    bool filtering_current_block = false;
+    while (real_fgets_ptr(line, sizeof(line), real)) {
+        char* dash = strchr(line, '-');
+        if (dash && (strstr(line, " r") || strstr(line, " -"))) {
+            filtering_current_block = false;
+            for (int i = 0; blacklist[i]; i++) {
+                if (strcasestr(line, blacklist[i])) {
+                    filtering_current_block = true;
+                    break;
+                }
+            }
+            if (!filtering_current_block && strstr(line, "rwxp") && strstr(line, "[anon:") && !strstr(line, "dalvik")) {
+                filtering_current_block = true;
+            }
+        }
+
+        if (!filtering_current_block) {
+            fputs(line, fake);
+        }
     }
     fclose(real);
     rewind(fake);
@@ -237,7 +357,28 @@ static FILE* fake_fopen(const char* pathname, const char* mode) {
     }
 
     if (pathname) {
-        if (strcmp(pathname, "/proc/self/maps") == 0 ||
+        if (strncmp(pathname, "/proc/", 6) == 0) {
+            const char* pid_start = pathname + 6;
+            const char* slash = strchr(pid_start, '/');
+            if (slash && pid_start[0] >= '0' && pid_start[0] <= '9') {
+                char pid_buf[32];
+                size_t pid_len = slash - pid_start;
+                if (pid_len < sizeof(pid_buf)) {
+                    memcpy(pid_buf, pid_start, pid_len);
+                    pid_buf[pid_len] = '\0';
+                    if (is_root_pid(pid_buf)) {
+                        errno = ENOENT;
+                        return nullptr;
+                    }
+                }
+            }
+        }
+        if (strstr(pathname, "smaps")) {
+            LOGI("Intercepted fopen smaps: %s", pathname);
+            FILE* fake = build_filtered_smaps();
+            if (fake) return fake;
+        }
+        else if (strcmp(pathname, "/proc/self/maps") == 0 ||
             (strstr(pathname, "/proc/") && strstr(pathname, "/maps"))) {
             LOGI("Intercepted fopen maps: %s", pathname);
             FILE* fake = build_filtered_maps();
@@ -310,7 +451,32 @@ static int fake_open(const char* pathname, int flags, ...) {
     }
 
     if (pathname) {
-        if (strcmp(pathname, "/proc/self/maps") == 0 ||
+        if (strncmp(pathname, "/proc/", 6) == 0) {
+            const char* pid_start = pathname + 6;
+            const char* slash = strchr(pid_start, '/');
+            if (slash && pid_start[0] >= '0' && pid_start[0] <= '9') {
+                char pid_buf[32];
+                size_t pid_len = slash - pid_start;
+                if (pid_len < sizeof(pid_buf)) {
+                    memcpy(pid_buf, pid_start, pid_len);
+                    pid_buf[pid_len] = '\0';
+                    if (is_root_pid(pid_buf)) {
+                        errno = ENOENT;
+                        return -1;
+                    }
+                }
+            }
+        }
+        if (strstr(pathname, "smaps")) {
+            LOGI("Intercepted open smaps: %s", pathname);
+            FILE* fake = build_filtered_smaps();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        else if (strcmp(pathname, "/proc/self/maps") == 0 ||
             (strstr(pathname, "/proc/") && strstr(pathname, "/maps"))) {
             LOGI("Intercepted open maps: %s", pathname);
             FILE* fake = build_filtered_maps();
@@ -376,7 +542,32 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
     }
 
     if (pathname) {
-        if (strcmp(pathname, "/proc/self/maps") == 0 ||
+        if (strncmp(pathname, "/proc/", 6) == 0) {
+            const char* pid_start = pathname + 6;
+            const char* slash = strchr(pid_start, '/');
+            if (slash && pid_start[0] >= '0' && pid_start[0] <= '9') {
+                char pid_buf[32];
+                size_t pid_len = slash - pid_start;
+                if (pid_len < sizeof(pid_buf)) {
+                    memcpy(pid_buf, pid_start, pid_len);
+                    pid_buf[pid_len] = '\0';
+                    if (is_root_pid(pid_buf)) {
+                        errno = ENOENT;
+                        return -1;
+                    }
+                }
+            }
+        }
+        if (strstr(pathname, "smaps")) {
+            LOGI("Intercepted openat smaps: %s", pathname);
+            FILE* fake = build_filtered_smaps();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        else if (strcmp(pathname, "/proc/self/maps") == 0 ||
             (strstr(pathname, "/proc/") && strstr(pathname, "/maps"))) {
             LOGI("Intercepted openat maps: %s", pathname);
             FILE* fake = build_filtered_maps();
@@ -424,11 +615,133 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
     return (int)syscall(__NR_openat, dirfd, pathname, flags, mode);
 }
 
+static int fake_open_2(const char* pathname, int flags) {
+    return fake_open(pathname, flags, 0);
+}
+
+static int fake_openat_2(int dirfd, const char* pathname, int flags) {
+    return fake_openat(dirfd, pathname, flags, 0);
+}
+
+static DIR* fake_opendir(const char* name) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    if (is_sensitive_path(name)) {
+        LOGD("Hidden opendir: %s", name);
+        errno = ENOENT;
+        return nullptr;
+    }
+    if (real_opendir_ptr) return real_opendir_ptr(name);
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_opendir, name);
+    return opendir(name);
+}
+
+static struct dirent* fake_readdir(DIR* dirp) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    struct dirent* entry = nullptr;
+    while (true) {
+        if (real_readdir_ptr) entry = real_readdir_ptr(dirp);
+        else if (g_bytehook_hooks_installed) entry = BYTEHOOK_CALL_PREV(fake_readdir, dirp);
+        else entry = readdir(dirp);
+
+        if (!entry) break;
+
+        if (is_sensitive_name(entry->d_name)) {
+            continue;
+        }
+        if (entry->d_name[0] >= '0' && entry->d_name[0] <= '9') {
+            if (is_root_pid(entry->d_name)) {
+                continue;
+            }
+        }
+        break;
+    }
+    return entry;
+}
+
+static struct dirent64* fake_readdir64(DIR* dirp) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    struct dirent64* entry = nullptr;
+    while (true) {
+        if (real_readdir64_ptr) entry = real_readdir64_ptr(dirp);
+        else if (g_bytehook_hooks_installed) entry = BYTEHOOK_CALL_PREV(fake_readdir64, dirp);
+        else entry = readdir64(dirp);
+
+        if (!entry) break;
+
+        if (is_sensitive_name(entry->d_name)) {
+            continue;
+        }
+        if (entry->d_name[0] >= '0' && entry->d_name[0] <= '9') {
+            if (is_root_pid(entry->d_name)) {
+                continue;
+            }
+        }
+        break;
+    }
+    return entry;
+}
+
+static int fake_readdir_r(DIR* dirp, struct dirent* entry, struct dirent** result) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    while (true) {
+        int ret = 0;
+        if (real_readdir_r_ptr) ret = real_readdir_r_ptr(dirp, entry, result);
+        else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_readdir_r, dirp, entry, result);
+        else ret = readdir_r(dirp, entry, result);
+
+        if (ret != 0 || !result || !*result) return ret;
+
+        if (is_sensitive_name((*result)->d_name)) {
+            continue;
+        }
+        if ((*result)->d_name[0] >= '0' && (*result)->d_name[0] <= '9') {
+            if (is_root_pid((*result)->d_name)) {
+                continue;
+            }
+        }
+        return 0;
+    }
+}
+
+static int fake_readdir64_r(DIR* dirp, struct dirent64* entry, struct dirent64** result) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    while (true) {
+        int ret = 0;
+        if (real_readdir64_r_ptr) ret = real_readdir64_r_ptr(dirp, entry, result);
+        else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_readdir64_r, dirp, entry, result);
+        else ret = readdir64_r(dirp, entry, result);
+
+        if (ret != 0 || !result || !*result) return ret;
+
+        if (is_sensitive_name((*result)->d_name)) {
+            continue;
+        }
+        if ((*result)->d_name[0] >= '0' && (*result)->d_name[0] <= '9') {
+            if (is_root_pid((*result)->d_name)) {
+                continue;
+            }
+        }
+        return 0;
+    }
+}
+
 static ssize_t sanitize_readlink_buffer(char* buf, size_t bufsiz, ssize_t ret) {
     if (ret <= 0 || !buf || (size_t)ret >= bufsiz) return ret;
     buf[ret] = '\0';
     if (strstr(buf, "memfd:maps")) {
         const char* rep = "/proc/self/maps";
+        size_t rlen = strlen(rep);
+        if (bufsiz > rlen) {
+            strncpy(buf, rep, bufsiz);
+            return rlen;
+        }
+    } else if (strstr(buf, "memfd:smaps")) {
+        const char* rep = "/proc/self/smaps";
         size_t rlen = strlen(rep);
         if (bufsiz > rlen) {
             strncpy(buf, rep, bufsiz);
@@ -675,6 +988,45 @@ static const prop_info* fake_system_property_find(const char* name) {
     return __system_property_find(name);
 }
 
+struct PropCallbackCookie {
+    void (*orig_callback)(void* cookie, const char* name, const char* value, uint32_t serial);
+    void* orig_cookie;
+};
+
+static void prop_read_callback_wrapper(void* cookie, const char* name, const char* value, uint32_t serial) {
+    auto* pcc = static_cast<PropCallbackCookie*>(cookie);
+    if (!name || !value) {
+        if (pcc && pcc->orig_callback) pcc->orig_callback(pcc->orig_cookie, name, value, serial);
+        return;
+    }
+    const char* spoof_val = value;
+    if (strcmp(name, "ro.debuggable") == 0) spoof_val = "0";
+    else if (strcmp(name, "ro.secure") == 0) spoof_val = "1";
+    else if (strcmp(name, "ro.build.tags") == 0) spoof_val = "release-keys";
+    else if (strcmp(name, "ro.boot.flash.locked") == 0) spoof_val = "1";
+    else if (strcmp(name, "ro.boot.verifiedbootstate") == 0) spoof_val = "green";
+    else if (strstr(name, "magisk") || strstr(name, "ksu") || strstr(name, "apatch")) spoof_val = "";
+
+    if (pcc && pcc->orig_callback) {
+        pcc->orig_callback(pcc->orig_cookie, name, spoof_val, serial);
+    }
+}
+
+static void fake_system_property_read_callback(const prop_info* pi, void (*callback)(void* cookie, const char* name, const char* value, uint32_t serial), void* cookie) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    PropCallbackCookie pcc{callback, cookie};
+    if (real_system_property_read_callback_ptr) {
+        real_system_property_read_callback_ptr(pi, prop_read_callback_wrapper, &pcc);
+    } else if (g_bytehook_hooks_installed) {
+        BYTEHOOK_CALL_PREV(fake_system_property_read_callback, pi, prop_read_callback_wrapper, &pcc);
+    } else {
+        typedef void (*pfn_read_cb)(const prop_info*, void (*)(void*, const char*, const char*, uint32_t), void*);
+        static pfn_read_cb s_fn = (pfn_read_cb)dlsym(RTLD_DEFAULT, "__system_property_read_callback");
+        if (s_fn) s_fn(pi, prop_read_callback_wrapper, &pcc);
+    }
+}
+
 long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
@@ -687,6 +1039,31 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
                 LOGD("fake_syscall: openat blocked sensitive: %s", path);
                 errno = ENOENT;
                 return -1;
+            }
+            if (strncmp(path, "/proc/", 6) == 0) {
+                const char* pid_start = path + 6;
+                const char* slash = strchr(pid_start, '/');
+                if (slash && pid_start[0] >= '0' && pid_start[0] <= '9') {
+                    char pid_buf[32];
+                    size_t pid_len = slash - pid_start;
+                    if (pid_len < sizeof(pid_buf)) {
+                        memcpy(pid_buf, pid_start, pid_len);
+                        pid_buf[pid_len] = '\0';
+                        if (is_root_pid(pid_buf)) {
+                            errno = ENOENT;
+                            return -1;
+                        }
+                    }
+                }
+            }
+            if (strstr(path, "smaps")) {
+                LOGI("fake_syscall: openat smaps redirected: %s", path);
+                FILE* fake = build_filtered_smaps();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
             }
             if (strcmp(path, "/proc/self/maps") == 0 ||
                 (strstr(path, "/proc/") && strstr(path, "/maps"))) {
@@ -759,6 +1136,53 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
         }
         return fake_readlinkat((int)(uintptr_t)a1, path, (char*)a3, (size_t)(uintptr_t)a4);
     }
+#ifdef __NR_getdents64
+    // 61: __NR_getdents64
+    else if (number == __NR_getdents64) {
+        long ret = 0;
+        if (real_syscall_ptr) {
+            ret = real_syscall_ptr(number, a1, a2, a3, a4, a5, a6);
+        } else {
+            ret = syscall(number, a1, a2, a3, a4, a5, a6);
+        }
+        if (ret > 0 && a2) {
+            struct linux_dirent64 {
+                uint64_t        d_ino;
+                int64_t         d_off;
+                unsigned short  d_reclen;
+                unsigned char   d_type;
+                char            d_name[];
+            };
+            char* buf = (char*)a2;
+            long pos = 0;
+            char* write_ptr = buf;
+            long new_ret = 0;
+            while (pos < ret) {
+                struct linux_dirent64* dent = (struct linux_dirent64*)(buf + pos);
+                unsigned short reclen = dent->d_reclen;
+                if (reclen == 0) break;
+                bool hide = false;
+                if (is_sensitive_name(dent->d_name)) {
+                    hide = true;
+                } else if (dent->d_name[0] >= '0' && dent->d_name[0] <= '9') {
+                    if (is_root_pid(dent->d_name)) {
+                        hide = true;
+                    }
+                }
+                if (!hide) {
+                    if (write_ptr != (char*)dent) {
+                        memmove(write_ptr, dent, reclen);
+                    }
+                    write_ptr += reclen;
+                    new_ret += reclen;
+                }
+                pos += reclen;
+            }
+            return new_ret;
+        }
+        return ret;
+    }
+#endif
     // 117: __NR_ptrace on aarch64, 26 on arm
 #if defined(__aarch64__)
     else if (number == 117) {
@@ -789,8 +1213,15 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "fopen64", (void*)fake_fopen, nullptr, nullptr);
     bytehook_hook_all(nullptr, "open", (void*)fake_open, nullptr, nullptr);
     bytehook_hook_all(nullptr, "open64", (void*)fake_open, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "__open_2", (void*)fake_open_2, nullptr, nullptr);
     bytehook_hook_all(nullptr, "openat", (void*)fake_openat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "openat64", (void*)fake_openat, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "__openat_2", (void*)fake_openat_2, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "opendir", (void*)fake_opendir, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "readdir", (void*)fake_readdir, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "readdir64", (void*)fake_readdir64, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "readdir_r", (void*)fake_readdir_r, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "readdir64_r", (void*)fake_readdir64_r, nullptr, nullptr);
     bytehook_hook_all(nullptr, "fgets", (void*)fake_fgets, nullptr, nullptr);
     bytehook_hook_all(nullptr, "readlink", (void*)fake_readlink, nullptr, nullptr);
     bytehook_hook_all(nullptr, "readlinkat", (void*)fake_readlinkat, nullptr, nullptr);
@@ -807,6 +1238,7 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "syscall", (void*)fake_syscall, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_get", (void*)fake_system_property_get, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_find", (void*)fake_system_property_find, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "__system_property_read_callback", (void*)fake_system_property_read_callback, nullptr, nullptr);
 
     LOGI("libc hooks installed (filesystem, maps, mounts, syscalls, and properties)");
 }

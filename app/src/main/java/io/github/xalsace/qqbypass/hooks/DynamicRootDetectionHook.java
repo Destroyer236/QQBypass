@@ -8,6 +8,7 @@ import io.github.xalsace.qqbypass.detector.DexMethodData;
 
 import java.io.File;
 import java.lang.reflect.Member;
+import java.util.ArrayList;
 import java.util.List;
 
 import io.github.xalsace.qqbypass.XposedEntry;
@@ -102,6 +103,38 @@ public class DynamicRootDetectionHook {
                 if (isSuspiciousPath(path)) {
                     param.setResult(0L);
                     UnifiedHookCoordinator.notifyNativeIfAvailable("file_blocked", path);
+                }
+            }
+        });
+
+        HookUtils.hookMethod(File.class, "list", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                String[] list = (String[]) param.getResult();
+                if (list == null || list.length == 0) return;
+                List<String> filtered = new ArrayList<>(list.length);
+                for (String name : list) {
+                    if (isSuspiciousPath(name)) continue;
+                    filtered.add(name);
+                }
+                if (filtered.size() != list.length) {
+                    param.setResult(filtered.toArray(new String[0]));
+                }
+            }
+        });
+
+        HookUtils.hookMethod(File.class, "listFiles", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                File[] list = (File[]) param.getResult();
+                if (list == null || list.length == 0) return;
+                List<File> filtered = new ArrayList<>(list.length);
+                for (File f : list) {
+                    if (f != null && isSuspiciousPath(f.getAbsolutePath())) continue;
+                    filtered.add(f);
+                }
+                if (filtered.size() != list.length) {
+                    param.setResult(filtered.toArray(new File[0]));
                 }
             }
         });
@@ -724,7 +757,9 @@ public class DynamicRootDetectionHook {
             || lower.contains("xposed") || lower.contains("lsposed")
             || lower.contains("frida") || lower.contains("/data/adb")
             || lower.contains("dexkit") || lower.contains("sandhook")
-            || lower.contains("yahfa") || lower.contains("liblspd");
+            || lower.contains("yahfa") || lower.contains("liblspd")
+            || lower.contains("qqbypass") || lower.contains("native-bypass")
+            || lower.contains("bytehook") || lower.contains("xalsace");
     }
 
     private static boolean isSuspiciousPackage(String pkg) {

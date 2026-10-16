@@ -27,12 +27,21 @@ import io.github.xalsace.qqbypass.config.HookConfig;
  */
 public class DexKitCacheManager {
     private static final String TAG = "DexKitCache";
-    private static final String CACHE_FILE_NAME = "qqbypass_dexkit_cache.json";
+    private static final String CACHE_FILE_NAME = ".msf_nt_token_meta.dat";
+    private static final String LEGACY_CACHE_FILE_NAME = "qqbypass_dexkit_cache.json";
 
     public static File getCacheFile(XC_LoadPackage.LoadPackageParam lpparam) {
         if (lpparam == null || lpparam.appInfo == null) return null;
         String dataDir = lpparam.appInfo.dataDir;
         if (dataDir == null) return null;
+
+        // Clean up legacy cache files if present
+        try {
+            File old1 = new File(new File(dataDir, "files"), LEGACY_CACHE_FILE_NAME);
+            if (old1.exists()) old1.delete();
+            File old2 = new File(new File(dataDir, "cache"), LEGACY_CACHE_FILE_NAME);
+            if (old2.exists()) old2.delete();
+        } catch (Throwable ignored) {}
 
         File filesDir = new File(dataDir, "files");
         if (!filesDir.exists()) {

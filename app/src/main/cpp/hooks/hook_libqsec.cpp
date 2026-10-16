@@ -37,12 +37,22 @@ static void* hooked_dlopen(const char* filename, int flag) {
     return dlopen(filename, flag);
 }
 
+static jboolean fake_is_debuggable() {
+    return JNI_FALSE;
+}
+
 /**
  * Hook dlsym - 防止符号表扫描检测
  */
 static void* hooked_dlsym(void* handle, const char* symbol) {
     SAFE_BYTEHOOK_SCOPE();
     if (symbol) {
+        if (strstr(symbol, "isJavaDebuggable") ||
+            strstr(symbol, "isNativeDebuggable") ||
+            strstr(symbol, "isDebuggable")) {
+            LOGI("QSec dlsym spoofed %s -> JNI_FALSE", symbol);
+            return (void*)fake_is_debuggable;
+        }
         // 拦截对 hook 相关符号的查询（指定精确框架名，避免误杀正常函数）
         if (strcasestr(symbol, "bytehook") ||
             strcasestr(symbol, "xposed") ||

@@ -106,6 +106,9 @@ public class QQ950PatchHook {
 
         // Tier 7: RFix & Hotfix Failure Sanitization and Telemetry Drop
         hookRFixFailureSanitization(lpparam);
+
+        // Tier 8: QSec detectMethod and FeKitAttach fallback
+        hookQSecDefenses(lpparam);
     }
 
     // ==================== Tier 1: void-return, crash-safe ====================
@@ -2438,6 +2441,41 @@ public class QQ950PatchHook {
                             }
                         }
                     } catch (Throwable ignored) {}
+                }
+            }
+        });
+    }
+
+    /**
+     * Hook QSec detectMethod to prevent reflection-based framework detection,
+     * and hook QSec.getFeKitAttach to ensure safe attach token fallback.
+     */
+    private static void hookQSecDefenses(XC_LoadPackage.LoadPackageParam lpparam) {
+        final String qsecCls = "com.tencent.mobileqq.qsec.qsecurity.QSec";
+        hookSafe(qsecCls, "detectMethod", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 2) {
+                    String cls = (String) p.args[0];
+                    String mtd = (String) p.args[1];
+                    if (cls != null && (cls.contains("xposed") || cls.contains("lsposed") ||
+                                       cls.contains("canyie") || cls.contains("sandhook") ||
+                                       cls.contains("epic") || cls.contains("pine") ||
+                                       cls.contains("yahfa") || cls.contains("qqbypass") ||
+                                       cls.contains("native-bypass") || cls.contains("bytehook"))) {
+                        p.setResult(false);
+                        XposedEntry.log("[QSecPatch] Blocked detectMethod: " + cls + "->" + mtd);
+                    }
+                }
+            }
+        });
+
+        hookSafe(qsecCls, "getFeKitAttach", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                byte[] res = (byte[]) p.getResult();
+                if (res == null || res.length == 0) {
+                    p.setResult(new byte[]{0});
                 }
             }
         });

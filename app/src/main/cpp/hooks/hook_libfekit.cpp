@@ -25,7 +25,9 @@ static int fake_system(const char* command) {
                     strstr(command, "which") || strstr(command, "getprop") ||
                     strstr(command, "ksu") || strstr(command, "apatch") ||
                     strstr(command, "daemonsu") || strstr(command, "permmgrd") ||
-                    strstr(command, "360sguard") || strstr(command, "ps"))) {
+                    strstr(command, "360sguard") || strstr(command, "ps") ||
+                    strstr(command, "ls /") || strstr(command, "ls -") ||
+                    strstr(command, "cat /proc"))) {
         LOGI("Blocked system command: %s", command);
         return 0;
     }
@@ -46,7 +48,9 @@ static FILE* fake_popen(const char* command, const char* type) {
             strstr(command, "ksu") || strstr(command, "apatch") ||
             strstr(command, "/data/adb") || strstr(command, "daemonsu") ||
             strstr(command, "permmgrd") || strstr(command, "360sguard") ||
-            strstr(command, "grep") || strstr(command, "ps")) {
+            strstr(command, "grep") || strstr(command, "ps") ||
+            strstr(command, "ls /") || strstr(command, "ls -") ||
+            strstr(command, "cat /proc")) {
             LOGI("Blocked popen command: %s", command);
             return tmpfile();
         }
