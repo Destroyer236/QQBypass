@@ -556,6 +556,9 @@ public class DynamicRootDetectionHook {
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String pkg = (String) param.args[0];
+                        if (isMtManagerPackage(pkg) && !isCallerSecurityComponent()) {
+                            return;
+                        }
                         if (isSuspiciousPackage(pkg)) {
                             if (isCallerQAuxv()) {
                                 return;
@@ -607,6 +610,9 @@ public class DynamicRootDetectionHook {
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String pkg = (String) param.args[0];
+                        if (isMtManagerPackage(pkg) && !isCallerSecurityComponent()) {
+                            return;
+                        }
                         if (isSuspiciousPackage(pkg)) {
                             if (isCallerQAuxv()) {
                                 return;
@@ -631,6 +637,9 @@ public class DynamicRootDetectionHook {
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
                             String pkg = (String) param.args[1];
+                            if (isMtManagerPackage(pkg) && !isCallerSecurityComponent()) {
+                                return;
+                            }
                             if (isSuspiciousPackage(pkg)) {
                                 if (isCallerQAuxv()) {
                                     return;
@@ -650,10 +659,17 @@ public class DynamicRootDetectionHook {
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
                         List<Object> filtered = new java.util.ArrayList<>();
+                        boolean isFileIntent = isFileShareOrViewIntent(param.args);
                         for (Object item : list) {
                             if (item instanceof android.content.pm.ResolveInfo) {
                                 android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) item;
                                 String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
+                                if (isMtManagerPackage(pkg)) {
+                                    if (isFileIntent || !isCallerSecurityComponent()) {
+                                        filtered.add(item);
+                                        continue;
+                                    }
+                                }
                                 if (!isSuspiciousPackage(pkg)) {
                                     filtered.add(item);
                                 }
@@ -760,6 +776,11 @@ public class DynamicRootDetectionHook {
                     if (res instanceof android.content.pm.ResolveInfo) {
                         android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) res;
                         String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
+                        if (isMtManagerPackage(pkg)) {
+                            if (isFileShareOrViewIntent(param.args) || !isCallerSecurityComponent()) {
+                                return;
+                            }
+                        }
                         if (isSuspiciousPackage(pkg)) {
                             if (isCallerQAuxv()) return;
                             param.setResult(null);
@@ -1129,10 +1150,17 @@ public class DynamicRootDetectionHook {
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
                         List<Object> filtered = new java.util.ArrayList<>();
+                        boolean isFileIntent = isFileShareOrViewIntent(param.args);
                         for (Object item : list) {
                             if (item instanceof android.content.pm.ResolveInfo) {
                                 android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) item;
                                 String pkg = ri.activityInfo != null ? ri.activityInfo.packageName : null;
+                                if (isMtManagerPackage(pkg)) {
+                                    if (isFileIntent || !isCallerSecurityComponent()) {
+                                        filtered.add(item);
+                                        continue;
+                                    }
+                                }
                                 if (!isSuspiciousPackage(pkg)) {
                                     filtered.add(item);
                                 }
@@ -1281,6 +1309,61 @@ public class DynamicRootDetectionHook {
         return false;
     }
 
+    public static boolean isCallerSecurityComponent() {
+        try {
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            for (StackTraceElement elem : stack) {
+                String cls = elem.getClassName();
+                if (cls == null) continue;
+                String lower = cls.toLowerCase();
+                if (lower.contains(".qsec.") || lower.contains(".turing") || lower.contains(".beacon.")
+                        || lower.contains(".pandora") || lower.contains(".bugly.")
+                        || lower.contains(".feedback.") || lower.contains("gathererga")
+                        || lower.contains("camerasdk.avreport")
+                        || lower.contains(".mobileqq.msf.")
+                        || lower.contains("oicq.wlogin_sdk")
+                        || lower.contains(".qqperf.")) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    public static boolean isMtManagerPackage(String pkg) {
+        if (pkg == null) return false;
+        String lower = pkg.toLowerCase();
+        return lower.contains("bin.mt.") || lower.equals("bin.mt") || lower.contains("bin.mt.plus")
+                || lower.contains("bin.mt.manager") || lower.contains("bin.mt.termex");
+    }
+
+    public static boolean isFileShareOrViewIntent(Object[] args) {
+        if (args == null) return false;
+        for (Object arg : args) {
+            if (arg instanceof android.content.Intent) {
+                android.content.Intent intent = (android.content.Intent) arg;
+                String action = intent.getAction();
+                if (action == null) {
+                    if (intent.getData() != null || intent.getType() != null) return true;
+                    continue;
+                }
+                if (android.content.Intent.ACTION_VIEW.equals(action)
+                        || android.content.Intent.ACTION_SEND.equals(action)
+                        || android.content.Intent.ACTION_SEND_MULTIPLE.equals(action)
+                        || android.content.Intent.ACTION_EDIT.equals(action)
+                        || android.content.Intent.ACTION_CHOOSER.equals(action)
+                        || action.contains("OPEN") || action.contains("SHARE")
+                        || action.contains("VIEW") || action.contains("SEND")) {
+                    return true;
+                }
+                if (intent.getData() != null || intent.getType() != null) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public static boolean isSuspiciousPath(String path) {
         if (path == null) return false;
         String lower = path.toLowerCase();
@@ -1301,11 +1384,15 @@ public class DynamicRootDetectionHook {
             return true;
         }
 
-        // MT Manager paths & storage
+        // MT Manager paths & storage: hide only from security components, allow user/file actions
         if (lower.contains("bin.mt.plus") || lower.contains("bin.mt.manager")
                 || lower.contains("bin.mt.termex") || lower.contains("bin.mt.")
-                || lower.contains("/mt2") || lower.contains("npatch")
-                || lower.contains("top.nkbe.npatch") || lower.contains("org.lsposed.manager")) {
+                || lower.contains("/mt2")) {
+            return isCallerSecurityComponent();
+        }
+
+        if (lower.contains("top.nkbe.npatch") || lower.contains("npatch")
+                || lower.contains("org.lsposed.manager")) {
             return true;
         }
 
@@ -1328,6 +1415,11 @@ public class DynamicRootDetectionHook {
         if (pkg == null) return false;
         String lower = pkg.toLowerCase();
 
+        // MT Manager: hide from security scanners (QSec, Turing, Beacon, Pandora), but allow in file viewer/UI chooser
+        if (isMtManagerPackage(lower)) {
+            return isCallerSecurityComponent();
+        }
+
         return lower.contains("magisk") || lower.contains("supersu")
             || lower.contains("superuser") || lower.contains("xposed")
             || lower.contains("lsposed") || lower.contains("edxposed")
@@ -1337,8 +1429,6 @@ public class DynamicRootDetectionHook {
             || lower.contains("sandhook") || lower.contains("taichi")
             || lower.contains("top.canyie") || lower.contains("xalsace")
             || lower.contains("qqbypass") || lower.contains("dexkit")
-            || lower.contains("bin.mt") || lower.contains("bin.mt.plus")
-            || lower.contains("bin.mt.manager") || lower.contains("bin.mt.termex")
             || lower.contains("top.nkbe.npatch") || lower.contains("npatch")
             || lower.contains("org.lsposed.manager") || lower.contains("youqu.android.todesk")
             || lower.contains("com.netease.uuremote") || lower.contains("com.topjohnwu.magisk")

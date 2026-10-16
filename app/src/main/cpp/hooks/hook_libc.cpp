@@ -95,6 +95,14 @@ static bool is_qa_private_path(const char* path) {
            strstr(path, "qa_misc") != nullptr;
 }
 
+static bool is_mt_private_path(const char* path) {
+    if (!path || !path[0]) return false;
+    return strstr(path, "bin.mt.") != nullptr ||
+           strstr(path, "/MT2") != nullptr ||
+           strstr(path, "/sdcard/MT2") != nullptr ||
+           strstr(path, "/storage/emulated/0/MT2") != nullptr;
+}
+
 bool is_sensitive_path(const char* path) {
     if (!path) return false;
     const char* hidden[] = {
@@ -113,8 +121,6 @@ bool is_sensitive_path(const char* path) {
         "epic", "pine", "taichi", "liblspd", "lsposed", "edxposed",
         "qqbypass", "libnative-bypass", "libbytehook", "xalsace",
         "zygisk_lsposed", "zygisksu",
-        "bin.mt.", "bin.mt.plus", "bin.mt.manager", "bin.mt.termex",
-        "/MT2", "/sdcard/MT2", "/storage/emulated/0/MT2",
         "top.nkbe.npatch", "npatch", "org.lsposed.manager",
         "libqauxv-core0", "libqauxv-core1", "libqauxv",
         "bytehook", "native-bypass", "apatch",
@@ -122,6 +128,15 @@ bool is_sensitive_path(const char* path) {
     };
     for (int i = 0; hidden[i]; i++) {
         if (strcasestr(path, hidden[i])) return true;
+    }
+    return false;
+}
+
+static inline bool is_security_hidden_path(const char* path, void* return_address) {
+    if (!path) return false;
+    if (is_sensitive_path(path)) return true;
+    if ((is_qa_private_path(path) || is_mt_private_path(path)) && is_caller_security_dso(return_address)) {
+        return true;
     }
     return false;
 }
@@ -407,8 +422,7 @@ static FILE* fake_fopen(const char* pathname, const char* mode) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
 
-    if (is_sensitive_path(pathname) ||
-        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path fopen: %s", pathname);
         errno = ENOENT;
         return nullptr;
@@ -502,8 +516,7 @@ static int fake_open(const char* pathname, int flags, ...) {
         va_end(args);
     }
 
-    if (is_sensitive_path(pathname) ||
-        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path open: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -594,8 +607,7 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
         va_end(args);
     }
 
-    if (is_sensitive_path(pathname) ||
-        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path openat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -949,8 +961,7 @@ static int fake_dl_iterate_phdr(int (*callback)(struct dl_phdr_info*, size_t, vo
 
 static int fake_access(const char* pathname, int mode) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname) ||
-        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path access: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -962,8 +973,7 @@ static int fake_access(const char* pathname, int mode) {
 
 static int fake_faccessat(int dirfd, const char* pathname, int mode, int flags) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname) ||
-        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path faccessat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -975,8 +985,7 @@ static int fake_faccessat(int dirfd, const char* pathname, int mode, int flags) 
 
 static int fake_stat(const char* pathname, struct stat* statbuf) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname) ||
-        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path stat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -988,8 +997,7 @@ static int fake_stat(const char* pathname, struct stat* statbuf) {
 
 static int fake_lstat(const char* pathname, struct stat* statbuf) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname) ||
-        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path lstat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -1001,8 +1009,7 @@ static int fake_lstat(const char* pathname, struct stat* statbuf) {
 
 static int fake_fstatat(int dirfd, const char* pathname, struct stat* statbuf, int flags) {
     SAFE_BYTEHOOK_SCOPE();
-    if (is_sensitive_path(pathname) ||
-        (is_qa_private_path(pathname) && is_caller_security_dso(__builtin_return_address(0)))) {
+    if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path fstatat: %s", pathname);
         errno = ENOENT;
         return -1;
@@ -1104,8 +1111,7 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     if (number == 56 || number == 437 || number == 322) {
         const char* path = (const char*)a2;
         if (path) {
-            if (is_sensitive_path(path) ||
-                (is_qa_private_path(path) && is_caller_security_dso(__builtin_return_address(0)))) {
+            if (is_security_hidden_path(path, __builtin_return_address(0))) {
                 LOGD("fake_syscall: openat blocked sensitive: %s", path);
                 errno = ENOENT;
                 return -1;
@@ -1181,8 +1187,7 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     // 79: __NR_newfstatat
     else if (number == 79) {
         const char* path = (const char*)a2;
-        if (path && (is_sensitive_path(path) ||
-            (is_qa_private_path(path) && is_caller_security_dso(__builtin_return_address(0))))) {
+        if (path && is_security_hidden_path(path, __builtin_return_address(0))) {
             LOGD("fake_syscall: newfstatat blocked sensitive: %s", path);
             errno = ENOENT;
             return -1;
@@ -1191,8 +1196,7 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
     // 48 / 439: __NR_faccessat, __NR_faccessat2
     else if (number == 48 || number == 439) {
         const char* path = (const char*)a2;
-        if (path && (is_sensitive_path(path) ||
-            (is_qa_private_path(path) && is_caller_security_dso(__builtin_return_address(0))))) {
+        if (path && is_security_hidden_path(path, __builtin_return_address(0))) {
             LOGD("fake_syscall: faccessat blocked sensitive: %s", path);
             errno = ENOENT;
             return -1;

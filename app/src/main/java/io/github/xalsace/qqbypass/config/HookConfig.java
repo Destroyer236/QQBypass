@@ -11,8 +11,8 @@ public class HookConfig {
     public static ClassLoader classLoader;
 
     // Module version info & cache schema
-    public static final int MODULE_VERSION_CODE = 27;
-    public static final String MODULE_VERSION_NAME = "1.0.27";
+    public static final int MODULE_VERSION_CODE = 28;
+    public static final String MODULE_VERSION_NAME = "1.0.28";
     public static final int CACHE_SCHEMA_VERSION = 3;
 
     // Feature toggles
@@ -27,8 +27,8 @@ public class HookConfig {
     public static boolean ENABLE_QQ950_PATCH = true;        // QQ 9.3.50 detection-point completion
     public static boolean ENABLE_QQ950_RISK_BLOCK = true;   // Tier 2: object-return risk blocks (NPE-caveat; disable if NPE appears)
 
-    // Verbose logging (disabled in production to ensure zero module log leaks)
-    public static boolean VERBOSE_LOGGING = false;
+    // Verbose logging (output to LSPosed log via XposedBridge.log)
+    public static boolean VERBOSE_LOGGING = true;
 
     // Fake device info (used when spoofing is enabled)
     public static String FAKE_IMEI = null; // null = use real device info
