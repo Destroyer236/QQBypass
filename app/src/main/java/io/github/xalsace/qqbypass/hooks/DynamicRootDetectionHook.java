@@ -124,6 +124,7 @@ public class DynamicRootDetectionHook {
         XC_MethodHook listHook = new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                if (isCallerQAuxv()) return;
                 Object res = param.getResult();
                 if (res instanceof String[]) {
                     String[] list = (String[]) res;
@@ -147,6 +148,7 @@ public class DynamicRootDetectionHook {
         XC_MethodHook listFilesHook = new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                if (isCallerQAuxv()) return;
                 Object res = param.getResult();
                 if (res instanceof File[]) {
                     File[] list = (File[]) res;
@@ -781,7 +783,7 @@ public class DynamicRootDetectionHook {
                     Object res = param.getResult();
                     if (res instanceof android.content.pm.ProviderInfo) {
                         android.content.pm.ProviderInfo pi = (android.content.pm.ProviderInfo) res;
-                        if (isSuspiciousPackage(pi.packageName) || (pi.authority != null && (pi.authority.contains("qauxv") || pi.authority.contains("lsposed") || pi.authority.contains("lspatch")))) {
+                        if (isSuspiciousPackage(pi.packageName) || (pi.authority != null && (pi.authority.contains("qauxv") || pi.authority.contains("lsposed") || pi.authority.contains("lspatch") || pi.authority.contains("moe.ono") || pi.authority.contains("lzlnb") || pi.authority.contains("cnm")))) {
                             if (isCallerQAuxv()) return;
                             param.setResult(null);
                         }
@@ -931,6 +933,64 @@ public class DynamicRootDetectionHook {
         } catch (Throwable t) {
             XposedEntry.log("Failed to hook SystemProperties: " + t.getMessage());
         }
+
+        // Java System properties hook to sanitize module indicators (e.g. moe.ono.startup.StartupAgent)
+        try {
+            HookUtils.hookMethod(System.class, "getProperty", String.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                        String key = (String) param.args[0];
+                        if (isSuspiciousPropertyKey(key)) {
+                            if (isCallerQAuxv()) return;
+                            param.setResult(null);
+                        }
+                    }
+                }
+            });
+
+            HookUtils.hookMethod(System.class, "getProperty", String.class, String.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                        String key = (String) param.args[0];
+                        if (isSuspiciousPropertyKey(key)) {
+                            if (isCallerQAuxv()) return;
+                            param.setResult(param.args[1]);
+                        }
+                    }
+                }
+            });
+
+            HookUtils.hookMethod(System.class, "getProperties", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
+                    Object res = param.getResult();
+                    if (res instanceof java.util.Properties) {
+                        java.util.Properties orig = (java.util.Properties) res;
+                        java.util.Properties clean = new java.util.Properties();
+                        for (String key : orig.stringPropertyNames()) {
+                            if (!isSuspiciousPropertyKey(key)) {
+                                clean.setProperty(key, orig.getProperty(key));
+                            }
+                        }
+                        param.setResult(clean);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook System.getProperty: " + t.getMessage());
+        }
+    }
+
+    private static boolean isSuspiciousPropertyKey(String key) {
+        if (key == null) return false;
+        String lower = key.toLowerCase();
+        return lower.contains("moe.ono") || lower.contains("lzlnb")
+            || lower.contains("cnm") || lower.contains("xposed")
+            || lower.contains("lspatch") || lower.contains("qauxv")
+            || lower.contains("qqbypass") || lower.contains("dexkit");
     }
 
     private static void hookSettingsSecureAndGlobal() {
@@ -1437,14 +1497,17 @@ public class DynamicRootDetectionHook {
             if (tName != null) {
                 String lt = tName.toLowerCase();
                 if (lt.contains("qauxv") || lt.contains("ioctl") || lt.contains("singleneuron")
-                        || lt.contains("lspatch") || lt.contains("lsposed") || lt.contains("xposed")) {
+                        || lt.contains("lspatch") || lt.contains("lsposed") || lt.contains("xposed")
+                        || lt.contains("ono") || lt.contains("lzlnb") || lt.contains("cnm")
+                        || lt.contains("se-dexkit")) {
                     return true;
                 }
             }
             ClassLoader cl = Thread.currentThread().getContextClassLoader();
             if (cl != null) {
                 String clStr = cl.toString().toLowerCase();
-                if (clStr.contains("qauxv") || clStr.contains("lspatch") || clStr.contains("lsposed")) {
+                if (clStr.contains("qauxv") || clStr.contains("lspatch") || clStr.contains("lsposed")
+                        || clStr.contains("ono") || clStr.contains("lzlnb") || clStr.contains("cnm")) {
                     return true;
                 }
             }
@@ -1468,6 +1531,11 @@ public class DynamicRootDetectionHook {
                     cls.startsWith("com.tencent.mmkv.") ||
                     cls.startsWith("android.content.res.XResources") ||
                     cls.startsWith("de.robv.android.xposed.") ||
+                    cls.startsWith("moe.ono.") ||
+                    cls.startsWith("lzlnb.cnm.") ||
+                    cls.startsWith("cnm0.") ||
+                    cls.startsWith("lzlnb.") ||
+                    cls.startsWith("org.luckypray.dexkit.") ||
                     cls.startsWith("io.github.xalsace.qqbypass.")
                 )) {
                     return true;
@@ -1576,6 +1644,24 @@ public class DynamicRootDetectionHook {
             return true;
         }
 
+        // ovo (moe.ono) private storage, mmkv, and preferences
+        if (lower.contains("ono_mmkv") || lower.contains("ono_hcb_") || lower.contains("moe.ono")) {
+            if (isCallerQAuxv()) {
+                return false;
+            }
+            return true;
+        }
+
+        // 模了个块 (lzlnb.cnm.hook) private cache and files
+        if (lower.contains("files/.se") || lower.contains(".se/kc.dat")
+                || lower.contains("sesearchcache") || lower.contains("lzlnb")
+                || lower.contains("libcnm.so") || lower.contains("liball-jni.so")) {
+            if (isCallerQAuxv()) {
+                return false;
+            }
+            return true;
+        }
+
         // MT Manager paths & storage: hide from QQ
         if (lower.contains("bin.mt.plus") || lower.contains("bin.mt.manager")
                 || lower.contains("bin.mt.termex") || lower.contains("bin.mt.")
@@ -1605,6 +1691,9 @@ public class DynamicRootDetectionHook {
             || lower.contains("libchecker") || lower.contains("shizuku")
             || lower.contains("vtools") || lower.contains("thanos")
             || lower.contains("puredupan") || lower.contains("developertools")
+            || lower.contains("moe.ono") || lower.contains("lzlnb")
+            || lower.contains("cnm") || lower.contains("libcnm")
+            || lower.contains("liball-jni")
             || lower.contains("duckusb") || lower.contains("termux");
     }
 
@@ -1648,6 +1737,8 @@ public class DynamicRootDetectionHook {
             || lower.contains("layoutinspect") || lower.contains("devcheck")
             || lower.contains("libchecker") || lower.contains("luckytool")
             || lower.contains("duckusb") || lower.contains("droidvnc")
+            || lower.contains("moe.ono") || lower.contains("lzlnb")
+            || lower.contains("cnm")
             || lower.contains("termux") || lower.contains(".hook");
     }
 }

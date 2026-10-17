@@ -67,8 +67,8 @@ echo "[2/6] 链接资源与 Manifest (aapt2 link)..."
 aapt2 link -I "$PLATFORM_JAR" \
     --min-sdk-version 26 \
     --target-sdk-version 34 \
-    --version-code 35 \
-    --version-name "1.0.35" \
+    --version-code 36 \
+    --version-name "1.0.36" \
     --manifest "$SCRIPT_DIR/app/src/main/AndroidManifest.xml" \
     --java "$BUILD_DIR/gen" \
     -o "$BUILD_DIR/base.apk" \

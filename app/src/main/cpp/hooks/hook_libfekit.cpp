@@ -22,6 +22,8 @@ static int fake_system(const char* command) {
 
     if (command && (strstr(command, "logcat") || strstr(command, "bin.mt") ||
                     strstr(command, "mt.plus") || strstr(command, "io.github.qauxv") ||
+                    strstr(command, "lspatch") || strstr(command, "moe.ono") ||
+                    strstr(command, "ono") || strstr(command, "lzlnb") || strstr(command, "cnm") ||
                     strstr(command, "magisk") || strstr(command, "su") ||
                     strstr(command, "mount") || strstr(command, "/proc/mounts") ||
                     strstr(command, "which") || strstr(command, "getprop") ||
@@ -47,6 +49,8 @@ static FILE* fake_popen(const char* command, const char* type) {
         }
         if (strstr(command, "logcat") || strstr(command, "bin.mt") ||
             strstr(command, "mt.plus") || strstr(command, "io.github.qauxv") ||
+            strstr(command, "lspatch") || strstr(command, "moe.ono") ||
+            strstr(command, "ono") || strstr(command, "lzlnb") || strstr(command, "cnm") ||
             strstr(command, "magisk") || strstr(command, "su") ||
             strstr(command, "which") || strstr(command, "getprop") ||
             strstr(command, "ksu") || strstr(command, "apatch") ||
@@ -74,7 +78,9 @@ static char* fake_strstr(const char* haystack, const char* needle) {
             "qqbypass", "xalsace", "libnative-bypass", "libbytehook", "bytehook", "trampoline",
             "qauxv", "io.github.qauxv", "libqauxv", "cc.ioctl", "qnotified",
             "bin.mt", "mt.plus", "top.nkbe.npatch", "npatch", "singleneuron", "bytebuddy",
-            "nep.timeline", "me.ketal", "me.hd", "xyz.nextalone", "top.linl", nullptr
+            "nep.timeline", "me.ketal", "me.hd", "xyz.nextalone", "top.linl",
+            "lspatch", "org.lsposed.lspatch", "moe.ono", "ono", "lzlnb", "cnm", "libcnm", "liball-jni",
+            "sesearchcache", nullptr
         };
         for (int i = 0; sensitive[i]; i++) {
             if (strcasecmp(needle, sensitive[i]) == 0 || strstr(needle, sensitive[i])) {

@@ -263,7 +263,12 @@ public class DynamicXposedDetectionHook {
             // Filter QAuxv and related
             || lower.contains("qauxv") || lower.contains("io.github.qauxv")
             || lower.contains("libqauxv") || lower.contains("libqauxv-core0")
-            || lower.contains("cc.ioctl") || lower.contains("qnotified");
+            || lower.contains("cc.ioctl") || lower.contains("qnotified")
+            // Filter moe.ono and lzlnb (模了个块)
+            || lower.contains("libcnm") || lower.contains("liball-jni")
+            || lower.contains("lzlnb") || lower.contains("moe.ono")
+            || lower.contains("ono_mmkv") || lower.contains("ono_hcb_")
+            || lower.contains("sesearchcache") || lower.contains("kc.dat");
     }
 
     private static StackTraceElement[] filterStackTrace(StackTraceElement[] traces) {
@@ -285,6 +290,8 @@ public class DynamicXposedDetectionHook {
                     || cls.startsWith("me.singleneuron.") || cls.startsWith("nep.timeline.")
                     || cls.startsWith("me.ketal.") || cls.startsWith("xyz.nextalone.")
                     || cls.startsWith("org.lsposed.") || cls.startsWith("top.canyie.")
+                    || cls.startsWith("moe.ono.") || cls.startsWith("lzlnb.cnm.")
+                    || cls.startsWith("cnm0.") || cls.startsWith("lzlnb.")
                     || cls.startsWith("com.tencent.mmkv.")) {
                 return traces;
             }
@@ -328,6 +335,10 @@ public class DynamicXposedDetectionHook {
                 lower.contains("top.linl") ||
                 lower.contains("net.bytebuddy") ||
                 lower.contains("io.github.libxposed") ||
+                lower.contains("moe.ono") ||
+                lower.contains("lzlnb") ||
+                lower.contains("cnm0") ||
+                lower.contains("neibuff") ||
                 lower.contains("qnotified")) {
                 continue;
             }
@@ -390,9 +401,11 @@ public class DynamicXposedDetectionHook {
                             if (thread != null) {
                                 String name = thread.getName();
                                 if (name != null) {
-                                    String nameLower = name.toLowerCase();
+                                     String nameLower = name.toLowerCase();
                                     if (nameLower.contains("dexkit") || nameLower.contains("qqbypass") || nameLower.contains("xalsace")
-                                            || nameLower.contains("qauxv") || nameLower.contains("qnotified") || nameLower.contains("cc.ioctl")) {
+                                            || nameLower.contains("qauxv") || nameLower.contains("qnotified") || nameLower.contains("cc.ioctl")
+                                            || nameLower.contains("se-dexkit") || nameLower.contains("ono") || nameLower.contains("lzlnb")
+                                            || nameLower.contains("cnm") || nameLower.contains("lspatch")) {
                                         continue;
                                     }
                                 }
@@ -443,7 +456,12 @@ public class DynamicXposedDetectionHook {
             || lower.startsWith("me.singleneuron.")
             || lower.startsWith("nep.timeline.")
             || lower.startsWith("net.bytebuddy.")
-            || lower.startsWith("io.github.libxposed.");
+            || lower.startsWith("io.github.libxposed.")
+            || lower.startsWith("moe.ono.")
+            || lower.startsWith("lzlnb.cnm.")
+            || lower.startsWith("cnm0.")
+            || lower.contains("neibuff")
+            || lower.startsWith("lzlnb.");
     }
 
     private static boolean isCallerWhitelisted() {
@@ -477,6 +495,11 @@ public class DynamicXposedDetectionHook {
                     || cls.startsWith("org.lsposed.")
                     || cls.startsWith("top.canyie.")
                     || cls.contains("lspatch")
+                    || cls.startsWith("moe.ono.")
+                    || cls.startsWith("lzlnb.cnm.")
+                    || cls.startsWith("cnm0.")
+                    || cls.startsWith("lzlnb.")
+                    || cls.startsWith("org.luckypray.dexkit.")
                     || cls.startsWith("com.tencent.mmkv.")) {
                     return true;
                 }
@@ -545,11 +568,15 @@ public class DynamicXposedDetectionHook {
                     Object res = param.getResult();
                     if (res instanceof String) {
                         String s = (String) res;
-                        if (s.contains("xposed") || s.contains("lsposed") || s.contains("edxposed") || s.contains("lspatch")) {
+                        if (s.contains("xposed") || s.contains("lsposed") || s.contains("edxposed") || s.contains("lspatch")
+                                || s.contains("moe.ono") || s.contains("lzlnb") || s.contains("canyie")) {
                             param.setResult(s.replaceAll("(?i)xposed", "dalvik")
                                             .replaceAll("(?i)lsposed", "dalvik")
                                             .replaceAll("(?i)edxposed", "dalvik")
-                                            .replaceAll("(?i)lspatch", "dalvik"));
+                                            .replaceAll("(?i)lspatch", "dalvik")
+                                            .replaceAll("(?i)moe\\.ono", "dalvik")
+                                            .replaceAll("(?i)lzlnb", "dalvik")
+                                            .replaceAll("(?i)canyie", "dalvik"));
                         }
                     }
                 }

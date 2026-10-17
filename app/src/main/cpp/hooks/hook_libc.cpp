@@ -107,7 +107,8 @@ static bool is_caller_qa(void* return_address) {
             strstr(f, "libmmkv") || strstr(f, "libjavacore") || strstr(f, "libopenjdk") ||
             strstr(f, "libart") || strstr(f, "liblspd") || strstr(f, "libxposed") ||
             strstr(f, "qqbypass") || strstr(f, "libnative-bypass") || strstr(f, "dexkit") ||
-            strstr(f, "liblspatch") || strstr(f, "lspatch") || strstr(f, "libpine") || strstr(f, "libsandhook")) {
+            strstr(f, "liblspatch") || strstr(f, "lspatch") || strstr(f, "libpine") || strstr(f, "libsandhook") ||
+            strstr(f, "libcnm") || strstr(f, "liball-jni") || strstr(f, "moe.ono") || strstr(f, "ono") || strstr(f, "lzlnb")) {
             return true;
         }
     }
@@ -125,7 +126,15 @@ static bool is_qa_private_path(const char* path) {
            strcasestr(path, "libqauxv") != nullptr ||
            strcasestr(path, "libqauxv-core0") != nullptr ||
            strcasestr(path, "libqauxv-core1") != nullptr ||
-           strcasestr(path, "qnotified") != nullptr;
+           strcasestr(path, "qnotified") != nullptr ||
+           strcasestr(path, "ono_mmkv") != nullptr ||
+           strcasestr(path, "ono_hcb_") != nullptr ||
+           strcasestr(path, "moe.ono") != nullptr ||
+           strcasestr(path, "sesearchcache") != nullptr ||
+           strcasestr(path, "files/.se") != nullptr ||
+           strcasestr(path, "kc.dat") != nullptr ||
+           strcasestr(path, "libcnm") != nullptr ||
+           strcasestr(path, "liball-jni") != nullptr;
 }
 
 static bool is_mt_private_path(const char* path) {
@@ -245,7 +254,9 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "simplehook", "libchecker", "shizuku", "vtools",
         "bin.mt", "mt2", "singleneuron", "bytebuddy",
         "thanos", "termux", "duckusb", "lspatch",
-        "org.lsposed.lspatch", nullptr
+        "org.lsposed.lspatch", "moe.ono", "ono_mmkv", "ono_hcb_",
+        "lzlnb", "libcnm", "liball-jni", "cnm0",
+        "sesearchcache", "kc.dat", ".se", nullptr
     };
     for (int i = 0; root_patterns[i]; i++) {
         if (strcasestr(name, root_patterns[i])) return true;
@@ -284,7 +295,8 @@ static bool is_root_pid(const char* pid_str) {
                 strcmp(buf, "frida-server") == 0 ||
                 strstr(buf, "bin.mt") || strstr(buf, "mt.plus") ||
                 strstr(buf, "qauxv") || strstr(buf, "lsposed") ||
-                strstr(buf, "npatch")) {
+                strstr(buf, "lspatch") || strstr(buf, "moe.ono") ||
+                strstr(buf, "lzlnb") || strstr(buf, "npatch")) {
                 return true;
             }
         }
@@ -302,7 +314,8 @@ static bool is_root_pid(const char* pid_str) {
             buf[n] = '\0';
             if (strstr(buf, "bin.mt") || strstr(buf, "io.github.qauxv") ||
                 strstr(buf, "org.lsposed.manager") || strstr(buf, "top.nkbe.npatch") ||
-                strstr(buf, "magisk") || strstr(buf, "ksud") || strstr(buf, "daemonsu")) {
+                strstr(buf, "magisk") || strstr(buf, "ksud") || strstr(buf, "daemonsu") ||
+                strstr(buf, "lspatch") || strstr(buf, "moe.ono") || strstr(buf, "lzlnb")) {
                 return true;
             }
         }
@@ -367,6 +380,10 @@ FILE* build_filtered_maps() {
         "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "libqauxv-core1",
         "cc.ioctl", "qnotified", "bytebuddy", "net.bytebuddy", "singleneuron", "timeline",
         "qa_mmkv", "qa_dyn_lib", "tmp_qa_",
+        "lspatch", "liblspatch", "org.lsposed.lspatch",
+        "moe.ono", "ono_mmkv", "ono_hcb_",
+        "lzlnb", "libcnm", "liball-jni", "cnm0",
+        "sesearchcache", "kc.dat", ".se",
         nullptr
     };
 
@@ -417,6 +434,10 @@ FILE* build_filtered_smaps() {
         "qauxv", "io.github.qauxv", "libqauxv", "libqauxv-core0", "libqauxv-core1",
         "cc.ioctl", "qnotified", "bytebuddy", "net.bytebuddy", "singleneuron", "timeline",
         "qa_mmkv", "qa_dyn_lib", "tmp_qa_",
+        "lspatch", "liblspatch", "org.lsposed.lspatch",
+        "moe.ono", "ono_mmkv", "ono_hcb_",
+        "lzlnb", "libcnm", "liball-jni", "cnm0",
+        "sesearchcache", "kc.dat", ".se",
         nullptr
     };
 

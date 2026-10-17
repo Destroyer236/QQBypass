@@ -29,7 +29,15 @@ static void* hooked_dlopen(const char* filename, int flag) {
             strcasestr(filename, "bin.mt") ||
             strcasestr(filename, "npatch") ||
             strcasestr(filename, "qauxv") ||
-            strcasestr(filename, "bytebuddy")) {
+            strcasestr(filename, "bytebuddy") ||
+            strcasestr(filename, "lspatch") ||
+            strcasestr(filename, "liblspatch") ||
+            strcasestr(filename, "moe.ono") ||
+            strcasestr(filename, "ono") ||
+            strcasestr(filename, "lzlnb") ||
+            strcasestr(filename, "cnm") ||
+            strcasestr(filename, "libcnm") ||
+            strcasestr(filename, "liball-jni")) {
             LOGI("QSec dlopen blocked: %s", filename);
             return nullptr;
         }
@@ -73,7 +81,14 @@ static void* hooked_dlsym(void* handle, const char* symbol) {
             strcasestr(symbol, "bin.mt") ||
             strcasestr(symbol, "npatch") ||
             strcasestr(symbol, "libqauxv") ||
-            strcasestr(symbol, "bytebuddy")) {
+            strcasestr(symbol, "bytebuddy") ||
+            strcasestr(symbol, "lspatch") ||
+            strcasestr(symbol, "moe.ono") ||
+            strcasestr(symbol, "ono") ||
+            strcasestr(symbol, "lzlnb") ||
+            strcasestr(symbol, "cnm") ||
+            strcasestr(symbol, "libcnm") ||
+            strcasestr(symbol, "liball-jni")) {
             LOGI("QSec dlsym blocked: %s", symbol);
             return nullptr;
         }

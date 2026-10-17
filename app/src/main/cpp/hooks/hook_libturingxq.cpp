@@ -33,7 +33,9 @@ static char* fake_xq_strstr(const char* haystack, const char* needle) {
             "lsposed", "xposed", "riru", "zygisk", "magisk", "frida", "KSU", "ksu", "apatch", "shamiko",
             "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa", "epic", "pine", "taichi", "liblspd",
             "qqbypass", "xalsace", "libnative-bypass", "libbytehook", "bytehook", "trampoline",
-            "qauxv", "io.github.qauxv", "libqauxv", "cc.ioctl", "qnotified", nullptr
+            "qauxv", "io.github.qauxv", "libqauxv", "cc.ioctl", "qnotified",
+            "lspatch", "org.lsposed.lspatch", "moe.ono", "ono", "lzlnb", "cnm", "libcnm", "liball-jni",
+            "sesearchcache", nullptr
         };
         for (int i = 0; sensitive[i]; i++) {
             if (strcasecmp(needle, sensitive[i]) == 0 || strstr(needle, sensitive[i])) {
