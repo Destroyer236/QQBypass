@@ -523,29 +523,7 @@ public class DynamicXposedDetectionHook {
         try {
             final ClassLoader moduleLoader = DynamicXposedDetectionHook.class.getClassLoader();
 
-            XC_MethodHook loadClassHook = new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (inReflectionHook.get()) return;
-                    if (param.thisObject == moduleLoader) return;
-                    try {
-                        inReflectionHook.set(true);
-                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
-                            String className = (String) param.args[0];
-                            if (isSuspiciousClass(className) && !isCallerWhitelisted()) {
-                                param.setThrowable(new ClassNotFoundException("Didn't find class \"" + className + "\""));
-                            }
-                        }
-                    } finally {
-                        inReflectionHook.set(false);
-                    }
-                }
-            };
-
-            HookUtils.hookMethod(ClassLoader.class, "loadClass", String.class, loadClassHook);
-            HookUtils.hookMethod(ClassLoader.class, "loadClass", String.class, boolean.class, loadClassHook);
-
-            HookUtils.hookMethod(Class.class, "forName", String.class, boolean.class, ClassLoader.class, new XC_MethodHook() {
+            XC_MethodHook forNameHook = new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (inReflectionHook.get()) return;
@@ -562,7 +540,10 @@ public class DynamicXposedDetectionHook {
                         inReflectionHook.set(false);
                     }
                 }
-            });
+            };
+
+            HookUtils.hookMethod(Class.class, "forName", String.class, boolean.class, ClassLoader.class, forNameHook);
+            HookUtils.hookMethod(Class.class, "forName", String.class, forNameHook);
 
             HookUtils.hookMethod(ClassLoader.class, "toString", new XC_MethodHook() {
                 @Override

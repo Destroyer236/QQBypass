@@ -16,6 +16,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import io.github.xalsace.qqbypass.XposedEntry;
+import io.github.xalsace.qqbypass.config.HookConfig;
 import io.github.xalsace.qqbypass.utils.HookUtils;
 
 /**
@@ -40,48 +41,42 @@ public class QAuxvCompatHook {
 
     public static void hook(final XC_LoadPackage.LoadPackageParam lpparam) {
         XposedEntry.log("[" + TAG + "] Initializing QAuxv compatibility and BaseApk crash prevention");
-
-        // 1. Hook ClassLoader.loadClass to intercept cc.ioctl.hook.file.BaseApk when loaded by QAuxv
-        try {
-            HookUtils.hookAllMethods(ClassLoader.class, "loadClass", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length > 0 && "cc.ioctl.hook.file.BaseApk".equals(p.args[0])) {
-                        Class<?> clazz = (Class<?>) p.getResult();
-                        if (clazz != null) {
-                            patchBaseApkClass(clazz);
-                        }
-                    }
-                }
-            });
-        } catch (Throwable t) {
-            XposedEntry.log("[" + TAG + "] Error hooking ClassLoader.loadClass: " + t.getMessage());
-        }
-
-        // 2. Also check if QAuxv was already loaded in existing ClassLoaders
         tryScanExistingClassLoaders();
+        ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
+        hookUftwrapperBD(cl);
+    }
 
-        // 3. Pre-emptive hook on com.tencent.mobileqq.filemanager.uftwrapper.b.d
-        hookUftwrapperBD(lpparam);
+    public static void hookLateStage(ClassLoader cl) {
+        if (cl == null) return;
+        try {
+            if (!sBaseApkPatched) {
+                Class<?> baseApk = XposedHelpers.findClassIfExists("cc.ioctl.hook.file.BaseApk", cl);
+                if (baseApk != null) {
+                    patchBaseApkClass(baseApk);
+                }
+            }
+            hookUftwrapperBD(cl);
+        } catch (Throwable t) {
+            XposedEntry.log("[" + TAG + "] hookLateStage error: " + t.getMessage());
+        }
     }
 
     private static void tryScanExistingClassLoaders() {
-        try {
-            Map<Thread, StackTraceElement[]> traces = Thread.getAllStackTraces();
-            Set<Thread> threads = traces.keySet();
-            for (Thread t : threads) {
-                ClassLoader cl = t.getContextClassLoader();
-                if (cl != null) {
-                    try {
-                        Class<?> clazz = cl.loadClass("cc.ioctl.hook.file.BaseApk");
-                        if (clazz != null) {
-                            patchBaseApkClass(clazz);
-                            return;
-                        }
-                    } catch (Throwable ignored) {}
+        if (sBaseApkPatched) return;
+        ClassLoader[] loaders = {
+            Thread.currentThread().getContextClassLoader(),
+            QAuxvCompatHook.class.getClassLoader(),
+            HookConfig.getClassLoader()
+        };
+        for (ClassLoader cl : loaders) {
+            if (cl != null) {
+                Class<?> clazz = XposedHelpers.findClassIfExists("cc.ioctl.hook.file.BaseApk", cl);
+                if (clazz != null) {
+                    patchBaseApkClass(clazz);
+                    return;
                 }
             }
-        } catch (Throwable ignored) {}
+        }
     }
 
     private static synchronized void patchBaseApkClass(Class<?> baseApkClass) {
@@ -132,30 +127,20 @@ public class QAuxvCompatHook {
         }
     }
 
-    private static void hookUftwrapperBD(XC_LoadPackage.LoadPackageParam lpparam) {
+    private static final java.util.Set<Class<?>> sHookedBDClasses =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    private static void hookUftwrapperBD(ClassLoader cl) {
+        if (cl == null) return;
         final String uftBCls = "com.tencent.mobileqq.filemanager.uftwrapper.b";
-        ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookUtils.class.getClassLoader();
         Class<?> clazz = XposedHelpers.findClassIfExists(uftBCls, cl);
         if (clazz != null) {
             hookBDMethod(clazz);
-        } else if (cl != null) {
-            try {
-                XposedHelpers.findAndHookMethod(cl.getClass(), "loadClass", String.class, boolean.class, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        if (uftBCls.equals(p.args[0])) {
-                            Class<?> loaded = (Class<?>) p.getResult();
-                            if (loaded != null) {
-                                hookBDMethod(loaded);
-                            }
-                        }
-                    }
-                });
-            } catch (Throwable ignored) {}
         }
     }
 
     private static void hookBDMethod(Class<?> clazz) {
+        if (clazz == null || !sHookedBDClasses.add(clazz)) return;
         HookUtils.hookAllMethods(clazz, "d", new XC_MethodHook(XC_MethodHook.PRIORITY_HIGHEST) {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {

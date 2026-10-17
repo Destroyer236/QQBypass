@@ -379,30 +379,6 @@ public class DynamicRootDetectionHook {
                 hookBeaconReport(beaconReportCls);
             }
         }
-
-        // Dynamically monitor ClassLoader.loadClass for Beacon classes in secondary dexes
-        try {
-            HookUtils.hookAllMethods(ClassLoader.class, "loadClass", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length > 0 && p.args[0] instanceof String) {
-                        String name = (String) p.args[0];
-                        if ("com.tencent.beacon.base.util.d".equals(name)) {
-                            Class<?> clazz = (Class<?>) p.getResult();
-                            if (clazz != null) hookBeaconClassD(clazz);
-                        } else if ("com.tencent.beacon.a.c.e".equals(name)) {
-                            Class<?> clazz = (Class<?>) p.getResult();
-                            if (clazz != null) hookBeaconClassE(clazz);
-                        } else if ("com.tencent.beacon.event.open.BeaconReport".equals(name)) {
-                            Class<?> clazz = (Class<?>) p.getResult();
-                            if (clazz != null) hookBeaconReport(clazz);
-                        }
-                    }
-                }
-            });
-        } catch (Throwable t) {
-            XposedEntry.log("[BeaconRoot] Failed to hook ClassLoader.loadClass: " + t.getMessage());
-        }
     }
 
     private static void hookSuPathCheckers(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -965,17 +941,26 @@ public class DynamicRootDetectionHook {
             HookUtils.hookMethod(System.class, "getProperties", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof java.util.Properties) {
                         java.util.Properties orig = (java.util.Properties) res;
-                        java.util.Properties clean = new java.util.Properties();
+                        boolean hasSuspicious = false;
                         for (String key : orig.stringPropertyNames()) {
-                            if (!isSuspiciousPropertyKey(key)) {
-                                clean.setProperty(key, orig.getProperty(key));
+                            if (isSuspiciousPropertyKey(key)) {
+                                hasSuspicious = true;
+                                break;
                             }
                         }
-                        param.setResult(clean);
+                        if (hasSuspicious) {
+                            if (isCallerQAuxv()) return;
+                            java.util.Properties clean = new java.util.Properties();
+                            for (String key : orig.stringPropertyNames()) {
+                                if (!isSuspiciousPropertyKey(key)) {
+                                    clean.setProperty(key, orig.getProperty(key));
+                                }
+                            }
+                            param.setResult(clean);
+                        }
                     }
                 }
             });

@@ -10,6 +10,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
+import java.util.List;
 
 import io.github.xalsace.qqbypass.XposedEntry;
 import io.github.xalsace.qqbypass.config.HookConfig;
@@ -691,6 +692,7 @@ public class QQ950PatchHook {
     public static void hookLateStage(ClassLoader cl) {
         if (cl == null) return;
         try {
+            resolvePendingSafeHooks(cl);
             hookFaceRecognitionAndMFAWithClassLoader(cl);
             hookKickDiagnostics(cl);
             hookTuringRiskDetectWithClassLoader(cl);
@@ -2928,40 +2930,57 @@ public class QQ950PatchHook {
         });
     }
 
+    private static class PendingSafeHook {
+        final String className;
+        final String methodName;
+        final XC_MethodHook callback;
+        PendingSafeHook(String c, String m, XC_MethodHook cb) {
+            className = c;
+            methodName = m;
+            callback = cb;
+        }
+    }
+    private static final List<PendingSafeHook> sPendingSafeHooks = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final java.util.Set<String> sHookedSafeKeys =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    public static void resolvePendingSafeHooks(ClassLoader cl) {
+        if (cl == null || sPendingSafeHooks.isEmpty()) return;
+        List<PendingSafeHook> resolved = new java.util.ArrayList<>();
+        for (PendingSafeHook ph : sPendingSafeHooks) {
+            Class<?> clazz = XposedHelpers.findClassIfExists(ph.className, cl);
+            if (clazz != null) {
+                String key = ph.className + "#" + ph.methodName + "@" + clazz.hashCode();
+                if (sHookedSafeKeys.add(key)) {
+                    try {
+                        HookUtils.hookAllMethods(clazz, ph.methodName, ph.callback);
+                    } catch (Throwable t) {
+                        XposedEntry.log("[PendingSafeHook] Failed to hook " + ph.className + "." + ph.methodName + ": " + t.getMessage());
+                    }
+                }
+                resolved.add(ph);
+            }
+        }
+        if (!resolved.isEmpty()) {
+            sPendingSafeHooks.removeAll(resolved);
+            XposedEntry.log("[PendingSafeHook] Resolved " + resolved.size() + " pending hooks in late-stage ClassLoader: " + cl);
+        }
+    }
+
     private static void hookSafe(final String className, final String methodName, XC_LoadPackage.LoadPackageParam lpparam, final XC_MethodHook callback) {
         ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
         Class<?> clazz = XposedHelpers.findClassIfExists(className, cl);
         if (clazz != null) {
-            HookUtils.hookAllMethods(clazz, methodName, callback);
-        } else if (cl != null) {
-            try {
-                XposedHelpers.findAndHookMethod(cl.getClass(), "loadClass", String.class, boolean.class, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        if (className.equals(p.args[0])) {
-                            Class<?> loadedClass = (Class<?>) p.getResult();
-                            if (loadedClass != null) {
-                                HookUtils.hookAllMethods(loadedClass, methodName, callback);
-                            }
-                        }
-                    }
-                });
-            } catch (Throwable ignored) {
-                try {
-                    XposedHelpers.findAndHookMethod(cl.getClass(), "loadClass", String.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                            if (className.equals(p.args[0])) {
-                                Class<?> loadedClass = (Class<?>) p.getResult();
-                                if (loadedClass != null) {
-                                    HookUtils.hookAllMethods(loadedClass, methodName, callback);
-                                }
-                            }
-                        }
-                    });
-                } catch (Throwable ignored2) {}
+            String key = className + "#" + methodName + "@" + clazz.hashCode();
+            if (sHookedSafeKeys.add(key)) {
+                HookUtils.hookAllMethods(clazz, methodName, callback);
             }
+        } else {
+            // NEVER hook ClassLoader.loadClass! It adds massive CPU delay to all class resolution in ART.
+            // Queue for resolution when secondary dexes are attached via MultiDex (attachBaseContext).
+            sPendingSafeHooks.add(new PendingSafeHook(className, methodName, callback));
         }
     }
 }
+
 

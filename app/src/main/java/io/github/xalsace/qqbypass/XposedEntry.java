@@ -151,6 +151,7 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
             QQ950PatchHook.hookLateStage(cl);
             DynamicRootDetectionHook.hookLateStage(cl);
             SecurityLibrariesEnhanceHook.hookLateStage(cl);
+            QAuxvCompatHook.hookLateStage(cl);
         } catch (Throwable t) {
             logError("Error dispatching late-stage hooks: " + t.getMessage(), t);
         }

@@ -11,6 +11,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,6 +33,8 @@ public class SecurityLibrariesEnhanceHook {
 
     private static final Set<String> sHookedClasses =
         Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private static final Map<String, List<ClassHookCallback>> sPendingClassHooks =
+        new ConcurrentHashMap<>();
 
     private static final String[] SENSITIVE_STACK_KEYWORDS = {
         "xposed", "lsposed", "lspatch", "qauxv", "qqbypass",
@@ -48,6 +52,7 @@ public class SecurityLibrariesEnhanceHook {
     public static void hookLateStage(ClassLoader cl) {
         if (cl == null) return;
         hookAll(cl);
+        resolvePendingHooks(cl);
     }
 
     private static void hookAll(ClassLoader cl) {
@@ -466,47 +471,50 @@ public class SecurityLibrariesEnhanceHook {
         void onClassFound(Class<?> clazz);
     }
 
-    private static void hookSafe(ClassLoader cl, final String className, final ClassHookCallback callback) {
-        if (cl == null) return;
-        String key = className + "@" + cl.hashCode();
-        if (!sHookedClasses.add(key)) return;
-
-        Class<?> clazz = XposedHelpers.findClassIfExists(className, cl);
-        if (clazz != null) {
-            try {
-                callback.onClassFound(clazz);
-            } catch (Throwable t) {
-                XposedEntry.log("Failed to initialize hooks on " + className + ": " + t.getMessage());
-            }
-        } else {
-            // Class not yet loaded; listen on ClassLoader.loadClass
-            try {
-                XposedHelpers.findAndHookMethod(cl.getClass(), "loadClass", String.class, boolean.class, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                        if (className.equals(param.args[0])) {
-                            Class<?> loaded = (Class<?>) param.getResult();
-                            if (loaded != null && sHookedClasses.add(className + "@loaded@" + loaded.hashCode())) {
-                                callback.onClassFound(loaded);
-                            }
+    private static void resolvePendingHooks(ClassLoader cl) {
+        if (cl == null || sPendingClassHooks.isEmpty()) return;
+        List<String> resolved = new java.util.ArrayList<>();
+        for (Map.Entry<String, List<ClassHookCallback>> entry : sPendingClassHooks.entrySet()) {
+            String className = entry.getKey();
+            Class<?> clazz = XposedHelpers.findClassIfExists(className, cl);
+            if (clazz != null) {
+                String key = className + "@" + clazz.hashCode();
+                if (sHookedClasses.add(key)) {
+                    for (ClassHookCallback cb : entry.getValue()) {
+                        try {
+                            cb.onClassFound(clazz);
+                        } catch (Throwable t) {
+                            XposedEntry.log("Failed to initialize late hooks on " + className + ": " + t.getMessage());
                         }
                     }
-                });
-            } catch (Throwable ignored) {
-                try {
-                    XposedHelpers.findAndHookMethod(cl.getClass(), "loadClass", String.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            if (className.equals(param.args[0])) {
-                                Class<?> loaded = (Class<?>) param.getResult();
-                                if (loaded != null && sHookedClasses.add(className + "@loaded@" + loaded.hashCode())) {
-                                    callback.onClassFound(loaded);
-                                }
-                            }
-                        }
-                    });
-                } catch (Throwable ignored2) {}
+                }
+                resolved.add(className);
             }
+        }
+        for (String c : resolved) {
+            sPendingClassHooks.remove(c);
+        }
+        if (!resolved.isEmpty()) {
+            XposedEntry.log("[SecurityEnhance] Resolved " + resolved.size() + " pending classes in late stage");
+        }
+    }
+
+    private static void hookSafe(ClassLoader cl, final String className, final ClassHookCallback callback) {
+        if (cl == null) return;
+        Class<?> clazz = XposedHelpers.findClassIfExists(className, cl);
+        if (clazz != null) {
+            String key = className + "@" + clazz.hashCode();
+            if (sHookedClasses.add(key)) {
+                try {
+                    callback.onClassFound(clazz);
+                } catch (Throwable t) {
+                    XposedEntry.log("Failed to initialize hooks on " + className + ": " + t.getMessage());
+                }
+            }
+        } else {
+            // NEVER hook ClassLoader.loadClass! It adds massive CPU delay to all class resolution in ART.
+            // Queue for resolution when secondary dexes are attached via MultiDex (attachBaseContext).
+            sPendingClassHooks.computeIfAbsent(className, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(callback);
         }
     }
 }
