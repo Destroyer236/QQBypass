@@ -8,14 +8,40 @@
 #include <dlfcn.h>
 #include <errno.h>
 
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <stdarg.h>
+
 namespace hook_libfekit {
 
 static char* (*real_fekit_strstr_ptr)(const char*, const char*) = nullptr;
 
 /**
  * libfekit.so 的检测函数符号被剥离，无法直接 hook。
- * 策略：拦截它依赖的 libc 系统调用（命令执行、字符串匹配、符号解析）。
+ * 策略：拦截它依赖的 libc 系统调用（命令执行、字符串匹配、符号解析、文件探测）。
  */
+
+static bool is_fekit_blocked_path(const char* pathname) {
+    if (!pathname) return false;
+    if (hook_libc::is_sensitive_path(pathname) || hook_libc::is_sensitive_name(pathname)) {
+        return true;
+    }
+    const char* root_probes[] = {
+        "su", "busybox", "sudo", "bdsu", "sutemp", "shuamesu", "ku.sud",
+        "magisk", "kernelsu", "apatch", "root", "patch", "xposed", "lsposed",
+        "cydia", "substrate", "sandhook", "topjohnwu", "kingroot", "oneclickroot",
+        "daemonsu", "permmgrd", "360sguard",
+        nullptr
+    };
+    for (int i = 0; root_probes[i]; i++) {
+        if (strcasestr(pathname, root_probes[i])) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // system 代理：阻止 root 检测命令
 static int fake_system(const char* command) {
@@ -108,23 +134,10 @@ static char* fake_strstr(const char* haystack, const char* needle) {
 static int fake_fekit_access(const char* pathname, int mode) {
     SAFE_BYTEHOOK_SCOPE();
     if (!pathname) return -1;
-    if (hook_libc::is_sensitive_path(pathname) || hook_libc::is_sensitive_name(pathname)) {
+    if (is_fekit_blocked_path(pathname)) {
         LOGD("FEKit blocked access: %s", pathname);
         errno = ENOENT;
         return -1;
-    }
-    const char* root_probes[] = {
-        "su", "busybox", "sudo", "bdsu", "sutemp", "shuamesu", "ku.sud",
-        "magisk", "kernelsu", "apatch", "root", "patch", "xposed", "lsposed",
-        "cydia", "substrate", "sandhook", "topjohnwu", "kingroot", "oneclickroot",
-        nullptr
-    };
-    for (int i = 0; root_probes[i]; i++) {
-        if (strcasestr(pathname, root_probes[i])) {
-            LOGD("FEKit blocked root-probe access: %s", pathname);
-            errno = ENOENT;
-            return -1;
-        }
     }
     return BYTEHOOK_CALL_PREV(fake_fekit_access, pathname, mode);
 }
@@ -132,25 +145,89 @@ static int fake_fekit_access(const char* pathname, int mode) {
 static int fake_fekit_faccessat(int dirfd, const char* pathname, int mode, int flags) {
     SAFE_BYTEHOOK_SCOPE();
     if (!pathname) return -1;
-    if (hook_libc::is_sensitive_path(pathname) || hook_libc::is_sensitive_name(pathname)) {
+    if (is_fekit_blocked_path(pathname)) {
         LOGD("FEKit blocked faccessat: %s", pathname);
         errno = ENOENT;
         return -1;
     }
-    const char* root_probes[] = {
-        "su", "busybox", "sudo", "bdsu", "sutemp", "shuamesu", "ku.sud",
-        "magisk", "kernelsu", "apatch", "root", "patch", "xposed", "lsposed",
-        "cydia", "substrate", "sandhook", "topjohnwu", "kingroot", "oneclickroot",
-        nullptr
-    };
-    for (int i = 0; root_probes[i]; i++) {
-        if (strcasestr(pathname, root_probes[i])) {
-            LOGD("FEKit blocked root-probe faccessat: %s", pathname);
-            errno = ENOENT;
-            return -1;
-        }
-    }
     return BYTEHOOK_CALL_PREV(fake_fekit_faccessat, dirfd, pathname, mode, flags);
+}
+
+// stat / lstat 代理：阻断 FEKit 的 inode/size 扫描
+static int fake_fekit_stat(const char* pathname, struct stat* statbuf) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (!pathname) return -1;
+    if (is_fekit_blocked_path(pathname)) {
+        LOGD("FEKit blocked stat: %s", pathname);
+        errno = ENOENT;
+        return -1;
+    }
+    return BYTEHOOK_CALL_PREV(fake_fekit_stat, pathname, statbuf);
+}
+
+static int fake_fekit_lstat(const char* pathname, struct stat* statbuf) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (!pathname) return -1;
+    if (is_fekit_blocked_path(pathname)) {
+        LOGD("FEKit blocked lstat: %s", pathname);
+        errno = ENOENT;
+        return -1;
+    }
+    return BYTEHOOK_CALL_PREV(fake_fekit_lstat, pathname, statbuf);
+}
+
+// open / fopen 代理：阻断 FEKit 直接打开敏感文件
+static int fake_fekit_open(const char* pathname, int flags, ...) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (!pathname) return -1;
+    if (is_fekit_blocked_path(pathname)) {
+        LOGD("FEKit blocked open: %s", pathname);
+        errno = ENOENT;
+        return -1;
+    }
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list args;
+        va_start(args, flags);
+        mode = (mode_t)va_arg(args, int);
+        va_end(args);
+    }
+    return BYTEHOOK_CALL_PREV(fake_fekit_open, pathname, flags, mode);
+}
+
+static FILE* fake_fekit_fopen(const char* pathname, const char* mode) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (!pathname) return nullptr;
+    if (is_fekit_blocked_path(pathname)) {
+        LOGD("FEKit blocked fopen: %s", pathname);
+        errno = ENOENT;
+        return nullptr;
+    }
+    return BYTEHOOK_CALL_PREV(fake_fekit_fopen, pathname, mode);
+}
+
+// opendir 代理：阻断 FEKit 遍历敏感目录
+static DIR* fake_fekit_opendir(const char* name) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (!name) return nullptr;
+    if (is_fekit_blocked_path(name)) {
+        LOGD("FEKit blocked opendir: %s", name);
+        errno = ENOENT;
+        return nullptr;
+    }
+    return BYTEHOOK_CALL_PREV(fake_fekit_opendir, name);
+}
+
+// readlink 代理：阻断 FEKit 解析软链接
+static ssize_t fake_fekit_readlink(const char* pathname, char* buf, size_t bufsiz) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (!pathname) return -1;
+    if (is_fekit_blocked_path(pathname)) {
+        LOGD("FEKit blocked readlink: %s", pathname);
+        errno = ENOENT;
+        return -1;
+    }
+    return BYTEHOOK_CALL_PREV(fake_fekit_readlink, pathname, buf, bufsiz);
 }
 
 void install_hooks() {
@@ -163,12 +240,17 @@ void install_hooks() {
     // 字符串匹配：仅对 libfekit.so 作为调用方拦截，避免全局性能损耗
     bytehook_hook_single("libfekit.so", nullptr, "strstr", (void*)fake_strstr, nullptr, nullptr);
 
-    // 文件访问类：仅对 libfekit.so 拦截 access/faccessat，阻断 RuntimeEnvCensorTask 22 个前缀扫描
+    // 文件访问与探测类：针对 libfekit.so 拦截所有探测 API
     bytehook_hook_single("libfekit.so", nullptr, "access", (void*)fake_fekit_access, nullptr, nullptr);
     bytehook_hook_single("libfekit.so", nullptr, "faccessat", (void*)fake_fekit_faccessat, nullptr, nullptr);
+    bytehook_hook_single("libfekit.so", nullptr, "stat", (void*)fake_fekit_stat, nullptr, nullptr);
+    bytehook_hook_single("libfekit.so", nullptr, "lstat", (void*)fake_fekit_lstat, nullptr, nullptr);
+    bytehook_hook_single("libfekit.so", nullptr, "open", (void*)fake_fekit_open, nullptr, nullptr);
+    bytehook_hook_single("libfekit.so", nullptr, "fopen", (void*)fake_fekit_fopen, nullptr, nullptr);
+    bytehook_hook_single("libfekit.so", nullptr, "opendir", (void*)fake_fekit_opendir, nullptr, nullptr);
+    bytehook_hook_single("libfekit.so", nullptr, "readlink", (void*)fake_fekit_readlink, nullptr, nullptr);
 
     LOGI("libfekit hooks installed");
 }
-
 
 } // namespace hook_libfekit

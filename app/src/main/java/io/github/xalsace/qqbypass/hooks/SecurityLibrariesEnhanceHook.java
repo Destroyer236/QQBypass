@@ -62,6 +62,24 @@ public class SecurityLibrariesEnhanceHook {
         hookQQPerfNativeTool(cl);
         hookDesensitization(cl);
         hookRMonitorAndBuglyDumpers(cl);
+        hookMSFCoreKick(cl);
+    }
+
+    private static String getSafePropValue(String key) {
+        if (key == null) return "-1";
+        if ("ro.debuggable".equals(key)) return "0";
+        if ("ro.secure".equals(key)) return "1";
+        if ("ro.build.tags".equals(key)) return "release-keys";
+        if ("ro.boot.flash.locked".equals(key)) return "1";
+        if ("ro.boot.vbmeta.device_state".equals(key)) return "locked";
+        if ("ro.boot.verifiedbootstate".equals(key)) return "green";
+        if ("persist.sys.adb.engineermode".equals(key)) return "0";
+        if ("sys.usb.config".equals(key) || "sys.usb.state".equals(key) || "persist.sys.usb.config".equals(key)) return "none";
+        if ("init.svc.adbd".equals(key)) return "stopped";
+        if (key.contains("magisk") || key.contains("ksu") || key.contains("apatch") || key.contains("root") || key.contains("xposed")) {
+            return "-1";
+        }
+        return null;
     }
 
     /**
@@ -71,8 +89,13 @@ public class SecurityLibrariesEnhanceHook {
      *     Hook all methods to return false/clean values!
      * - com.tencent.mobileqq.dt.app.Dtc:
      *     isAbnormalConfig() -> delegates to fe.utils.a.g; hook to return false!
-     *     checkAppInstalled(String) -> probes root/Xposed packages; hook to return false if suspicious!
-     *     getAccessibilityEnabledServiceList(...) -> filter out automation services!
+     *     checkAppInstalled(String) -> unconditionally returns false to prevent all package profiling!
+     *     getAccessibilityServiceList & getAccessibilityEnabledServiceList -> return empty!
+     *     getAccessibilityEnabledStatus -> return 0!
+     *     getPluginInfo -> clean string!
+     *     getGoogleCertsVerify -> empty!
+     *     getNetworkInterfaceNames -> clean interface string!
+     *     getPropSafe / systemGetSafe -> sanitize sensitive properties!
      *     dtcSendMessage(String cmd, byte[] data, long callbackId) -> intercept SSO reports and synthesize 1000 ACK!
      */
     private static void hookFEKitAndDtc(ClassLoader cl) {
@@ -122,29 +145,78 @@ public class SecurityLibrariesEnhanceHook {
                     }
                 });
 
-                // 2. checkAppInstalled -> false for suspicious packages
+                // 2. checkAppInstalled -> unconditionally false (prevents all package profiling)
                 HookUtils.hookAllMethods(clazz, "checkAppInstalled", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(false);
+                    }
+                });
+
+                // 3. getAccessibilityServiceList & getAccessibilityEnabledServiceList -> empty
+                XC_MethodHook emptyStringHook = new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult("");
+                    }
+                };
+                HookUtils.hookAllMethods(clazz, "getAccessibilityServiceList", emptyStringHook);
+                HookUtils.hookAllMethods(clazz, "getAccessibilityEnabledServiceList", emptyStringHook);
+
+                // 4. getAccessibilityEnabledStatus -> 0 (disabled)
+                HookUtils.hookAllMethods(clazz, "getAccessibilityEnabledStatus", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(0);
+                    }
+                });
+
+                // 5. getPluginInfo -> clean string without accessibility services
+                HookUtils.hookAllMethods(clazz, "getPluginInfo", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult("-1|-1|-1|-1|0|-1");
+                    }
+                });
+
+                // 6. getGoogleCertsVerify -> empty
+                HookUtils.hookAllMethods(clazz, "getGoogleCertsVerify", emptyStringHook);
+
+                // 7. getNetworkInterfaceNames -> clean network interfaces
+                HookUtils.hookAllMethods(clazz, "getNetworkInterfaceNames", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult("wlan0,rmnet_data0");
+                    }
+                });
+
+                // 8. getPropSafe & systemGetSafe -> sanitize sensitive keys
+                HookUtils.hookAllMethods(clazz, "getPropSafe", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
-                            String pkg = (String) param.args[0];
-                            if (DynamicRootDetectionHook.isSuspiciousPackage(pkg)) {
-                                param.setResult(false);
-                                XposedEntry.log("[Dtc] Neutralized checkAppInstalled probe: " + pkg);
+                            String key = (String) param.args[0];
+                            String mocked = getSafePropValue(key);
+                            if (mocked != null) {
+                                param.setResult(mocked);
+                            }
+                        }
+                    }
+                });
+                HookUtils.hookAllMethods(clazz, "systemGetSafe", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String key = (String) param.args[0];
+                            String mocked = getSafePropValue(key);
+                            if (mocked != null) {
+                                param.setResult(mocked);
                             }
                         }
                     }
                 });
 
-                // 3. getAccessibilityEnabledServiceList -> empty or safe
-                HookUtils.hookAllMethods(clazz, "getAccessibilityEnabledServiceList", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        param.setResult("");
-                    }
-                });
-
-                // 4. dtcSendMessage(String cmd, byte[] data, long callbackId) -> intercept SSO report & synthesize 1000 ACK
+                // 9. dtcSendMessage(String cmd, byte[] data, long callbackId) -> intercept SSO report & synthesize 1000 ACK
                 HookUtils.hookAllMethods(clazz, "dtcSendMessage", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -463,6 +535,44 @@ public class SecurityLibrariesEnhanceHook {
                         });
                     }
                 }
+            }
+        });
+    }
+
+    /**
+     * 6. Neutralize MSF Core offline kick dispatch:
+     * com.tencent.mobileqq.msf.core.t.a(FromServiceMsg, ToServiceMsg)
+     * Suppresses StatSvc.ReqMSFOffline, StatSvc.ReqForceOffline, MessageSvc.PushForceOffline.
+     */
+    private static void hookMSFCoreKick(ClassLoader cl) {
+        final String tCls = "com.tencent.mobileqq.msf.core.t";
+        hookSafe(cl, tCls, new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                HookUtils.hookAllMethods(clazz, "a", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args == null || param.args.length < 2) return;
+                        Object fromServiceMsg = null;
+                        for (Object arg : param.args) {
+                            if (arg != null && "com.tencent.qphone.base.remote.FromServiceMsg".equals(arg.getClass().getName())) {
+                                fromServiceMsg = arg;
+                                break;
+                            }
+                        }
+                        if (fromServiceMsg != null) {
+                            String cmd = (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd");
+                            if ("StatSvc.ReqMSFOffline".equals(cmd) ||
+                                "StatSvc.ReqForceOffline".equals(cmd) ||
+                                "MessageSvc.PushForceOffline".equals(cmd) ||
+                                (cmd != null && cmd.toLowerCase().contains("offlinepush"))) {
+                                XposedEntry.log("[MSFShield] Dropped MSF offline push packet: cmd=" + cmd);
+                                param.setResult(true);
+                            }
+                        }
+                    }
+                });
+                XposedEntry.log("[MSFShield] Successfully hooked com.tencent.mobileqq.msf.core.t for offline kick suppression");
             }
         });
     }

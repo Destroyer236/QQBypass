@@ -707,7 +707,7 @@ public class QQ950PatchHook {
     public static void hookKickDiagnostics(ClassLoader cl) {
         if (cl == null) return;
         try {
-            // 1. NTKickProcessor: Pure diagnostic logging (Zero suppression to prevent Zombie Sessions)
+            // 1. NTKickProcessor: Active kick shield
             Class<?> ntKickProcessorCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.kick.NTKickProcessor", cl);
             if (ntKickProcessorCls != null && sHookedKickClassNames.add(ntKickProcessorCls.getName() + "@" + cl.hashCode())) {
                 Method[] methods = ntKickProcessorCls.getDeclaredMethods();
@@ -716,51 +716,45 @@ public class QQ950PatchHook {
                         XposedBridge.hookMethod(m, new XC_MethodHook() {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                                StringBuilder sb = new StringBuilder();
-                                sb.append("[KickDiagnostic] NTKickProcessor.").append(param.method.getName()).append(" invoked with args: ");
-                                if (param.args != null) {
-                                    for (Object arg : param.args) {
-                                        if (arg == null) {
-                                            sb.append("null, ");
-                                            continue;
-                                        }
-                                        sb.append(arg.getClass().getSimpleName()).append("{");
-                                        try {
-                                            Field[] fields = arg.getClass().getDeclaredFields();
-                                            for (Field f : fields) {
-                                                f.setAccessible(true);
-                                                sb.append(f.getName()).append("=").append(f.get(arg)).append(", ");
-                                            }
-                                        } catch (Throwable ignored) {
-                                            sb.append(arg.toString());
-                                        }
-                                        sb.append("}, ");
-                                    }
+                                String mName = param.method.getName();
+                                XposedEntry.log("[KickShield] Intercepted NTKickProcessor." + mName + " to prevent session tear-down");
+                                Class<?> retType = ((Method) param.method).getReturnType();
+                                if (retType == boolean.class) {
+                                    param.setResult(true);
+                                } else if (retType == int.class) {
+                                    param.setResult(0);
+                                } else {
+                                    param.setResult(null);
                                 }
-                                XposedEntry.log(sb.toString());
                             }
                         });
                     }
                 }
-                XposedEntry.log("[KickDiagnostic] Hooked NTKickProcessor methods for diagnostic logging");
+                XposedEntry.log("[KickShield] Hooked NTKickProcessor methods for active defense");
             }
 
-            // 2. KickApiImpl: Pure diagnostic logging
+            // 2. KickApiImpl: Active kick shield
             Class<?> kickApiImplCls = XposedHelpers.findClassIfExists("com.tencent.qqnt.kernel.api.impl.KickApiImpl", cl);
             if (kickApiImplCls != null && sHookedKickClassNames.add(kickApiImplCls.getName() + "@" + cl.hashCode())) {
                 XC_MethodHook kickApiHook = new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedEntry.log("[KickDiagnostic] KickApiImpl." + param.method.getName() + " called! args=" + java.util.Arrays.toString(param.args));
+                        XposedEntry.log("[KickShield] Neutralized KickApiImpl." + param.method.getName());
+                        Class<?> retType = ((Method) param.method).getReturnType();
+                        if (retType == boolean.class) {
+                            param.setResult(true);
+                        } else {
+                            param.setResult(null);
+                        }
                     }
                 };
                 HookUtils.hookAllMethods(kickApiImplCls, "kick", kickApiHook);
                 HookUtils.hookAllMethods(kickApiImplCls, "onKickedOffLine", kickApiHook);
                 HookUtils.hookAllMethods(kickApiImplCls, "onKicked", kickApiHook);
-                XposedEntry.log("[KickDiagnostic] Hooked KickApiImpl methods for diagnostic logging");
+                XposedEntry.log("[KickShield] Hooked KickApiImpl methods for active defense");
             }
 
-            // 3. MainService$MyErrorHandler: Pure diagnostic logging
+            // 3. MainService$MyErrorHandler: Active kick shield & popup suppression
             Class<?> myErrorHandlerCls = XposedHelpers.findClassIfExists("mqq.app.MainService$MyErrorHandler", cl);
             if (myErrorHandlerCls != null && sHookedKickClassNames.add(myErrorHandlerCls.getName() + "@" + cl.hashCode())) {
                 HookUtils.hookAllMethods(myErrorHandlerCls, "onUserTokenExpired", new XC_MethodHook() {
@@ -772,7 +766,11 @@ public class QQ950PatchHook {
                         Object ssoErr = fromServiceMsg != null ? XposedHelpers.callMethod(fromServiceMsg, "getAttribute", "attr_sso_error_code", 0) : 0;
                         String failMsg = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailMsg") : "";
 
-                        XposedEntry.log("[KickDiagnostic] onUserTokenExpired invoked! uin=" + uin + ", cmd=" + cmd + ", ssoErr=" + ssoErr + ", msg=" + failMsg);
+                        XposedEntry.log("[KickShield] onUserTokenExpired intercepted! uin=" + uin + ", cmd=" + cmd + ", ssoErr=" + ssoErr + ", msg=" + failMsg);
+                        if ("StatSvc.ReqMSFOffline".equals(cmd) || "StatSvc.ReqForceOffline".equals(cmd) || (cmd != null && cmd.contains("Offline"))) {
+                            param.setResult(null);
+                            XposedEntry.log("[KickShield] Blocked onUserTokenExpired for offline kick command: " + cmd);
+                        }
                     }
                 });
 
@@ -784,7 +782,8 @@ public class QQ950PatchHook {
                             Object fromServiceMsg = param.args != null && param.args.length > 1 ? param.args[1] : null;
                             String uin = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getUin") : "";
                             String cmd = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd") : "";
-                            XposedEntry.log("[KickDiagnostic] MyErrorHandler." + param.method.getName() + " called! uin=" + uin + ", cmd=" + cmd);
+                            XposedEntry.log("[KickShield] Neutralized MyErrorHandler." + param.method.getName() + " uin=" + uin + ", cmd=" + cmd);
+                            param.setResult(null);
                         }
                     });
                 }
@@ -794,24 +793,20 @@ public class QQ950PatchHook {
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         String action = param.args != null && param.args.length > 0 && param.args[0] instanceof String ? (String) param.args[0] : "";
                         String uin = param.args != null && param.args.length > 1 && param.args[1] instanceof String ? (String) param.args[1] : "";
-                        Object reason = null;
-                        if (param.args != null) {
-                            for (Object arg : param.args) {
-                                if (arg != null && arg.getClass().getName().contains("LogoutReason")) {
-                                    reason = arg;
-                                    break;
-                                }
-                            }
+                        if (action.contains("ACCOUNT_KICKED") || action.contains("ACCOUNT_EXPIRED") || action.contains("FORCE_LOGOUT") || action.contains("KICK")) {
+                            XposedEntry.log("[KickShield] Blocked popupNotification: action=" + action + ", uin=" + uin);
+                            param.setResult(null);
+                        } else {
+                            XposedEntry.log("[KickShield] popupNotification allowed for benign action=" + action + ", uin=" + uin);
                         }
-                        XposedEntry.log("[KickDiagnostic] popupNotification called: action=" + action + ", uin=" + uin + ", reason=" + reason);
                     }
                 };
                 HookUtils.hookAllMethods(myErrorHandlerCls, "popupNotification", popupHook);
                 HookUtils.hookAllMethods(myErrorHandlerCls, "popupNotificationEx", popupHook);
-                XposedEntry.log("[KickDiagnostic] Hooked mqq.app.MainService$MyErrorHandler methods for diagnostic logging");
+                XposedEntry.log("[KickShield] Hooked mqq.app.MainService$MyErrorHandler methods with active shield");
             }
 
-            // 4. com.tencent.mobileqq.msf.sdk.h: Pure diagnostic logging of kick failCodes and commands
+            // 4. com.tencent.mobileqq.msf.sdk.h: Active interception of kick signals at MSF SDK dispatcher
             Class<?> msfSdkHCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.msf.sdk.h", cl);
             if (msfSdkHCls != null && sHookedKickClassNames.add(msfSdkHCls.getName() + "@" + cl.hashCode())) {
                 HookUtils.hookAllMethods(msfSdkHCls, "e", new XC_MethodHook() {
@@ -833,17 +828,50 @@ public class QQ950PatchHook {
                                                   failCode == 2903 || failCode == 3003);
 
                         boolean isKickCmd = "StatSvc.ReqMSFOffline".equals(cmd) ||
-                                            "StatSvc.ReqForceOffline".equals(cmd);
+                                            "StatSvc.ReqForceOffline".equals(cmd) ||
+                                            "MessageSvc.PushForceOffline".equals(cmd) ||
+                                            (cmd != null && cmd.contains("Offline"));
 
                         if (isKickFailCode || isKickCmd) {
-                            XposedEntry.log("[KickDiagnostic] msf.sdk.h.e kick signal received: failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
+                            XposedEntry.log("[KickShield] msf.sdk.h.e consumed kick packet: failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
+                            param.setResult(true); // Return true (handled) without delegating to errorHandler!
                         }
                     }
                 });
-                XposedEntry.log("[KickDiagnostic] Hooked com.tencent.mobileqq.msf.sdk.h.e for diagnostic logging");
+                XposedEntry.log("[KickShield] Hooked com.tencent.mobileqq.msf.sdk.h.e with active kick consumption");
+            }
+
+            // 5. com.tencent.mobileqq.msf.sdk.MsfSdkUtils: Prevent account token wipe during kick
+            Class<?> msfSdkUtilsCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.msf.sdk.MsfSdkUtils", cl);
+            if (msfSdkUtilsCls != null && sHookedKickClassNames.add(msfSdkUtilsCls.getName() + "@" + cl.hashCode())) {
+                HookUtils.hookAllMethods(msfSdkUtilsCls, "updateSimpleAccount", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length >= 2 && param.args[1] instanceof Boolean) {
+                            boolean isLogined = (Boolean) param.args[1];
+                            if (!isLogined) {
+                                StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+                                boolean fromKick = false;
+                                for (StackTraceElement ste : stack) {
+                                    String cn = ste.getClassName();
+                                    String mn = ste.getMethodName();
+                                    if (cn.contains("MyErrorHandler") || cn.contains("Kick") || mn.contains("Kicked") || mn.contains("kicked") || mn.contains("Offline")) {
+                                        fromKick = true;
+                                        break;
+                                    }
+                                }
+                                if (fromKick) {
+                                    XposedEntry.log("[KickShield] Protected user token against wipe in updateSimpleAccount(uin=" + param.args[0] + ", isLogined=false)");
+                                    param.setResult(null);
+                                }
+                            }
+                        }
+                    }
+                });
+                XposedEntry.log("[KickShield] Hooked MsfSdkUtils.updateSimpleAccount for token protection");
             }
         } catch (Throwable t) {
-            XposedEntry.log("[KickDiagnostic] Failed to hook kick diagnostics: " + t.getMessage());
+            XposedEntry.log("[KickShield] Failed to hook kick shield: " + t.getMessage());
         }
     }
 
