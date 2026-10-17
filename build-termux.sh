@@ -67,8 +67,8 @@ echo "[2/6] 链接资源与 Manifest (aapt2 link)..."
 aapt2 link -I "$PLATFORM_JAR" \
     --min-sdk-version 26 \
     --target-sdk-version 34 \
-    --version-code 33 \
-    --version-name "1.0.33" \
+    --version-code 34 \
+    --version-name "1.0.34" \
     --manifest "$SCRIPT_DIR/app/src/main/AndroidManifest.xml" \
     --java "$BUILD_DIR/gen" \
     -o "$BUILD_DIR/base.apk" \
@@ -184,7 +184,7 @@ apksigner sign \
 echo "验证 APK 签名:"
 apksigner verify --min-sdk-version 23 -v "$TARGET_APK" | grep -E "Verifies|scheme"
 
-DEST_APK="/storage/emulated/0/0_TM/apks/QQ Enhanced Bypass_1.0.33_dexkit_fixed.apk"
+DEST_APK="/storage/emulated/0/0_TM/apks/QQ Enhanced Bypass_1.0.34_dexkit_fixed.apk"
 if [ -d "$(dirname "$DEST_APK")" ]; then
     cp -f "$TARGET_APK" "$DEST_APK"
     echo "同步产物至存储空间: $DEST_APK"

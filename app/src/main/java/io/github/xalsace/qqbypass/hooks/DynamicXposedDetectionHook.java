@@ -270,6 +270,25 @@ public class DynamicXposedDetectionHook {
         if (Boolean.TRUE.equals(bypassStackFilter.get())) {
             return traces;
         }
+
+        // Fast-path: check if caller of getStackTrace is QAuxiliary, MMKV, or bypass module
+        for (StackTraceElement element : traces) {
+            String cls = element.getClassName();
+            if (cls == null) continue;
+            if (cls.equals("java.lang.Thread") || cls.equals("java.lang.Throwable")
+                    || cls.startsWith("de.robv.android.xposed.")
+                    || cls.startsWith("io.github.xalsace.")) {
+                continue;
+            }
+            if (cls.startsWith("io.github.qauxv.") || cls.startsWith("cc.ioctl.")
+                    || cls.startsWith("me.singleneuron.") || cls.startsWith("nep.timeline.")
+                    || cls.startsWith("me.ketal.") || cls.startsWith("xyz.nextalone.")
+                    || cls.startsWith("com.tencent.mmkv.")) {
+                return traces;
+            }
+            break;
+        }
+
         java.util.List<StackTraceElement> clean = new java.util.ArrayList<>();
         for (StackTraceElement element : traces) {
             String cls = element.getClassName();
@@ -327,7 +346,7 @@ public class DynamicXposedDetectionHook {
             HookUtils.hookMethod(Throwable.class, "getStackTrace", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (isCallerWhitelisted()) return;
+                    if (Boolean.TRUE.equals(bypassStackFilter.get())) return;
                     Object res = param.getResult();
                     if (res instanceof StackTraceElement[]) {
                         StackTraceElement[] traces = (StackTraceElement[]) res;
@@ -342,7 +361,7 @@ public class DynamicXposedDetectionHook {
             HookUtils.hookMethod(Thread.class, "getStackTrace", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (isCallerWhitelisted()) return;
+                    if (Boolean.TRUE.equals(bypassStackFilter.get())) return;
                     Object res = param.getResult();
                     if (res instanceof StackTraceElement[]) {
                         StackTraceElement[] traces = (StackTraceElement[]) res;
@@ -357,7 +376,7 @@ public class DynamicXposedDetectionHook {
             HookUtils.hookMethod(Thread.class, "getAllStackTraces", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (isCallerWhitelisted()) return;
+                    if (Boolean.TRUE.equals(bypassStackFilter.get())) return;
                     Object res = param.getResult();
                     if (res instanceof java.util.Map) {
                         @SuppressWarnings("unchecked")

@@ -1443,6 +1443,7 @@ public class DynamicRootDetectionHook {
 
     public static boolean isCallerSecurityComponent() {
         try {
+            DynamicXposedDetectionHook.bypassStackFilter.set(true);
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
             for (StackTraceElement elem : stack) {
                 String cls = elem.getClassName();
@@ -1458,7 +1459,10 @@ public class DynamicRootDetectionHook {
                     return true;
                 }
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        } finally {
+            DynamicXposedDetectionHook.bypassStackFilter.set(false);
+        }
         return false;
     }
 
