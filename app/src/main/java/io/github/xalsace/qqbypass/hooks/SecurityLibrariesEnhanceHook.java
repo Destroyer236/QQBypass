@@ -62,6 +62,8 @@ public class SecurityLibrariesEnhanceHook {
         hookQQPerfNativeTool(cl);
         hookDesensitization(cl);
         hookRMonitorAndBuglyDumpers(cl);
+        hookUnusedCodeCheck(cl);
+        hookNativeFileScan(cl);
         hookMSFCoreKick(cl);
     }
 
@@ -228,8 +230,20 @@ public class SecurityLibrariesEnhanceHook {
                                 callbackId = ((Number) param.args[2]).longValue();
                             }
                             NetworkReportHook.injectNativeReceiveSuccess(cl, cmd, callbackId);
-                            // Dtc.dtcSendMessage returns 1 on success
-                            param.setResult(1);
+                            if (param.method instanceof Method) {
+                                Class<?> ret = ((Method) param.method).getReturnType();
+                                if (ret == int.class) {
+                                    param.setResult(1);
+                                } else if (ret == boolean.class) {
+                                    param.setResult(true);
+                                } else if (ret == void.class) {
+                                    param.setResult(null);
+                                } else {
+                                    param.setResult(null);
+                                }
+                            } else {
+                                param.setResult(1);
+                            }
                             XposedEntry.log("[Dtc] Intercepted & fulfilled dtcSendMessage: " + cmd + " (cbId=" + callbackId + ")");
                         }
                     }
@@ -540,7 +554,84 @@ public class SecurityLibrariesEnhanceHook {
     }
 
     /**
-     * 6. Switchable MSF Core offline kick dispatch:
+     * 6. Neutralize UnusedCodeCheck (libunusedcodecheck.so & CheckCore):
+     * com.tencent.mobileqq.unusedcodecheck.CheckCore
+     * Verifies loaded classes against expected baseline to detect modified/injected classes.
+     */
+    private static void hookUnusedCodeCheck(ClassLoader cl) {
+        final String checkCoreCls = "com.tencent.mobileqq.unusedcodecheck.CheckCore";
+        hookSafe(cl, checkCoreCls, new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                // checkClassLoadedResult -> returns 0 (SUCCESS)
+                HookUtils.hookAllMethods(clazz, "checkClassLoadedResult", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(0);
+                    }
+                });
+
+                // isCheckSuc$unusedcode_check_debug -> returns true
+                HookUtils.hookAllMethods(clazz, "isCheckSuc$unusedcode_check_debug", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(true);
+                    }
+                });
+
+                XposedEntry.log("[CheckCore] Successfully neutralized CheckCore code integrity checks");
+            }
+        });
+    }
+
+    /**
+     * 7. Neutralize NativeFileScan (libnativefilescan.so & FileScanCore):
+     * com.tencent.mobileqq.nativefilescan.FileScanCore
+     * Prevents scanning and profiling sensitive QA private files and injected modules.
+     */
+    private static void hookNativeFileScan(ClassLoader cl) {
+        final String fileScanCoreCls = "com.tencent.mobileqq.nativefilescan.FileScanCore";
+        hookSafe(cl, fileScanCoreCls, new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                XC_MethodHook scanSuppressHook = new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String path = (String) param.args[0];
+                            if (DynamicRootDetectionHook.isSuspiciousPath(path)) {
+                                XposedEntry.log("[FileScanCore] Suppressed directory scan on sensitive path: " + path);
+                                if (param.method instanceof Method) {
+                                    Class<?> ret = ((Method) param.method).getReturnType();
+                                    if (ret == void.class) {
+                                        param.setResult(null);
+                                    } else if (ret == boolean.class) {
+                                        param.setResult(false);
+                                    } else if (ret == int.class) {
+                                        param.setResult(0);
+                                    } else {
+                                        param.setResult(null);
+                                    }
+                                } else {
+                                    param.setResult(null);
+                                }
+                            }
+                        }
+                    }
+                };
+
+                HookUtils.hookAllMethods(clazz, "getDirSize", scanSuppressHook);
+                HookUtils.hookAllMethods(clazz, "getTargetFormatFileList", scanSuppressHook);
+                HookUtils.hookAllMethods(clazz, "d", scanSuppressHook);
+                HookUtils.hookAllMethods(clazz, "e", scanSuppressHook);
+
+                XposedEntry.log("[FileScanCore] Successfully guarded FileScanCore directory scans");
+            }
+        });
+    }
+
+    /**
+     * 8. Switchable MSF Core offline kick dispatch:
      * com.tencent.mobileqq.msf.core.t.a(FromServiceMsg, ToServiceMsg)
      * Suppresses StatSvc.ReqMSFOffline, StatSvc.ReqForceOffline, MessageSvc.PushForceOffline when enabled.
      */
@@ -568,7 +659,20 @@ public class SecurityLibrariesEnhanceHook {
                                 (cmd != null && cmd.toLowerCase().contains("offlinepush"))) {
                                 if (HookConfig.isKickInterceptEnabled()) {
                                     XposedEntry.log("[MSFShield] Dropped MSF offline push packet: cmd=" + cmd);
-                                    param.setResult(true);
+                                    if (param.method instanceof Method) {
+                                        Class<?> ret = ((Method) param.method).getReturnType();
+                                        if (ret == boolean.class) {
+                                            param.setResult(true);
+                                        } else if (ret == void.class) {
+                                            param.setResult(null);
+                                        } else if (ret == int.class) {
+                                            param.setResult(0);
+                                        } else {
+                                            param.setResult(null);
+                                        }
+                                    } else {
+                                        param.setResult(true);
+                                    }
                                 } else {
                                     XposedEntry.log("[MSFDiagnostic] Observed MSF offline push packet: cmd=" + cmd);
                                 }

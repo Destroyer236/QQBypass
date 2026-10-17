@@ -86,16 +86,21 @@ static bool is_caller_security_dso(void* return_address) {
     Dl_info info;
     if (dladdr(return_address, &info) && info.dli_fname) {
         const char* f = info.dli_fname;
-        if (strstr(f, "libfekit") || strstr(f, "libturing") ||
-            strstr(f, "libqqdid") || strstr(f, "libmsf") ||
-            strstr(f, "libqsec") || strstr(f, "libsec") ||
-            strstr(f, "libtears") || strstr(f, "libbeacon") ||
-            strstr(f, "libwtlogin") || strstr(f, "libmsaoaidsec") ||
-            strstr(f, "libqzone_check") || strstr(f, "libdexloader") ||
-            strstr(f, "libtsmqqsc") || strstr(f, "libbugly") ||
-            strstr(f, "libandroid_desensitization") ||
-            strstr(f, "libqqPerfNativeTool") || strstr(f, "libshadowhook") ||
-            strstr(f, "librmonitor_base") || strstr(f, "librmonitor")) {
+        if (strcasestr(f, "libfekit") || strcasestr(f, "libturing") ||
+            strcasestr(f, "libqqdid") || strcasestr(f, "libmsf") ||
+            strcasestr(f, "libqsec") || strcasestr(f, "libsec") ||
+            strcasestr(f, "libtears") || strcasestr(f, "libbeacon") ||
+            strcasestr(f, "libwtlogin") || strcasestr(f, "libmsaoaidsec") ||
+            strcasestr(f, "libqzone_check") || strcasestr(f, "libdexloader") ||
+            strcasestr(f, "libtsmqqsc") || strcasestr(f, "libbugly") ||
+            strcasestr(f, "libandroid_desensitization") ||
+            strcasestr(f, "libqqPerfNativeTool") || strcasestr(f, "libshadowhook") ||
+            strcasestr(f, "librmonitor") || strcasestr(f, "libqimei") ||
+            strcasestr(f, "libkcsdk") || strcasestr(f, "libnativefilescan") ||
+            strcasestr(f, "libunusedcodecheck") || strcasestr(f, "libthreadsuspend") ||
+            strcasestr(f, "libmatrix") || strcasestr(f, "liblogcathook") ||
+            strcasestr(f, "libcuckoo") || strcasestr(f, "libwechat") ||
+            strcasestr(f, "libtmsdk")) {
             return true;
         }
     }
@@ -1332,7 +1337,7 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
             "lsposed", "dexkit", "libdexkit", nullptr
         };
         for (int i = 0; hidden[i]; i++) {
-            if (strstr(info->dli_fname, hidden[i])) {
+            if (strcasestr(info->dli_fname, hidden[i])) {
                 LOGD("Hidden dladdr library: %s", info->dli_fname);
                 info->dli_fname = "/system/lib64/libc.so";
                 info->dli_fbase = nullptr;
@@ -1346,7 +1351,7 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
             "bin.mt", "npatch", "bytebuddy", "lspilot", nullptr
         };
         for (int i = 0; qa_mt_hidden[i]; i++) {
-            if (strstr(info->dli_fname, qa_mt_hidden[i])) {
+            if (strcasestr(info->dli_fname, qa_mt_hidden[i])) {
                 if (!is_caller_qa(__builtin_return_address(0))) {
                     LOGD("Hidden dladdr QA/MT library: %s", info->dli_fname);
                     info->dli_fname = "/system/lib64/libc.so";
@@ -1365,7 +1370,7 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
                 nullptr
             };
             for (int i = 0; sec_hidden[i]; i++) {
-                if (strstr(info->dli_fname, sec_hidden[i])) {
+                if (strcasestr(info->dli_fname, sec_hidden[i])) {
                     LOGD("Hidden dladdr security library for security DSO caller: %s", info->dli_fname);
                     info->dli_fname = "/system/lib64/libc.so";
                     info->dli_fbase = nullptr;
@@ -1393,7 +1398,7 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
             "lsposed", "dexkit", "libdexkit", nullptr
         };
         for (int i = 0; hidden[i]; i++) {
-            if (strstr(info->dlpi_name, hidden[i])) {
+            if (strcasestr(info->dlpi_name, hidden[i])) {
                 LOGD("Hidden library in dl_iterate_phdr: %s", info->dlpi_name);
                 return 0; // 跳过此条目
             }
@@ -1403,7 +1408,7 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
             "bin.mt", "npatch", "bytebuddy", "lspilot", nullptr
         };
         for (int i = 0; qa_mt_hidden[i]; i++) {
-            if (strstr(info->dlpi_name, qa_mt_hidden[i])) {
+            if (strcasestr(info->dlpi_name, qa_mt_hidden[i])) {
                 if (!is_caller_qa(cookie->caller_addr)) {
                     LOGD("Hidden QA/MT library in dl_iterate_phdr: %s", info->dlpi_name);
                     return 0;
@@ -1418,7 +1423,7 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
                 nullptr
             };
             for (int i = 0; sec_hidden[i]; i++) {
-                if (strstr(info->dlpi_name, sec_hidden[i])) {
+                if (strcasestr(info->dlpi_name, sec_hidden[i])) {
                     LOGD("Hidden security library in dl_iterate_phdr: %s", info->dlpi_name);
                     return 0;
                 }

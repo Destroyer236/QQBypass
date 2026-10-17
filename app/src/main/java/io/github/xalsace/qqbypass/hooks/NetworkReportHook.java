@@ -328,8 +328,12 @@ public class NetworkReportHook {
                lower.contains("xposed") || lower.contains("lsposed") ||
                lower.contains("qauxv") || lower.contains("busybox") ||
                lower.contains("mountify") || lower.contains("tricky_store") ||
-               lower.contains("zygisksu") || lower.contains("frida") ||
-               lower.contains("bin.mt") || lower.contains("daemonsu");
+               lower.contains("zygisksu") || lower.contains("metamodule") ||
+               lower.contains("frida") || lower.contains("bin.mt") || lower.contains("daemonsu") ||
+               lower.contains("qa_mmkv") || lower.contains("tmp_qa_") ||
+               lower.contains("qa_dyn_lib") || lower.contains("qa_misc") ||
+               lower.contains("ono_mmkv") || lower.contains("ono_hcb_") || lower.contains("moe.ono") ||
+               lower.contains("sesearchcache");
     }
 
     private static void hookTuringEridanus(ClassLoader cl) {
@@ -356,27 +360,43 @@ public class NetworkReportHook {
                             return;
                         }
 
+                        byte[] fakeBytes = null;
                         if (path.contains("/status") && path.startsWith("/proc/")) {
                             XposedEntry.log("[TuringEridanus] Sanitized status read: " + path);
                             String fakeStatus = "Name:\tcom.tencent.mobileqq\nState:\tS (sleeping)\nTgid:\t" 
                                 + android.os.Process.myPid() + "\nPid:\t" + android.os.Process.myPid() 
                                 + "\nPPid:\t1\nTracerPid:\t0\nUid:\t10361\t10361\t10361\t10361\nGid:\t10361\t10361\t10361\t10361\n";
-                            param.setResult(fakeStatus.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                            return;
+                            fakeBytes = fakeStatus.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        } else if (path.contains("/cmdline") && path.startsWith("/proc/")) {
+                            fakeBytes = "com.tencent.mobileqq\0".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        } else if (path.contains("selinux/enforce")) {
+                            fakeBytes = "1".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        } else if (path.contains("net/unix")) {
+                            fakeBytes = "".getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         }
 
-                        if (path.contains("/cmdline") && path.startsWith("/proc/")) {
-                            param.setResult("com.tencent.mobileqq\0".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                            return;
-                        }
-
-                        if (path.contains("selinux/enforce")) {
-                            param.setResult("1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                            return;
-                        }
-
-                        if (path.contains("net/unix")) {
-                            param.setResult("".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        if (fakeBytes != null) {
+                            int maxLen = -1;
+                            if (param.args.length >= 2 && param.args[1] instanceof Number) {
+                                maxLen = ((Number) param.args[1]).intValue();
+                            }
+                            if (maxLen > 0 && fakeBytes.length > maxLen) {
+                                fakeBytes = java.util.Arrays.copyOf(fakeBytes, maxLen);
+                            }
+                            if (param.method instanceof java.lang.reflect.Method) {
+                                Class<?> ret = ((java.lang.reflect.Method) param.method).getReturnType();
+                                if (ret == byte[].class) {
+                                    param.setResult(fakeBytes);
+                                } else if (ret == String.class) {
+                                    param.setResult(new String(fakeBytes, java.nio.charset.StandardCharsets.UTF_8));
+                                } else if (ret == void.class) {
+                                    param.setResult(null);
+                                } else {
+                                    param.setResult(fakeBytes);
+                                }
+                            } else {
+                                param.setResult(fakeBytes);
+                            }
                             return;
                         }
                     }

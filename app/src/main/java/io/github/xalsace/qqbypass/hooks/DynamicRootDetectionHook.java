@@ -1666,6 +1666,8 @@ public class DynamicRootDetectionHook {
         return lower.contains("magisk") || lower.contains("supersu")
             || lower.contains("superuser") || lower.contains("ksu")
             || lower.contains("apatch") || lower.contains("shamiko")
+            || lower.contains("mountify") || lower.contains("tricky_store")
+            || lower.contains("zygisksu") || lower.contains("metamodule")
             || lower.contains("xposed") || lower.contains("lsposed")
             || lower.contains("frida") || lower.contains("/data/adb")
             || lower.contains("dexkit") || lower.contains("sandhook")

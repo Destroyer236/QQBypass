@@ -160,7 +160,11 @@ static int hooked_dladdr(const void* addr, Dl_info* info) {
 void install_qsec_hooks() {
     LOGI("Installing libQSec & libfekit anti-hook hooks (ByteHook)...");
 
-    const char* targets[] = { "libQSec.so", "libfekit.so", nullptr };
+    const char* targets[] = {
+        "libQSec.so", "libfekit.so", "libBeaconDT.so", "libqimei.so",
+        "libnativefilescan.so", "libunusedcodecheck.so", "libKcsdk-2.0.9.so",
+        "libthreadsuspend.so", "libqqPerfNativeTool.so", nullptr
+    };
     for (int i = 0; targets[i]; i++) {
         const char* target = targets[i];
 

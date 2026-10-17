@@ -184,7 +184,7 @@ apksigner sign \
 echo "验证 APK 签名:"
 apksigner verify --min-sdk-version 23 -v "$TARGET_APK" | grep -E "Verifies|scheme"
 
-DEST_APK="/storage/emulated/0/0_TM/apks/QQ Enhanced Bypass_1.0.43_dexkit_fixed.apk"
+DEST_APK="/storage/emulated/0/0_TM/apks/QQ Enhanced Bypass_1.0.45_dexkit_fixed.apk"
 if [ -d "$(dirname "$DEST_APK")" ]; then
     cp -f "$TARGET_APK" "$DEST_APK"
     echo "同步产物至存储空间: $DEST_APK"
