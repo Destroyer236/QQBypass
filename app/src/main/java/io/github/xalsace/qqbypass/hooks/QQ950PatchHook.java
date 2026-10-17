@@ -1583,109 +1583,49 @@ public class QQ950PatchHook {
         final String o3ReportCls = "com.tencent.qqprotect.report.O3Report";
         Class<?> o3ReportClazz = XposedHelpers.findClassIfExists(o3ReportCls, cl);
         if (o3ReportClazz != null && sHookedO3ClassNames.add(o3ReportCls + "@" + cl.hashCode())) {
-            // Neutralize O3Report.d(String, String, String) - sign_report (attaId = "0df00071646")
+            // Normalize O3Report.d(String, String, String) - sign_report (attaId = "0df00071646")
             HookUtils.hookAllMethods(o3ReportClazz, "d", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                    XposedEntry.log("[O3Patch] Neutralized O3Report.d (sign_report / integrity telemetry)");
+                    if (p.args != null && p.args.length >= 1 && p.args[0] != null) {
+                        p.args[0] = "a6b745bf24a2c277527716f6f36eb68d";
+                    }
+                    XposedEntry.log("[O3Patch] Normalized O3Report.d (sign_report official MD5)");
                 }
             });
 
-            // Neutralize O3Report.b(String, List, String) - env_detect (attaId = "00e00075618")
+            // Normalize O3Report.b(String, List, String) - env_detect (attaId = "00e00075618")
             HookUtils.hookAllMethods(o3ReportClazz, "b", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                    XposedEntry.log("[O3Patch] Neutralized O3Report.b (env_detect telemetry)");
+                    if (p.args != null && p.args.length >= 2 && p.args[1] instanceof java.util.List) {
+                        java.util.List list = (java.util.List) p.args[1];
+                        for (int i = 0; i < list.size(); i++) {
+                            list.set(i, "0");
+                        }
+                    }
+                    XposedEntry.log("[O3Patch] Normalized O3Report.b (env_detect clean values)");
                 }
             });
 
-            // Neutralize O3Report.c(String, List) - fakeLocationReport / nearLocationReport
+            // Normalize O3Report.c(String, List) - fakeLocationReport / nearLocationReport
             HookUtils.hookAllMethods(o3ReportClazz, "c", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                    XposedEntry.log("[O3Patch] Neutralized O3Report.c (location anomaly report)");
-                }
-            });
-
-            // Sanitize / Fulfill O3Report.a(String, ArrayList, ProtoUtils.TroopProtocolObserver)
-            HookUtils.hookAllMethods(o3ReportClazz, "a", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 3 && p.args[2] != null) {
-                        try {
-                            XposedHelpers.callMethod(p.args[2], "onResult", 0, true, new byte[0]);
-                        } catch (Throwable ignored) {
-                            try {
-                                XposedHelpers.callMethod(p.args[2], "onResult", 0, new byte[0]);
-                            } catch (Throwable ignored2) { }
+                    if (p.args != null && p.args.length >= 2 && p.args[1] instanceof java.util.List) {
+                        java.util.List list = (java.util.List) p.args[1];
+                        if (!list.isEmpty()) {
+                            list.set(0, "0");
                         }
                     }
-                    p.setResult(null);
-                    String attaId = (p.args != null && p.args.length > 0 && p.args[0] != null) ? p.args[0].toString() : "unknown";
-                    XposedEntry.log("[O3Patch] Intercepted and fulfilled O3Report.a (attaId=" + attaId + ")");
+                    XposedEntry.log("[O3Patch] Normalized O3Report.c (fakeReason=0)");
                 }
             });
+
+            // Allow O3Report.a(String, ArrayList, ProtoUtils.TroopProtocolObserver) to deliver to server
         }
 
-        // 2. Hook O3ReportApiImpl & O3NotifySecApiImpl & O3CollectDataApiImpl
-        Class<?> o3ReportApiCls = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.api.impl.O3ReportApiImpl", cl);
-        if (o3ReportApiCls != null && sHookedO3ClassNames.add("O3ReportApiImpl@" + cl.hashCode())) {
-            HookUtils.hookAllMethods(o3ReportApiCls, "report", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(o3ReportApiCls, "reportCommon", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-        }
-
-        Class<?> o3NotifySecApiCls = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.api.impl.O3NotifySecApiImpl", cl);
-        if (o3NotifySecApiCls != null && sHookedO3ClassNames.add("O3NotifySecApiImpl@" + cl.hashCode())) {
-            HookUtils.hookAllMethods(o3NotifySecApiCls, "sendMessage", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-        }
-
-        Class<?> o3CollectDataApiCls = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.api.impl.O3CollectDataApiImpl", cl);
-        if (o3CollectDataApiCls != null && sHookedO3ClassNames.add("O3CollectDataApiImpl@" + cl.hashCode())) {
-            HookUtils.hookAllMethods(o3CollectDataApiCls, "collectInfo", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult("{}");
-                }
-            });
-            HookUtils.hookAllMethods(o3CollectDataApiCls, "sampling", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(o3CollectDataApiCls, "startCollectInfo", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(o3CollectDataApiCls, "stopCollectInfo", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-        }
-
-        // 3. Hook com.tencent.qqprotect.qsec.a (Device profile collector)
+        // 2. Hook com.tencent.qqprotect.qsec.a (Device profile collector)
         Class<?> qsecAClazz = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.a", cl);
         if (qsecAClazz != null && sHookedO3ClassNames.add("qqprotect.qsec.a@" + cl.hashCode())) {
             HookUtils.hookAllMethods(qsecAClazz, "e", new XC_MethodHook() {
@@ -1734,90 +1674,7 @@ public class QQ950PatchHook {
             });
         }
 
-        for (String qsecSub : new String[]{"com.tencent.qqprotect.qsec.b", "com.tencent.qqprotect.qsec.c", "com.tencent.qqprotect.qsec.d"}) {
-            Class<?> qSubCls = XposedHelpers.findClassIfExists(qsecSub, cl);
-            if (qSubCls != null && sHookedO3ClassNames.add(qsecSub + "@" + cl.hashCode())) {
-                HookUtils.hookAllMethods(qSubCls, "c", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                        p.setResult(null);
-                    }
-                });
-                HookUtils.hookAllMethods(qSubCls, "d", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                        p.setResult(null);
-                    }
-                });
-            }
-        }
-
-        // 4. Hook com.tencent.mobileqq.dt.app.MainProcess2Fe
-        Class<?> mp2feClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.app.MainProcess2Fe", cl);
-        if (mp2feClazz != null && sHookedO3ClassNames.add("MainProcess2Fe@" + cl.hashCode())) {
-            HookUtils.hookAllMethods(mp2feClazz, "b", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
-                        try {
-                            XposedHelpers.callMethod(p.args[1], "onResult", 0, new byte[0]);
-                        } catch (Throwable ignored) { }
-                    }
-                    p.setResult(null);
-                    XposedEntry.log("[O3Patch] Neutralized MainProcess2Fe.b display_report");
-                }
-            });
-            HookUtils.hookAllMethods(mp2feClazz, "d", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(mp2feClazz, "f", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(mp2feClazz, "h", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(mp2feClazz, "i", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(mp2feClazz, "j", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(mp2feClazz, "k", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 2 && p.args[1] instanceof String) {
-                        String cmd = (String) p.args[1];
-                        if ("face_detect".equals(cmd) || "camera_detect".equals(cmd) || "display_report".equals(cmd) ||
-                            "ui_report".equals(cmd) || "orc_and_embeding".equals(cmd) || "orc_and_embeding2".equals(cmd)) {
-                            if (p.args.length >= 4 && p.args[3] != null) {
-                                try {
-                                    XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
-                                } catch (Throwable ignored) { }
-                            }
-                            p.setResult(null);
-                            XposedEntry.log("[O3Patch] Intercepted and fulfilled MainProcess2Fe.k (" + cmd + ")");
-                        }
-                    }
-                }
-            });
-        }
-
-        // 5. Hook O3BusinessHandler (P2, Q2, R2, S2)
+        // 3. Hook O3BusinessHandler (P2, Q2, R2, S2)
         Class<?> o3HandlerClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.web.O3BusinessHandler", cl);
         if (o3HandlerClazz != null && sHookedO3ClassNames.add("O3BusinessHandler@" + cl.hashCode())) {
             XC_MethodHook o3HandlerHook = new XC_MethodHook() {
@@ -1841,18 +1698,25 @@ public class QQ950PatchHook {
                             XposedEntry.log("[O3Patch] Fulfilled GetSocialLockStatus with safe is_locked=false");
                             return;
                         }
-                        if ("display_report".equals(event) || "ui_report".equals(event) || "notifyVIP".equals(event) ||
-                            params.contains("display_report") || params.contains("camera_detect") ||
-                            params.contains("face_detect") || params.contains("orc_and_embeding") ||
-                            params.contains("login_report") || params.contains("socialError") ||
-                            params.contains("FullSocialLockPunish")) {
+                        if (params.contains("display_report")) {
+                            try {
+                                org.json.JSONObject jobj = new org.json.JSONObject(params);
+                                org.json.JSONObject inner = new org.json.JSONObject();
+                                inner.put("data", "0,0,0,0");
+                                jobj.put("data", inner);
+                                p.args[1] = jobj.toString();
+                            } catch (Throwable ignored) {}
+                            XposedEntry.log("[O3Patch] Normalized display_report payload (0,0,0,0) and allowed delivery");
+                            return;
+                        }
+                        if (params.contains("FullSocialLockPunish") || params.contains("socialError")) {
                             if (p.args.length >= 3 && p.args[2] != null) {
                                 try {
                                     XposedHelpers.callMethod(p.args[2], "a", 0, new byte[0]);
                                 } catch (Throwable ignored) {}
                             }
                             p.setResult(null);
-                            XposedEntry.log("[O3Patch] Dropped O3BusinessHandler telemetry: " + event);
+                            XposedEntry.log("[O3Patch] Suppressed social punishment: " + event);
                             return;
                         }
                     }
@@ -1888,7 +1752,7 @@ public class QQ950PatchHook {
             });
         }
 
-        // 6. Hook com.tencent.mobileqq.dt.model.d & VirtualClickDetection & DTAPIImpl
+        // 4. Hook com.tencent.mobileqq.dt.model.d & VirtualClickDetection & DTAPIImpl
         Class<?> dtModelDClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.model.d", cl);
         if (dtModelDClazz != null && sHookedO3ClassNames.add("dt.model.d@" + cl.hashCode())) {
             HookUtils.hookAllMethods(dtModelDClazz, "b", new XC_MethodHook() {
@@ -1934,100 +1798,13 @@ public class QQ950PatchHook {
             });
         }
 
-        // 7. Hook com.tencent.mobileqq.dt.api.impl.QSecChannelImpl
+        // 5. Hook com.tencent.mobileqq.dt.api.impl.QSecChannelImpl
         Class<?> qsecChannelClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.api.impl.QSecChannelImpl", cl);
         if (qsecChannelClazz != null && sHookedO3ClassNames.add("QSecChannelImpl@" + cl.hashCode())) {
             HookUtils.hookAllMethods(qsecChannelClazz, "reportEnable", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(false);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "loginReport", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "loginTouchEvent", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "mainPageReport", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "mainPageTabReport", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "regReport", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "regSmsEvent", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "regTouchEvent", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "setTouchEvent", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "uiEndSensor", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "feEnvReport", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 4 && p.args[3] != null) {
-                        try {
-                            XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
-                        } catch (Throwable ignored) { }
-                    }
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "feCameraActionReport", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 8 && p.args[7] != null) {
-                        try {
-                            XposedHelpers.callMethod(p.args[7], "onResult", 0, new byte[0]);
-                        } catch (Throwable ignored) { }
-                    }
-                    p.setResult(null);
-                }
-            });
-            HookUtils.hookAllMethods(qsecChannelClazz, "collectReport", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 4 && p.args[3] != null) {
-                        try {
-                            XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
-                        } catch (Throwable ignored) { }
-                    }
-                    p.setResult(null);
+                    p.setResult(true);
                 }
             });
             HookUtils.hookAllMethods(qsecChannelClazz, "sendRequest", new XC_MethodHook() {
@@ -2049,66 +1826,34 @@ public class QQ950PatchHook {
             });
         }
 
-        // 8. Hook com.tencent.mobileqq.dt.util.b (ui report & touch switch)
-        Class<?> dtUtilBClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.util.b", cl);
-        if (dtUtilBClazz != null && sHookedO3ClassNames.add("dt.util.b@" + cl.hashCode())) {
-            HookUtils.hookAllMethods(dtUtilBClazz, "b", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(false);
-                }
-            });
-            HookUtils.hookAllMethods(dtUtilBClazz, "c", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(false);
-                }
-            });
-        }
-
-        // 9. Hook Ganliang & GanliangApiImpl
+        // 6. Hook Ganliang
         Class<?> ganliangClazz = XposedHelpers.findClassIfExists("com.tencent.qqprotect.ganliang.Ganliang", cl);
         if (ganliangClazz != null && sHookedO3ClassNames.add("Ganliang@" + cl.hashCode())) {
-            HookUtils.hookAllMethods(ganliangClazz, "h", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                    XposedEntry.log("[GanliangPatch] Neutralized Ganliang.h init");
-                }
-            });
-            HookUtils.hookAllMethods(ganliangClazz, "run", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                }
-            });
             HookUtils.hookAllMethods(ganliangClazz, "g", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(null);
+                    XposedEntry.log("[GanliangPatch] Neutralized Ganliang.g (prevented FLAG_SECURE)");
                 }
             });
             HookUtils.hookAllMethods(ganliangClazz, "f", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
+                    if (p.args != null) {
+                        if (p.args.length >= 2 && p.args[1] instanceof java.util.List) {
+                            ((java.util.List) p.args[1]).clear();
+                        }
+                        if (p.args.length >= 4) {
+                            p.args[3] = 1;
+                        }
+                    }
+                    XposedEntry.log("[GanliangPatch] Normalized Ganliang.f (0 mirror apps, screenCnt=1) and allowed report");
                 }
             });
             HookUtils.hookAllMethods(ganliangClazz, "checkDeviceRisk", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(0);
-                }
-            });
-        }
-
-        Class<?> ganliangApiImplClazz = XposedHelpers.findClassIfExists("com.tencent.qqprotect.ganliang.api.impl.GanliangApiImpl", cl);
-        if (ganliangApiImplClazz != null && sHookedO3ClassNames.add("GanliangApiImpl@" + cl.hashCode())) {
-            HookUtils.hookAllMethods(ganliangApiImplClazz, "init", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                    XposedEntry.log("[GanliangPatch] Neutralized GanliangApiImpl.init");
                 }
             });
         }
@@ -2299,12 +2044,19 @@ public class QQ950PatchHook {
                 }
             });
 
-            // Suppress Cmd0x9747Req display package report
+            // Normalize Cmd0x9747Req display package report
             HookUtils.hookAllMethods(ganliangCls, "f", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                    XposedEntry.log("[DetectionSource] Suppressed Ganliang.f (Cmd0x9747Req report)");
+                    if (p.args != null) {
+                        if (p.args.length >= 2 && p.args[1] instanceof java.util.List) {
+                            ((java.util.List) p.args[1]).clear();
+                        }
+                        if (p.args.length >= 4) {
+                            p.args[3] = 1;
+                        }
+                    }
+                    XposedEntry.log("[DetectionSource] Normalized Ganliang.f (0 mirror apps, screenCnt=1) and allowed report");
                 }
             });
         }

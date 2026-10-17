@@ -284,44 +284,30 @@ public class DynamicRootDetectionHook {
                     if (param.args != null && param.args.length > 0 && param.args[0] != null) {
                         Object event = param.args[0];
                         try {
-                            String code = (String) de.robv.android.xposed.XposedHelpers.callMethod(event, "getCode");
-                            if (code != null) {
-                                String lower = code.toLowerCase();
-                                // Whitelist standard UI, messaging, NT, lifecycle, and network performance events
-                                if (lower.startsWith("actnt") || lower.startsWith("actmain") || lower.startsWith("actmsg")
-                                        || lower.startsWith("actaio") || lower.startsWith("actavif") || lower.startsWith("actperf")
-                                        || lower.startsWith("actsync") || lower.startsWith("actlogin") || lower.startsWith("actfriend")
-                                        || lower.startsWith("actgroup") || lower.startsWith("actc2c") || lower.startsWith("actfile")
-                                        || lower.startsWith("actmini") || lower.startsWith("actweb") || lower.startsWith("actvideo")
-                                        || lower.startsWith("actalbum") || lower.startsWith("actcamera") || lower.startsWith("actguild")) {
-                                    return;
-                                }
-
-                                // Targeted security / root event match
-                                boolean isSecurityRisk = lower.contains("root") || lower.contains("security") || lower.contains("jailbreak")
-                                        || lower.contains("xposed") || lower.contains("magisk") || lower.contains("lsposed")
-                                        || lower.contains("frida") || lower.contains("substrate") || lower.contains("superuser")
-                                        || lower.contains("secrisk") || lower.contains("risk_check") || lower.contains("root_check")
-                                        || lower.contains("env_check") || lower.contains("danger") || lower.contains("busybox")
-                                        || lower.equals("su") || lower.startsWith("su_") || lower.endsWith("_su") || lower.contains("_su_")
-                                        || lower.contains("/su") || lower.contains("su/");
-
-                                if (isSecurityRisk) {
-                                    Class<?> eventResultCls = de.robv.android.xposed.XposedHelpers.findClassIfExists("com.tencent.beacon.event.open.EventResult", event.getClass().getClassLoader());
-                                    if (eventResultCls != null) {
-                                        Object successResult = de.robv.android.xposed.XposedHelpers.newInstance(eventResultCls, 0, 0L, "ok");
-                                        param.setResult(successResult);
-                                    } else {
-                                        param.setResult(null);
+                            // Transparent data normalization: sanitize root/xposed/risk flags in event params
+                            // NEVER drop the event itself, so telemetry and heartbeats are fully uploaded!
+                            @SuppressWarnings("unchecked")
+                            java.util.Map<String, String> params = (java.util.Map<String, String>)
+                                de.robv.android.xposed.XposedHelpers.callMethod(event, "getParams");
+                            if (params != null) {
+                                for (java.util.Map.Entry<String, String> entry : params.entrySet()) {
+                                    String k = entry.getKey() != null ? entry.getKey().toLowerCase() : "";
+                                    String v = entry.getValue();
+                                    if (v != null) {
+                                        String vLower = v.toLowerCase();
+                                        if (k.contains("root") || k.contains("jailbreak") || k.contains("risk") || k.contains("fake")) {
+                                            entry.setValue("0");
+                                        } else if (vLower.contains("xposed") || vLower.contains("magisk") || vLower.contains("lsposed") || vLower.contains("su")) {
+                                            entry.setValue("none");
+                                        }
                                     }
-                                    XposedEntry.log("[BeaconReport] Dropped security event: " + code);
                                 }
                             }
                         } catch (Throwable ignored) {}
                     }
                 }
             });
-            XposedEntry.log("[BeaconReport] Neutralized BeaconReport.report for security/root events");
+            XposedEntry.log("[BeaconReport] Installed transparent data normalization on BeaconReport.report");
         } catch (Throwable t) {
             XposedEntry.log("[BeaconReport] Failed to hook BeaconReport: " + t.getMessage());
         }

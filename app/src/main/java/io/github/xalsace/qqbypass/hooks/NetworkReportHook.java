@@ -54,7 +54,9 @@ public class NetworkReportHook {
     public static void hook(XC_LoadPackage.LoadPackageParam lpparam) {
         XposedEntry.log("NetworkReportHook: Initializing targeted network telemetry and inspection hooks");
         // Layer 0: Targeted ChannelManager report interception with synthetic 1000 ACK
-        hookChannelManager(lpparam);
+        if (HookConfig.ENABLE_NETWORK_INTERCEPT) {
+            hookChannelManager(lpparam);
+        }
 
         // Layer 1-3: Deep network/packet interception. Strictly guarded by ENABLE_NETWORK_INTERCEPT.
         // Disabled by default so business traffic (message sending/receiving) remains completely unimpeded.

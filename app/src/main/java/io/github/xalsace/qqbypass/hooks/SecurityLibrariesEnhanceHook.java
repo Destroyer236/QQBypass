@@ -218,36 +218,9 @@ public class SecurityLibrariesEnhanceHook {
                     }
                 });
 
-                // 9. dtcSendMessage(String cmd, byte[] data, long callbackId) -> intercept SSO report & synthesize 1000 ACK
-                HookUtils.hookAllMethods(clazz, "dtcSendMessage", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (param.args == null || param.args.length < 1 || !(param.args[0] instanceof String)) return;
-                        String cmd = (String) param.args[0];
-                        if (NetworkReportHook.shouldBlock(cmd)) {
-                            long callbackId = 0L;
-                            if (param.args.length >= 3 && param.args[2] instanceof Number) {
-                                callbackId = ((Number) param.args[2]).longValue();
-                            }
-                            NetworkReportHook.injectNativeReceiveSuccess(cl, cmd, callbackId);
-                            if (param.method instanceof Method) {
-                                Class<?> ret = ((Method) param.method).getReturnType();
-                                if (ret == int.class) {
-                                    param.setResult(1);
-                                } else if (ret == boolean.class) {
-                                    param.setResult(true);
-                                } else if (ret == void.class) {
-                                    param.setResult(null);
-                                } else {
-                                    param.setResult(null);
-                                }
-                            } else {
-                                param.setResult(1);
-                            }
-                            XposedEntry.log("[Dtc] Intercepted & fulfilled dtcSendMessage: " + cmd + " (cbId=" + callbackId + ")");
-                        }
-                    }
-                });
+                // 9. dtcSendMessage: Allow normal sending of SSO reports with sanitized environment data
+                // Dtc's underlying payload has already been sanitized (clean accessibility, properties, plugins).
+                // Transparent transmission ensures the server receives valid heartbeat and security telemetry.
 
                 XposedEntry.log("[FEKitCensor] Successfully neutralized com.tencent.mobileqq.dt.app.Dtc");
             }
