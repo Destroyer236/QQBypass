@@ -77,7 +77,7 @@ public class NetworkReportHook {
      * (String cmd, byte[] data, boolean isSuccess, int resultCode, long callbackId)
      * Passing 1000 indicates SUCCESS and cleanly finishes the native async request.
      */
-    private static void injectNativeReceiveSuccess(ClassLoader cl, String command, long callbackId) {
+    public static void injectNativeReceiveSuccess(ClassLoader cl, String command, long callbackId) {
         try {
             Class<?> cmClass = XposedHelpers.findClassIfExists("com.tencent.mobileqq.channel.ChannelManager", cl);
             if (cmClass == null) return;
@@ -327,7 +327,7 @@ public class NetworkReportHook {
             });
     }
 
-    private static boolean shouldBlock(String command) {
+    public static boolean shouldBlock(String command) {
         if (command == null) return false;
 
         // Whitelist check: strictly pass-through critical protocol and key-exchange commands

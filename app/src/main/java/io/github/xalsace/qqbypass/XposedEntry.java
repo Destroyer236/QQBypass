@@ -115,7 +115,10 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
             // Layer 8: QAuxv (QNotified) compatibility & BaseApk crash prevention
             io.github.xalsace.qqbypass.hooks.QAuxvCompatHook.hook(lpparam);
 
-            // Layer 9: Dynamic secondary dex & Tinker hot patch lifecycle monitor
+            // Layer 9: Security Libraries & FEKit Censor Enhancement (ShadowHook, QQPerfTool, Desensitization, Dtc, fe.utils.a)
+            SecurityLibrariesEnhanceHook.hook(lpparam);
+
+            // Layer 10: Dynamic secondary dex & Tinker hot patch lifecycle monitor
             hookClassLoaderAndLifecycle(lpparam);
 
             // === Report Status ===
@@ -147,6 +150,7 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
         try {
             QQ950PatchHook.hookLateStage(cl);
             DynamicRootDetectionHook.hookLateStage(cl);
+            SecurityLibrariesEnhanceHook.hookLateStage(cl);
         } catch (Throwable t) {
             logError("Error dispatching late-stage hooks: " + t.getMessage(), t);
         }

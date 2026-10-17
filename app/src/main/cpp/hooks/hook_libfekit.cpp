@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <dlfcn.h>
+#include <errno.h>
 
 namespace hook_libfekit {
 
@@ -103,6 +104,55 @@ static char* fake_strstr(const char* haystack, const char* needle) {
     return result;
 }
 
+// access / faccessat 代理：彻底封死 FEKit RuntimeEnvCensorTask 22 个前缀扫描 root/busybox/su 探测
+static int fake_fekit_access(const char* pathname, int mode) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (!pathname) return -1;
+    if (hook_libc::is_sensitive_path(pathname) || hook_libc::is_sensitive_name(pathname)) {
+        LOGD("FEKit blocked access: %s", pathname);
+        errno = ENOENT;
+        return -1;
+    }
+    const char* root_probes[] = {
+        "su", "busybox", "sudo", "bdsu", "sutemp", "shuamesu", "ku.sud",
+        "magisk", "kernelsu", "apatch", "root", "patch", "xposed", "lsposed",
+        "cydia", "substrate", "sandhook", "topjohnwu", "kingroot", "oneclickroot",
+        nullptr
+    };
+    for (int i = 0; root_probes[i]; i++) {
+        if (strcasestr(pathname, root_probes[i])) {
+            LOGD("FEKit blocked root-probe access: %s", pathname);
+            errno = ENOENT;
+            return -1;
+        }
+    }
+    return BYTEHOOK_CALL_PREV(fake_fekit_access, pathname, mode);
+}
+
+static int fake_fekit_faccessat(int dirfd, const char* pathname, int mode, int flags) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (!pathname) return -1;
+    if (hook_libc::is_sensitive_path(pathname) || hook_libc::is_sensitive_name(pathname)) {
+        LOGD("FEKit blocked faccessat: %s", pathname);
+        errno = ENOENT;
+        return -1;
+    }
+    const char* root_probes[] = {
+        "su", "busybox", "sudo", "bdsu", "sutemp", "shuamesu", "ku.sud",
+        "magisk", "kernelsu", "apatch", "root", "patch", "xposed", "lsposed",
+        "cydia", "substrate", "sandhook", "topjohnwu", "kingroot", "oneclickroot",
+        nullptr
+    };
+    for (int i = 0; root_probes[i]; i++) {
+        if (strcasestr(pathname, root_probes[i])) {
+            LOGD("FEKit blocked root-probe faccessat: %s", pathname);
+            errno = ENOENT;
+            return -1;
+        }
+    }
+    return BYTEHOOK_CALL_PREV(fake_fekit_faccessat, dirfd, pathname, mode, flags);
+}
+
 void install_hooks() {
     LOGI("Installing libfekit hooks (ByteHook)...");
 
@@ -112,6 +162,10 @@ void install_hooks() {
 
     // 字符串匹配：仅对 libfekit.so 作为调用方拦截，避免全局性能损耗
     bytehook_hook_single("libfekit.so", nullptr, "strstr", (void*)fake_strstr, nullptr, nullptr);
+
+    // 文件访问类：仅对 libfekit.so 拦截 access/faccessat，阻断 RuntimeEnvCensorTask 22 个前缀扫描
+    bytehook_hook_single("libfekit.so", nullptr, "access", (void*)fake_fekit_access, nullptr, nullptr);
+    bytehook_hook_single("libfekit.so", nullptr, "faccessat", (void*)fake_fekit_faccessat, nullptr, nullptr);
 
     LOGI("libfekit hooks installed");
 }

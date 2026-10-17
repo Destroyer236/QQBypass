@@ -93,7 +93,9 @@ static bool is_caller_security_dso(void* return_address) {
             strstr(f, "libwtlogin") || strstr(f, "libmsaoaidsec") ||
             strstr(f, "libqzone_check") || strstr(f, "libdexloader") ||
             strstr(f, "libtsmqqsc") || strstr(f, "libbugly") ||
-            strstr(f, "libandroid_desensitization")) {
+            strstr(f, "libandroid_desensitization") ||
+            strstr(f, "libqqPerfNativeTool") || strstr(f, "libshadowhook") ||
+            strstr(f, "librmonitor_base") || strstr(f, "librmonitor")) {
             return true;
         }
     }
@@ -174,6 +176,8 @@ bool is_sensitive_path(const char* path) {
         "com.kingo.root", "com.smedialink.oneclickroot", "com.zhiqupk.root.global",
         "com.shuame.rootgenius", "com.applisto.appcloner", ".android_system_config.prop",
         "ku.sud", "shuamesu", "libbugly_shadowhook", "libshadowhook_nothing",
+        "busybox", "sudo", "bdsu", "sutemp", ".su", "com.topjohnwu.magisk", "topjohnwu",
+        "libqqPerfNativeTool", "libandroid_desensitization", "libshadowhook",
         "/data/data/io.github.qauxv", "/data/user/0/io.github.qauxv",
         nullptr
     };
@@ -250,7 +254,12 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         strcmp(name, "daemonsu") == 0 ||
         strcmp(name, "supersu") == 0 ||
         strcmp(name, "superuser") == 0 ||
-        strcmp(name, "busybox") == 0) {
+        strcmp(name, "busybox") == 0 ||
+        strcmp(name, "sudo") == 0 ||
+        strcmp(name, "bdsu") == 0 ||
+        strcmp(name, "sutemp") == 0 ||
+        strcmp(name, "shuamesu") == 0 ||
+        strcmp(name, "ku.sud") == 0) {
         return true;
     }
     const char* root_patterns[] = {
@@ -266,6 +275,7 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "sesearchcache", "kc.dat", ".se",
         "kernelsu", "apatch", "supersu", "superuser", "kingroot", "kinguser",
         "oneclickroot", "rootgenius", "shuamesu", "appcloner", "microvirtd",
+        "bdsu", "sutemp", "sudo",
         nullptr
     };
     for (int i = 0; root_patterns[i]; i++) {
@@ -1209,6 +1219,23 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
                 }
             }
         }
+        if (is_caller_security_dso(__builtin_return_address(0))) {
+            const char* sec_hidden[] = {
+                "libbugly_shadowhook", "libshadowhook", "librmonitor_base",
+                "librmonitor", "libqqPerfNativeTool", "libandroid_desensitization",
+                nullptr
+            };
+            for (int i = 0; sec_hidden[i]; i++) {
+                if (strstr(info->dli_fname, sec_hidden[i])) {
+                    LOGD("Hidden dladdr security library for security DSO caller: %s", info->dli_fname);
+                    info->dli_fname = "/system/lib64/libc.so";
+                    info->dli_fbase = nullptr;
+                    info->dli_sname = nullptr;
+                    info->dli_saddr = nullptr;
+                    return result;
+                }
+            }
+        }
     }
     return result;
 }
@@ -1240,6 +1267,19 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
             if (strstr(info->dlpi_name, qa_mt_hidden[i])) {
                 if (!is_caller_qa(cookie->caller_addr)) {
                     LOGD("Hidden QA/MT library in dl_iterate_phdr: %s", info->dlpi_name);
+                    return 0;
+                }
+            }
+        }
+        if (is_caller_security_dso(cookie->caller_addr)) {
+            const char* sec_hidden[] = {
+                "libbugly_shadowhook", "libshadowhook", "librmonitor_base",
+                "librmonitor", "libqqPerfNativeTool", "libandroid_desensitization",
+                nullptr
+            };
+            for (int i = 0; sec_hidden[i]; i++) {
+                if (strstr(info->dlpi_name, sec_hidden[i])) {
+                    LOGD("Hidden security library in dl_iterate_phdr: %s", info->dlpi_name);
                     return 0;
                 }
             }

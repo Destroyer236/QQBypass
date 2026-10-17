@@ -11,8 +11,8 @@ public class HookConfig {
     public static ClassLoader classLoader;
 
     // Module version info & cache schema
-    public static final int MODULE_VERSION_CODE = 38;
-    public static final String MODULE_VERSION_NAME = "1.0.38";
+    public static final int MODULE_VERSION_CODE = 39;
+    public static final String MODULE_VERSION_NAME = "1.0.39";
     public static final int CACHE_SCHEMA_VERSION = 3;
 
     // Feature toggles
