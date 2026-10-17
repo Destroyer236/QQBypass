@@ -11,8 +11,8 @@ public class HookConfig {
     public static ClassLoader classLoader;
 
     // Module version info & cache schema
-    public static final int MODULE_VERSION_CODE = 46;
-    public static final String MODULE_VERSION_NAME = "1.0.46";
+    public static final int MODULE_VERSION_CODE = 47;
+    public static final String MODULE_VERSION_NAME = "1.0.47";
     public static final int CACHE_SCHEMA_VERSION = 3;
 
     // Feature toggles
@@ -39,7 +39,7 @@ public class HookConfig {
     }
 
     // Verbose logging (output to LSPosed log via XposedBridge.log)
-    public static boolean VERBOSE_LOGGING = true;
+    public static boolean VERBOSE_LOGGING = false;
 
     // Fake device info (used when spoofing is enabled)
     public static String FAKE_IMEI = null; // null = use real device info

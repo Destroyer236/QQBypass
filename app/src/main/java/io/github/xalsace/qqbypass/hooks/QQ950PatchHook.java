@@ -299,7 +299,7 @@ public class QQ950PatchHook {
      * On result: ensure errorCode is sanitized to 0L while preserving the authentic deviceToken.
      * If the real execution returns null (e.g. init failure), fallback to safe dynamic proxy to avoid NPE.
      */
-    private static final java.util.Set<String> sHookedTuringClassNames =
+    private static final java.util.Set<Class<?>> sHookedTuringClasses =
         java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     private static void hookTuringRiskDetect() {
@@ -314,7 +314,7 @@ public class QQ950PatchHook {
         };
         for (final String cls : classes) {
             Class<?> clazz = XposedHelpers.findClassIfExists(cls, cl);
-            if (clazz == null || !sHookedTuringClassNames.add(cls + "@" + cl.hashCode())) continue;
+            if (clazz == null || !sHookedTuringClasses.add(clazz)) continue;
             HookUtils.hookAllMethods(clazz, "reqRiskDetectV2", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
@@ -384,14 +384,14 @@ public class QQ950PatchHook {
         };
         for (String o2Cls : o2Classes) {
             Class<?> clazz = XposedHelpers.findClassIfExists(o2Cls, cl);
-            if (clazz == null || !sHookedTuringClassNames.add(o2Cls + "@" + cl.hashCode())) continue;
+            if (clazz == null || !sHookedTuringClasses.add(clazz)) continue;
             HookUtils.hookAllMethods(clazz, "getErrorCode", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(0L);
                 }
             });
-            HookUtils.hookAllMethods(o2Cls, "getDeviceToken", new XC_MethodHook() {
+            HookUtils.hookAllMethods(clazz, "getDeviceToken", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                     Object res = p.getResult();
@@ -457,9 +457,9 @@ public class QQ950PatchHook {
         };
         for (final String cls : classes) {
             Class<?> clazz = XposedHelpers.findClassIfExists(cls, cl);
-            if (clazz == null || !sHookedTuringClassNames.add(cls + "@" + cl.hashCode())) continue;
+            if (clazz == null || !sHookedTuringClasses.add(clazz)) continue;
             for (String m : new String[]{"getTuringDID", "getTuringDIDCached"}) {
-                HookUtils.hookAllMethods(cls, m, new XC_MethodHook() {
+                HookUtils.hookAllMethods(clazz, m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                         Object result = p.getResult();
@@ -519,14 +519,14 @@ public class QQ950PatchHook {
         };
         for (String h2Cls : h2Classes) {
             Class<?> clazz = XposedHelpers.findClassIfExists(h2Cls, cl);
-            if (clazz == null || !sHookedTuringClassNames.add(h2Cls + "@" + cl.hashCode())) continue;
+            if (clazz == null || !sHookedTuringClasses.add(clazz)) continue;
             HookUtils.hookAllMethods(clazz, "getErrorCode", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(0);
                 }
             });
-            HookUtils.hookAllMethods(h2Cls, "getExpiredTimestamp", new XC_MethodHook() {
+            HookUtils.hookAllMethods(clazz, "getExpiredTimestamp", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                     Object res = p.getResult();
@@ -535,7 +535,7 @@ public class QQ950PatchHook {
                     }
                 }
             });
-            HookUtils.hookAllMethods(h2Cls, "getOpenIdTicket", new XC_MethodHook() {
+            HookUtils.hookAllMethods(clazz, "getOpenIdTicket", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                     Object res = p.getResult();
@@ -686,7 +686,7 @@ public class QQ950PatchHook {
     private static final java.util.Set<Class<?>> sHookedFaceClasses =
         java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
-    private static final java.util.Set<String> sHookedKickClassNames =
+    private static final java.util.Set<Class<?>> sHookedKickClasses =
         java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     public static void hookLateStage(ClassLoader cl) {
@@ -709,7 +709,7 @@ public class QQ950PatchHook {
         try {
             // 1. NTKickProcessor: Switchable kick interception & diagnostic logging
             Class<?> ntKickProcessorCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.kick.NTKickProcessor", cl);
-            if (ntKickProcessorCls != null && sHookedKickClassNames.add(ntKickProcessorCls.getName() + "@" + cl.hashCode())) {
+            if (ntKickProcessorCls != null && sHookedKickClasses.add(ntKickProcessorCls)) {
                 Method[] methods = ntKickProcessorCls.getDeclaredMethods();
                 for (Method m : methods) {
                     if (Modifier.isStatic(m.getModifiers()) || m.getName().equals("a")) {
@@ -752,7 +752,7 @@ public class QQ950PatchHook {
 
             // 2. KickApiImpl: Switchable kick suppression
             Class<?> kickApiImplCls = XposedHelpers.findClassIfExists("com.tencent.qqnt.kernel.api.impl.KickApiImpl", cl);
-            if (kickApiImplCls != null && sHookedKickClassNames.add(kickApiImplCls.getName() + "@" + cl.hashCode())) {
+            if (kickApiImplCls != null && sHookedKickClasses.add(kickApiImplCls)) {
                 XC_MethodHook kickApiHook = new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -772,7 +772,7 @@ public class QQ950PatchHook {
 
             // 3. MainService$MyErrorHandler: Switchable kick event & popup suppression
             Class<?> myErrorHandlerCls = XposedHelpers.findClassIfExists("mqq.app.MainService$MyErrorHandler", cl);
-            if (myErrorHandlerCls != null && sHookedKickClassNames.add(myErrorHandlerCls.getName() + "@" + cl.hashCode())) {
+            if (myErrorHandlerCls != null && sHookedKickClasses.add(myErrorHandlerCls)) {
                 HookUtils.hookAllMethods(myErrorHandlerCls, "onUserTokenExpired", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -838,7 +838,7 @@ public class QQ950PatchHook {
 
             // 4. com.tencent.mobileqq.msf.sdk.h: Switchable kick consumption
             Class<?> msfSdkHCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.msf.sdk.h", cl);
-            if (msfSdkHCls != null && sHookedKickClassNames.add(msfSdkHCls.getName() + "@" + cl.hashCode())) {
+            if (msfSdkHCls != null && sHookedKickClasses.add(msfSdkHCls)) {
                 HookUtils.hookAllMethods(msfSdkHCls, "e", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -877,7 +877,7 @@ public class QQ950PatchHook {
 
             // 5. com.tencent.mobileqq.msf.sdk.MsfSdkUtils: Prevent account token wipe during kick when enabled
             Class<?> msfSdkUtilsCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.msf.sdk.MsfSdkUtils", cl);
-            if (msfSdkUtilsCls != null && sHookedKickClassNames.add(msfSdkUtilsCls.getName() + "@" + cl.hashCode())) {
+            if (msfSdkUtilsCls != null && sHookedKickClasses.add(msfSdkUtilsCls)) {
                 HookUtils.hookAllMethods(msfSdkUtilsCls, "updateSimpleAccount", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -1568,7 +1568,7 @@ public class QQ950PatchHook {
      * 5. MainProcess2Fe.b checks display refresh rate <= 30fps, displayId > 0, scrcpy, minicap and sends display_report.
      * 6. QSecChannelImpl sends feEnvReport ("face_detect"), feCameraActionReport ("camera_detect"), and collectReport.
      */
-    private static final java.util.Set<String> sHookedO3ClassNames =
+    private static final java.util.Set<Class<?>> sHookedO3Classes =
         java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     private static void hookO3SecurityAndTelemetry(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -1582,7 +1582,7 @@ public class QQ950PatchHook {
         // 1. Hook com.tencent.qqprotect.report.O3Report
         final String o3ReportCls = "com.tencent.qqprotect.report.O3Report";
         Class<?> o3ReportClazz = XposedHelpers.findClassIfExists(o3ReportCls, cl);
-        if (o3ReportClazz != null && sHookedO3ClassNames.add(o3ReportCls + "@" + cl.hashCode())) {
+        if (o3ReportClazz != null && sHookedO3Classes.add(o3ReportClazz)) {
             // Normalize O3Report.d(String, String, String) - sign_report (attaId = "0df00071646")
             HookUtils.hookAllMethods(o3ReportClazz, "d", new XC_MethodHook() {
                 @Override
@@ -1627,7 +1627,7 @@ public class QQ950PatchHook {
 
         // 2. Hook com.tencent.qqprotect.qsec.a (Device profile collector)
         Class<?> qsecAClazz = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.a", cl);
-        if (qsecAClazz != null && sHookedO3ClassNames.add("qqprotect.qsec.a@" + cl.hashCode())) {
+        if (qsecAClazz != null && sHookedO3Classes.add(qsecAClazz)) {
             HookUtils.hookAllMethods(qsecAClazz, "e", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
@@ -1676,7 +1676,7 @@ public class QQ950PatchHook {
 
         // 3. Hook O3BusinessHandler (P2, Q2, R2, S2)
         Class<?> o3HandlerClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.web.O3BusinessHandler", cl);
-        if (o3HandlerClazz != null && sHookedO3ClassNames.add("O3BusinessHandler@" + cl.hashCode())) {
+        if (o3HandlerClazz != null && sHookedO3Classes.add(o3HandlerClazz)) {
             XC_MethodHook o3HandlerHook = new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -1754,7 +1754,7 @@ public class QQ950PatchHook {
 
         // 4. Hook com.tencent.mobileqq.dt.model.d & VirtualClickDetection & DTAPIImpl
         Class<?> dtModelDClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.model.d", cl);
-        if (dtModelDClazz != null && sHookedO3ClassNames.add("dt.model.d@" + cl.hashCode())) {
+        if (dtModelDClazz != null && sHookedO3Classes.add(dtModelDClazz)) {
             HookUtils.hookAllMethods(dtModelDClazz, "b", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -1770,7 +1770,7 @@ public class QQ950PatchHook {
         }
 
         Class<?> vcdClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.model.VirtualClickDetection", cl);
-        if (vcdClazz != null && sHookedO3ClassNames.add("VirtualClickDetection@" + cl.hashCode())) {
+        if (vcdClazz != null && sHookedO3Classes.add(vcdClazz)) {
             HookUtils.hookAllMethods(vcdClazz, "e", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
@@ -1783,7 +1783,7 @@ public class QQ950PatchHook {
         }
 
         Class<?> dtapiClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.api.impl.DTAPIImpl", cl);
-        if (dtapiClazz != null && sHookedO3ClassNames.add("DTAPIImpl@" + cl.hashCode())) {
+        if (dtapiClazz != null && sHookedO3Classes.add(dtapiClazz)) {
             HookUtils.hookAllMethods(dtapiClazz, "onSecDispatchToAppEvent", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -1800,7 +1800,7 @@ public class QQ950PatchHook {
 
         // 5. Hook com.tencent.mobileqq.dt.api.impl.QSecChannelImpl
         Class<?> qsecChannelClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.api.impl.QSecChannelImpl", cl);
-        if (qsecChannelClazz != null && sHookedO3ClassNames.add("QSecChannelImpl@" + cl.hashCode())) {
+        if (qsecChannelClazz != null && sHookedO3Classes.add(qsecChannelClazz)) {
             HookUtils.hookAllMethods(qsecChannelClazz, "reportEnable", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -1828,7 +1828,7 @@ public class QQ950PatchHook {
 
         // 6. Hook Ganliang
         Class<?> ganliangClazz = XposedHelpers.findClassIfExists("com.tencent.qqprotect.ganliang.Ganliang", cl);
-        if (ganliangClazz != null && sHookedO3ClassNames.add("Ganliang@" + cl.hashCode())) {
+        if (ganliangClazz != null && sHookedO3Classes.add(ganliangClazz)) {
             HookUtils.hookAllMethods(ganliangClazz, "g", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -2793,7 +2793,16 @@ public class QQ950PatchHook {
         } else {
             // NEVER hook ClassLoader.loadClass! It adds massive CPU delay to all class resolution in ART.
             // Queue for resolution when secondary dexes are attached via MultiDex (attachBaseContext).
-            sPendingSafeHooks.add(new PendingSafeHook(className, methodName, callback));
+            boolean alreadyPending = false;
+            for (PendingSafeHook ph : sPendingSafeHooks) {
+                if (className.equals(ph.className) && methodName.equals(ph.methodName)) {
+                    alreadyPending = true;
+                    break;
+                }
+            }
+            if (!alreadyPending) {
+                sPendingSafeHooks.add(new PendingSafeHook(className, methodName, callback));
+            }
         }
     }
 }

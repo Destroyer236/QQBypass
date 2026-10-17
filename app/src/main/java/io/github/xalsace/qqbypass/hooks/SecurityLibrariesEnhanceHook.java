@@ -50,8 +50,7 @@ public class SecurityLibrariesEnhanceHook {
     }
 
     public static void hookLateStage(ClassLoader cl) {
-        if (cl == null) return;
-        hookAll(cl);
+        if (cl == null || sPendingClassHooks.isEmpty()) return;
         resolvePendingHooks(cl);
     }
 
@@ -705,7 +704,10 @@ public class SecurityLibrariesEnhanceHook {
         } else {
             // NEVER hook ClassLoader.loadClass! It adds massive CPU delay to all class resolution in ART.
             // Queue for resolution when secondary dexes are attached via MultiDex (attachBaseContext).
-            sPendingClassHooks.computeIfAbsent(className, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(callback);
+            List<ClassHookCallback> list = sPendingClassHooks.computeIfAbsent(className, k -> new java.util.concurrent.CopyOnWriteArrayList<>());
+            if (!list.contains(callback)) {
+                list.add(callback);
+            }
         }
     }
 }

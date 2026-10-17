@@ -47,8 +47,26 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
         // several processes (main, :MSF, ...). Subprocesses keep
         // the cheap universal framework hooks.
         boolean isMainProcess = lpparam.packageName.equals(lpparam.processName);
+        boolean isMsfProcess = (lpparam.processName != null && lpparam.processName.endsWith(":MSF"));
         DexKitDetector.setEnabled(isMainProcess && HookConfig.ENABLE_DEXKIT);
         log("DexKit enabled for this process: " + (isMainProcess && HookConfig.ENABLE_DEXKIT));
+
+        // Subprocess isolation: :tool (webview/captcha), :peak, :picture, etc. only need
+        // lightweight environment spoofing. Never run heavy mass-reflection or classloader hooks here!
+        if (!isMainProcess && !isMsfProcess) {
+            try {
+                UnifiedHookCoordinator.initialize(lpparam);
+                DynamicRootDetectionHook.hook(lpparam);
+                DynamicXposedDetectionHook.hook(lpparam);
+                DynamicDeviceInfoHook.hook(lpparam);
+                DynamicDebugDetectionHook.hook(lpparam);
+                DynamicRuntimeMonitorHook.hook(lpparam);
+                log("=== Subprocess Lightweight Protection Initialized: " + lpparam.processName + " ===");
+            } catch (Throwable t) {
+                logError("Error initializing subprocess hooks: " + t.getMessage(), t);
+            }
+            return;
+        }
 
         // === DexKit Disk / Asset Cache Check (< 5ms) ===
         // If valid cache exists on disk or in bundled assets, load cached method signatures directly
@@ -112,8 +130,10 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
             // Layer 7: QQ 9.3.50 detection-point completion (real risk/kick targets)
             QQ950PatchHook.hook(lpparam);
 
-            // Layer 8: QAuxv (QNotified) compatibility & BaseApk crash prevention
-            io.github.xalsace.qqbypass.hooks.QAuxvCompatHook.hook(lpparam);
+            // Layer 8: QAuxv (QNotified) compatibility & BaseApk crash prevention (main process only)
+            if (isMainProcess) {
+                io.github.xalsace.qqbypass.hooks.QAuxvCompatHook.hook(lpparam);
+            }
 
             // Layer 9: Security Libraries & FEKit Censor Enhancement (ShadowHook, QQPerfTool, Desensitization, Dtc, fe.utils.a)
             SecurityLibrariesEnhanceHook.hook(lpparam);
@@ -143,6 +163,9 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
 
     private static final java.util.Set<ClassLoader> sObservedLoaders =
         java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    private static final java.util.concurrent.ExecutorService sLateHookExecutor =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
 
     public static void dispatchLateStageHooks(ClassLoader cl) {
         if (cl == null || sObservedLoaders.contains(cl)) return;
@@ -180,14 +203,16 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
         }
 
         try {
-            // 2. Hook dalvik.system.BaseDexClassLoader constructors
+            // 2. Hook dalvik.system.BaseDexClassLoader constructors asynchronously to never block main thread
             de.robv.android.xposed.XposedBridge.hookAllConstructors(
                 dalvik.system.BaseDexClassLoader.class,
                 new de.robv.android.xposed.XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         ClassLoader cl = (ClassLoader) param.thisObject;
-                        dispatchLateStageHooks(cl);
+                        if (cl != null) {
+                            sLateHookExecutor.execute(() -> dispatchLateStageHooks(cl));
+                        }
                     }
                 }
             );
