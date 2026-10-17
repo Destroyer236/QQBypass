@@ -34,6 +34,10 @@ public class DynamicXposedDetectionHook {
         // Crash reporter (Bugly / QQPerf) xposed status spoofing
         hookBuglyCrashReporter(lpparam);
 
+        // AssetManager and ZipFile asset inspection bypass (conceals xposed_init / module assets)
+        hookAssetManager();
+        hookZipFile();
+
         // Dynamic hooks: DexKit-discovered detection points
         new Thread(() -> {
             try {
@@ -417,6 +421,28 @@ public class DynamicXposedDetectionHook {
                     }
                 }
             });
+
+            // Native VMStack stack trace hook (prevents direct VMStack.getThreadStackTrace bypass)
+            try {
+                Class<?> vmStackClass = Class.forName("dalvik.system.VMStack");
+                HookUtils.hookMethod(vmStackClass, "getThreadStackTrace", Thread.class, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        if (Boolean.TRUE.equals(bypassStackFilter.get())) return;
+                        Object res = param.getResult();
+                        if (res instanceof StackTraceElement[]) {
+                            StackTraceElement[] traces = (StackTraceElement[]) res;
+                            StackTraceElement[] clean = filterStackTrace(traces);
+                            if (clean.length != traces.length) {
+                                param.setResult(clean);
+                            }
+                        }
+                    }
+                });
+                XposedEntry.log("VMStack.getThreadStackTrace sanitization installed");
+            } catch (Throwable t) {
+                XposedEntry.log("VMStack hook not available: " + t.getMessage());
+            }
         } catch (Throwable t) {
             XposedEntry.log("Failed to hook StackTrace: " + t.getMessage());
         }
@@ -436,7 +462,7 @@ public class DynamicXposedDetectionHook {
         }
     };
 
-    private static boolean isSuspiciousClass(String name) {
+    public static boolean isSuspiciousClass(String name) {
         if (name == null) return false;
         String lower = name.toLowerCase();
         return lower.startsWith("de.robv.android.xposed.")
@@ -463,14 +489,36 @@ public class DynamicXposedDetectionHook {
             || lower.contains("neibuff")
             || lower.startsWith("com.applisto.appcloner.")
             || lower.contains("appcloner")
-            || lower.startsWith("lzlnb.");
+            || lower.startsWith("lzlnb.")
+            || lower.startsWith("com.elderdrivers.riru.")
+            || lower.startsWith("com.topjohnwu.magisk.")
+            || lower.contains("zygisk")
+            || lower.contains("apatch")
+            || lower.contains("kernelsu")
+            || lower.contains("saurik.substrate")
+            || lower.contains("frida")
+            || lower.startsWith("io.github.xalsace.")
+            || lower.startsWith("org.luckypray.dexkit.");
+    }
+
+    public static boolean isSuspiciousResource(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.contains("xposed_init")
+            || lower.contains("liblspd")
+            || lower.contains("lspatch")
+            || lower.contains("libcnm")
+            || lower.contains("liball-jni")
+            || lower.contains("moe.ono")
+            || lower.contains("lzlnb")
+            || lower.contains("native-bypass")
+            || lower.contains("qqbypass");
     }
 
     private static boolean isCallerWhitelisted() {
         try {
             bypassStackFilter.set(true);
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-            boolean hasTencentCaller = false;
             for (StackTraceElement elem : stack) {
                 String cls = elem.getClassName();
                 if (cls == null) continue;
@@ -478,6 +526,9 @@ public class DynamicXposedDetectionHook {
                     || cls.equals("java.lang.Thread")
                     || cls.equals("java.lang.Class")
                     || cls.equals("java.lang.ClassLoader")
+                    || cls.startsWith("java.lang.reflect.")
+                    || cls.startsWith("sun.reflect.")
+                    || cls.startsWith("dalvik.system.")
                     || cls.startsWith("de.robv.android.xposed.XC_MethodHook")
                     || cls.startsWith("de.robv.android.xposed.XposedBridge")) {
                     continue;
@@ -505,15 +556,10 @@ public class DynamicXposedDetectionHook {
                     || cls.startsWith("com.tencent.mmkv.")) {
                     return true;
                 }
-                if (cls.startsWith("com.tencent.") || cls.startsWith("oicq.") || cls.startsWith("mqq.")) {
-                    hasTencentCaller = true;
-                    break;
-                }
-            }
-            if (hasTencentCaller) {
+                // First non-reflection caller is not in module whitelist
                 return false;
             }
-            return true;
+            return false;
         } finally {
             bypassStackFilter.set(false);
         }
@@ -542,7 +588,100 @@ public class DynamicXposedDetectionHook {
                 }
             };
 
+            // 1-arg Class.forName(String)
+            HookUtils.hookMethod(Class.class, "forName", String.class, forNameHook);
+            // 3-arg Class.forName(String, boolean, ClassLoader)
             HookUtils.hookMethod(Class.class, "forName", String.class, boolean.class, ClassLoader.class, forNameHook);
+
+            // Hook ClassLoader.loadClass(String) and loadClass(String, boolean)
+            XC_MethodHook loadClassHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (inReflectionHook.get()) return;
+                    try {
+                        inReflectionHook.set(true);
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String className = (String) param.args[0];
+                            if (isSuspiciousClass(className) && !isCallerWhitelisted()) {
+                                param.setThrowable(new ClassNotFoundException("Didn't find class \"" + className + "\""));
+                            }
+                        }
+                    } finally {
+                        inReflectionHook.set(false);
+                    }
+                }
+            };
+            HookUtils.hookMethod(ClassLoader.class, "loadClass", String.class, loadClassHook);
+            HookUtils.hookMethod(ClassLoader.class, "loadClass", String.class, boolean.class, loadClassHook);
+
+            // Hook ClassLoader.findLoadedClass(String)
+            HookUtils.hookMethod(ClassLoader.class, "findLoadedClass", String.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (inReflectionHook.get()) return;
+                    try {
+                        inReflectionHook.set(true);
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String className = (String) param.args[0];
+                            if (isSuspiciousClass(className) && !isCallerWhitelisted()) {
+                                param.setResult(null);
+                            }
+                        }
+                    } finally {
+                        inReflectionHook.set(false);
+                    }
+                }
+            });
+
+            // Hook ClassLoader.getResource / getResources / getResourceAsStream
+            XC_MethodHook resourceHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (inReflectionHook.get()) return;
+                    try {
+                        inReflectionHook.set(true);
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String resName = (String) param.args[0];
+                            if (isSuspiciousResource(resName) && !isCallerWhitelisted()) {
+                                if (param.method instanceof java.lang.reflect.Method) {
+                                    Class<?> ret = ((java.lang.reflect.Method) param.method).getReturnType();
+                                    if (ret == java.util.Enumeration.class) {
+                                        param.setResult(java.util.Collections.emptyEnumeration());
+                                    } else {
+                                        param.setResult(null);
+                                    }
+                                } else {
+                                    param.setResult(null);
+                                }
+                            }
+                        }
+                    } finally {
+                        inReflectionHook.set(false);
+                    }
+                }
+            };
+            HookUtils.hookMethod(ClassLoader.class, "getResource", String.class, resourceHook);
+            HookUtils.hookMethod(ClassLoader.class, "getResources", String.class, resourceHook);
+            HookUtils.hookMethod(ClassLoader.class, "getResourceAsStream", String.class, resourceHook);
+
+            // Hook ClassLoader.findLibrary
+            HookUtils.hookMethod(ClassLoader.class, "findLibrary", String.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (inReflectionHook.get()) return;
+                    try {
+                        inReflectionHook.set(true);
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String libName = (String) param.args[0];
+                            if (isSuspiciousResource(libName) && !isCallerWhitelisted()) {
+                                param.setResult(null);
+                            }
+                        }
+                    } finally {
+                        inReflectionHook.set(false);
+                    }
+                }
+            });
 
             HookUtils.hookMethod(dalvik.system.BaseDexClassLoader.class, "toString", new XC_MethodHook() {
                 @Override
@@ -566,6 +705,102 @@ public class DynamicXposedDetectionHook {
             XposedEntry.log("ClassLoader and reflection hook protection installed");
         } catch (Throwable t) {
             XposedEntry.log("Failed to hook ClassLoader and reflection: " + t.getMessage());
+        }
+    }
+
+    private static void hookAssetManager() {
+        try {
+            Class<?> amClass = android.content.res.AssetManager.class;
+            XC_MethodHook openHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                        String filename = (String) param.args[0];
+                        if (isSuspiciousResource(filename) && !isCallerWhitelisted()) {
+                            param.setThrowable(new java.io.FileNotFoundException("Asset not found: " + filename));
+                        }
+                    }
+                }
+            };
+            HookUtils.hookAllMethods(amClass, "open", openHook);
+            HookUtils.hookAllMethods(amClass, "openNonAssetFd", openHook);
+
+            HookUtils.hookAllMethods(amClass, "list", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerWhitelisted()) return;
+                    Object res = param.getResult();
+                    if (res instanceof String[]) {
+                        String[] list = (String[]) res;
+                        List<String> filtered = new java.util.ArrayList<>();
+                        for (String item : list) {
+                            if (!isSuspiciousResource(item)) {
+                                filtered.add(item);
+                            }
+                        }
+                        if (filtered.size() != list.length) {
+                            param.setResult(filtered.toArray(new String[0]));
+                        }
+                    }
+                }
+            });
+            XposedEntry.log("AssetManager xposed_init concealment installed");
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook AssetManager: " + t.getMessage());
+        }
+    }
+
+    private static void hookZipFile() {
+        try {
+            XC_MethodHook getEntryHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                        String entryName = (String) param.args[0];
+                        if (isSuspiciousResource(entryName) && !isCallerWhitelisted()) {
+                            param.setResult(null);
+                        }
+                    }
+                }
+            };
+            HookUtils.hookAllMethods(java.util.zip.ZipFile.class, "getEntry", getEntryHook);
+            HookUtils.hookAllMethods(java.util.jar.JarFile.class, "getJarEntry", getEntryHook);
+
+            HookUtils.hookMethod(java.util.zip.ZipFile.class, "entries", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerWhitelisted()) return;
+                    Object res = param.getResult();
+                    if (res instanceof java.util.Enumeration) {
+                        @SuppressWarnings("unchecked")
+                        final java.util.Enumeration<? extends java.util.zip.ZipEntry> orig =
+                                (java.util.Enumeration<? extends java.util.zip.ZipEntry>) res;
+                        final List<java.util.zip.ZipEntry> cleanList = new java.util.ArrayList<>();
+                        while (orig.hasMoreElements()) {
+                            java.util.zip.ZipEntry ze = orig.nextElement();
+                            if (ze != null && !isSuspiciousResource(ze.getName())) {
+                                cleanList.add(ze);
+                            }
+                        }
+                        param.setResult(java.util.Collections.enumeration(cleanList));
+                    }
+                }
+            });
+
+            HookUtils.hookAllMethods(java.util.zip.ZipFile.class, "getInputStream", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof java.util.zip.ZipEntry) {
+                        java.util.zip.ZipEntry ze = (java.util.zip.ZipEntry) param.args[0];
+                        if (ze != null && isSuspiciousResource(ze.getName()) && !isCallerWhitelisted()) {
+                            param.setThrowable(new java.io.FileNotFoundException("Entry concealed: " + ze.getName()));
+                        }
+                    }
+                }
+            });
+            XposedEntry.log("ZipFile / JarFile xposed entry concealment installed");
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook ZipFile: " + t.getMessage());
         }
     }
 

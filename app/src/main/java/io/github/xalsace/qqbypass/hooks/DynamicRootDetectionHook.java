@@ -646,6 +646,96 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(pmsClass, "getPackageUid", appInfoHook);
             HookUtils.hookAllMethods(pmsClass, "getPackageUidAsUser", appInfoHook);
 
+            // Hook hasSigningCertificate(String, byte[], int) & hasSigningCertificate(int, byte[], int)
+            XC_MethodHook hasSigningCertHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args == null || param.args.length < 3) return;
+                    Object target = param.args[0];
+                    byte[] certInput = param.args[1] instanceof byte[] ? (byte[]) param.args[1] : null;
+                    int type = param.args[2] instanceof Integer ? (Integer) param.args[2] : 0;
+
+                    if (certInput == null) {
+                        param.setResult(false);
+                        return;
+                    }
+
+                    String hostPkg = lpparam.packageName != null ? lpparam.packageName : "com.tencent.mobileqq";
+                    boolean isHost = false;
+                    if (target instanceof String) {
+                        String pkg = (String) target;
+                        if (isSuspiciousPackage(pkg)) {
+                            if (isCallerQAuxv()) return;
+                            param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException("Package not found: " + pkg));
+                            return;
+                        }
+                        if (hostPkg.equals(pkg) || "com.tencent.mobileqq".equals(pkg)) {
+                            isHost = true;
+                        }
+                    } else if (target instanceof Integer) {
+                        int uid = (Integer) target;
+                        if (uid == android.os.Process.myUid()) {
+                            isHost = true;
+                        }
+                    }
+
+                    if (isHost) {
+                        byte[] officialCertBytes = android.util.Base64.decode(OFFICIAL_QQ_SIGNATURE_B64, android.util.Base64.DEFAULT);
+                        if (type == 0) { // CERT_INPUT_RAW_X509
+                            param.setResult(java.util.Arrays.equals(certInput, officialCertBytes));
+                        } else if (type == 1) { // CERT_INPUT_SHA256
+                            try {
+                                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                                byte[] officialSha256 = md.digest(officialCertBytes);
+                                param.setResult(java.util.Arrays.equals(certInput, officialSha256));
+                            } catch (Throwable t) {
+                                param.setResult(false);
+                            }
+                        }
+                    }
+                }
+            };
+            HookUtils.hookAllMethods(pmsClass, "hasSigningCertificate", hasSigningCertHook);
+            if (pmsClass != android.content.pm.PackageManager.class) {
+                HookUtils.hookAllMethods(android.content.pm.PackageManager.class, "hasSigningCertificate", hasSigningCertHook);
+            }
+
+            // Hook checkSignatures(String, String) & checkSignatures(int, int)
+            XC_MethodHook checkSignaturesHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args == null || param.args.length < 2) return;
+                    Object a1 = param.args[0];
+                    Object a2 = param.args[1];
+                    String hostPkg = lpparam.packageName != null ? lpparam.packageName : "com.tencent.mobileqq";
+
+                    if (a1 instanceof String && a2 instanceof String) {
+                        String p1 = (String) a1;
+                        String p2 = (String) a2;
+                        if (isSuspiciousPackage(p1) || isSuspiciousPackage(p2)) {
+                            if (isCallerQAuxv()) return;
+                            param.setResult(android.content.pm.PackageManager.SIGNATURE_UNKNOWN_PACKAGE); // -4
+                            return;
+                        }
+                        if ((hostPkg.equals(p1) || "com.tencent.mobileqq".equals(p1)) &&
+                            (hostPkg.equals(p2) || "com.tencent.mobileqq".equals(p2))) {
+                            param.setResult(android.content.pm.PackageManager.SIGNATURE_MATCH); // 0
+                        }
+                    } else if (a1 instanceof Integer && a2 instanceof Integer) {
+                        int u1 = (Integer) a1;
+                        int u2 = (Integer) a2;
+                        int myUid = android.os.Process.myUid();
+                        if (u1 == myUid && u2 == myUid) {
+                            param.setResult(android.content.pm.PackageManager.SIGNATURE_MATCH); // 0
+                        }
+                    }
+                }
+            };
+            HookUtils.hookAllMethods(pmsClass, "checkSignatures", checkSignaturesHook);
+            if (pmsClass != android.content.pm.PackageManager.class) {
+                HookUtils.hookAllMethods(android.content.pm.PackageManager.class, "checkSignatures", checkSignaturesHook);
+            }
+
             // Hook QQ 内部 PackageUtil.isAppInstalled，防止 Bugly 等探测
             Class<?> pkgUtilClass = de.robv.android.xposed.XposedHelpers.findClassIfExists(
                 "com.tencent.mobileqq.utils.PackageUtil", lpparam.classLoader);

@@ -138,7 +138,25 @@ static int hooked_dladdr(const void* addr, Dl_info* info) {
             strcasestr(fname, "npatch") ||
             strcasestr(fname, "bytebuddy") ||
             strcasestr(fname, "cc.ioctl") ||
-            strcasestr(fname, "qnotified")) {
+            strcasestr(fname, "qnotified") ||
+            strcasestr(fname, "moe.ono") ||
+            strcasestr(fname, "ono") ||
+            strcasestr(fname, "lzlnb") ||
+            strcasestr(fname, "cnm") ||
+            strcasestr(fname, "libcnm") ||
+            strcasestr(fname, "liball-jni") ||
+            strcasestr(fname, "riru") ||
+            strcasestr(fname, "libriru") ||
+            strcasestr(fname, "zygisk") ||
+            strcasestr(fname, "libzygisk") ||
+            strcasestr(fname, "apatch") ||
+            strcasestr(fname, "libapatch") ||
+            strcasestr(fname, "kernelsu") ||
+            strcasestr(fname, "ksu") ||
+            strcasestr(fname, "magisk") ||
+            strcasestr(fname, "shamiko") ||
+            strcasestr(fname, "lspatch") ||
+            strcasestr(fname, "liblspatch")) {
             LOGI("QSec dladdr spoofed: %s -> libc.so", info->dli_fname);
 #if defined(__aarch64__) || defined(__x86_64__)
             info->dli_fname = "/system/lib64/libc.so";

@@ -67,8 +67,8 @@ echo "[2/6] 链接资源与 Manifest (aapt2 link)..."
 aapt2 link -I "$PLATFORM_JAR" \
     --min-sdk-version 26 \
     --target-sdk-version 34 \
-    --version-code 47 \
-    --version-name "1.0.47" \
+    --version-code 48 \
+    --version-name "1.0.48" \
     --manifest "$SCRIPT_DIR/app/src/main/AndroidManifest.xml" \
     --java "$BUILD_DIR/gen" \
     -o "$BUILD_DIR/base.apk" \
@@ -185,13 +185,13 @@ apksigner sign \
 echo "验证 APK 签名:"
 apksigner verify --min-sdk-version 23 -v "$TARGET_APK" | grep -E "Verifies|scheme"
 
-DEST_APK="/storage/emulated/0/0_TM/apks/QQ_Enhanced_Bypass_1.0.47_no_kick.apk"
+DEST_APK="/storage/emulated/0/0_TM/apks/QQ_Enhanced_Bypass_1.0.48_no_kick.apk"
 if [ -d "$(dirname "$DEST_APK")" ]; then
     cp -f "$TARGET_APK" "$DEST_APK"
     echo "同步产物至存储空间: $DEST_APK"
 fi
-cp -f "$TARGET_APK" "/sdcard/QQ_Enhanced_Bypass_1.0.47_no_kick.apk"
-echo "同步产物至 sdcard 根目录: /sdcard/QQ_Enhanced_Bypass_1.0.47_no_kick.apk"
+cp -f "$TARGET_APK" "/sdcard/QQ_Enhanced_Bypass_1.0.48_no_kick.apk"
+echo "同步产物至 sdcard 根目录: /sdcard/QQ_Enhanced_Bypass_1.0.48_no_kick.apk"
 
 echo
 echo "=================================================="

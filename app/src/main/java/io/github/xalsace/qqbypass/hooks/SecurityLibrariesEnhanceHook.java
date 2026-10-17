@@ -63,6 +63,7 @@ public class SecurityLibrariesEnhanceHook {
         hookRMonitorAndBuglyDumpers(cl);
         hookUnusedCodeCheck(cl);
         hookNativeFileScan(cl);
+        hookQSec(cl);
         hookMSFCoreKick(cl);
     }
 
@@ -568,6 +569,41 @@ public class SecurityLibrariesEnhanceHook {
                 XposedEntry.log("[CheckCore] Successfully neutralized CheckCore code integrity checks");
             }
         });
+
+        final String initClassInfoCls = "com.tencent.mobileqq.unusedcodecheck.InitClassInfo";
+        hookSafe(cl, initClassInfoCls, new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                // c() -> returns true (initialization valid)
+                HookUtils.hookAllMethods(clazz, "c", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(true);
+                    }
+                });
+
+                // e() -> returns 0 (error code clean)
+                HookUtils.hookAllMethods(clazz, "e", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(0);
+                    }
+                });
+
+                // f(Context) -> suppress full dex scan and MMKV integrity writes
+                HookUtils.hookAllMethods(clazz, "f", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            XposedHelpers.setIntField(param.thisObject, "g", 0);
+                        } catch (Throwable ignored) {}
+                        param.setResult(null);
+                    }
+                });
+
+                XposedEntry.log("[CheckCore] Successfully neutralized InitClassInfo dex integrity checks");
+            }
+        });
     }
 
     /**
@@ -677,6 +713,31 @@ public class SecurityLibrariesEnhanceHook {
                     }
                 });
                 XposedEntry.log("[MSFShield] Successfully hooked com.tencent.mobileqq.msf.core.t (switchable)");
+            }
+        });
+    }
+
+    /**
+     * 9. Neutralize QSec method probe:
+     * com.tencent.mobileqq.qsec.qsecurity.QSec.detectMethod(String className, String methodName)
+     */
+    private static void hookQSec(ClassLoader cl) {
+        final String qsecCls = "com.tencent.mobileqq.qsec.qsecurity.QSec";
+        hookSafe(cl, qsecCls, new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                HookUtils.hookAllMethods(clazz, "detectMethod", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String targetClass = (String) param.args[0];
+                            if (DynamicXposedDetectionHook.isSuspiciousClass(targetClass)) {
+                                param.setResult(false);
+                            }
+                        }
+                    }
+                });
+                XposedEntry.log("[QSec] Successfully neutralized QSec.detectMethod reflection probes");
             }
         });
     }
