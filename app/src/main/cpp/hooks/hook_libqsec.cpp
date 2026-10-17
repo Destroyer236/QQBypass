@@ -181,7 +181,10 @@ void install_qsec_hooks() {
     const char* targets[] = {
         "libQSec.so", "libfekit.so", "libBeaconDT.so", "libqimei.so",
         "libnativefilescan.so", "libunusedcodecheck.so", "libKcsdk-2.0.9.so",
-        "libthreadsuspend.so", "libqqPerfNativeTool.so", nullptr
+        "libthreadsuspend.so", "libqqPerfNativeTool.so",
+        "libcuckoo.so", "libwarbler.so", "libtsmqqsc.so",
+        "libqq_la.so", "libqqdid.so", "libturingxq.so", "libturingmfa.so",
+        "libtencentloc.so", nullptr
     };
     for (int i = 0; targets[i]; i++) {
         const char* target = targets[i];

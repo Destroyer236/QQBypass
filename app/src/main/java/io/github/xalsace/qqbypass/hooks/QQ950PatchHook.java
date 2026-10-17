@@ -82,12 +82,13 @@ public class QQ950PatchHook {
         XposedEntry.log("Initializing QQ 9.3.70 detection & kick patch");
 
         // Tier 1: void-return, crash-safe backstops
-        hookMsfTelemetry();
-        hookMsfCheckWTSig();
-        hookTuringWrapper();
-        hookChannelReport();
-        hookSignatureAndIntegrity();
+        hookMsfTelemetry(lpparam);
+        hookMsfCheckWTSig(lpparam);
+        hookTuringWrapper(lpparam);
+        hookChannelReport(lpparam);
+        hookSignatureAndIntegrity(lpparam);
         hookTroopSecurityTipsBannerCrash(lpparam);
+        hookCuckooAndWarbler(lpparam);
 
         // Tier 2: object-return risk-detection blocks (Dynamic Proxy safe, zero NPE risk)
         hookTuringRiskDetect();
@@ -126,16 +127,15 @@ public class QQ950PatchHook {
     /**
      * MSF telemetry: all void, pure reporting.
      */
-    private static void hookMsfTelemetry() {
+    private static void hookMsfTelemetry(XC_LoadPackage.LoadPackageParam lpparam) {
         final String cls = "com.tencent.mobileqq.msf.core.MsfCore";
-        if (!HookUtils.classExists(cls)) return;
         String[] reportMethods = {
             "doReportOnInitComplete", "reportMsfCoreInit",
             "tryReportJobAlive", "tryReportLoadCfgTempFile",
             "tryReportMSFAlive", "tryReportSoLoadUseTxlib"
         };
         for (String m : reportMethods) {
-            HookUtils.hookAllMethods(cls, m, new XC_MethodHook() {
+            hookSafe(cls, m, lpparam, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(null);
@@ -150,10 +150,9 @@ public class QQ950PatchHook {
      * triggers CODE_NO_LOGIN (2001) kick even though NT tickets are valid.
      * We suppress this kick if the account has an active session.
      */
-    private static void hookMsfCheckWTSig() {
+    private static void hookMsfCheckWTSig(XC_LoadPackage.LoadPackageParam lpparam) {
         final String cls = "com.tencent.mobileqq.msf.core.auth.k";
-        if (!HookUtils.classExists(cls)) return;
-        HookUtils.hookAllMethods(cls, "h", new XC_MethodHook() {
+        hookSafe(cls, "h", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 if (p.args != null && p.args.length > 0 && p.args[0] != null) {
@@ -176,12 +175,9 @@ public class QQ950PatchHook {
      * Turing cache writers: TuringWrapper.b()/c()
      * Allow real TuringWrapper execution so authentic device tokens are written to MMKV (DeviceToken-TuringCache-V001).
      */
-    private static void hookTuringWrapper() {
+    private static void hookTuringWrapper(XC_LoadPackage.LoadPackageParam lpparam) {
         final String cls = "com.tencent.mobileqq.dt.model.TuringWrapper";
-        Class<?> clazz = XposedHelpers.findClassIfExists(cls, HookConfig.getClassLoader());
-        if (clazz == null) return;
-
-        HookUtils.hookAllMethods(clazz, "b", new XC_MethodHook() {
+        hookSafe(cls, "b", lpparam, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                 XposedEntry.log("[TuringPatch] TuringWrapper.b executed (MMKV cache populated)");
@@ -192,9 +188,9 @@ public class QQ950PatchHook {
     /**
      * ChannelManager checkMethod & ChannelReport telemetry.
      */
-    private static void hookChannelReport() {
+    private static void hookChannelReport(XC_LoadPackage.LoadPackageParam lpparam) {
         // Suppress ChannelManager.checkMethod anti-hook reflection
-        HookUtils.hookAllMethods("com.tencent.mobileqq.channel.ChannelManager", "checkMethod",
+        hookSafe("com.tencent.mobileqq.channel.ChannelManager", "checkMethod", lpparam,
             new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -204,7 +200,7 @@ public class QQ950PatchHook {
             });
 
         // Suppress ChannelManagerImpl telemetry reports
-        HookUtils.hookAllMethods("com.tencent.mobileqq.channel.ChannelManagerImpl", "onChannelReadyReport",
+        hookSafe("com.tencent.mobileqq.channel.ChannelManagerImpl", "onChannelReadyReport", lpparam,
             new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -214,48 +210,45 @@ public class QQ950PatchHook {
 
         // Suppress ChannelReport methods
         final String crCls = "com.tencent.mobileqq.channel.ChannelReport";
-        if (HookUtils.classExists(crCls)) {
-            String[] reportMethods = {
-                "reportInitTime", "reportTZ", "reportLoadFixedSo",
-                "reportGoogleAttestation", "reportStep"
-            };
-            for (String rm : reportMethods) {
-                HookUtils.hookAllMethods(crCls, rm, new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                        p.setResult(null);
-                    }
-                });
-            }
-
-            // Suppress eventReport (0df00071646 SsoEventReport)
-            HookUtils.hookAllMethods(crCls, "eventReport", new XC_MethodHook() {
+        String[] reportMethods = {
+            "reportInitTime", "reportTZ", "reportLoadFixedSo",
+            "reportGoogleAttestation", "reportStep"
+        };
+        for (String rm : reportMethods) {
+            hookSafe(crCls, rm, lpparam, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(null);
-                    XposedEntry.log("[ChannelPatch] Neutralized ChannelReport.eventReport");
                 }
             });
+        }
 
-            // Neutralize commonReport and batchCommonReport for sensitive telemetry attaIds
-            XC_MethodHook attaFilterHook = new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
-                        String attaId = (String) p.args[0];
-                        if ("0df00071646".equals(attaId) || "00e00075618".equals(attaId) ||
-                            "02f00075617".equals(attaId) || "0b500076578".equals(attaId)) {
-                            p.setResult(null);
-                            XposedEntry.log("[ChannelPatch] Suppressed ChannelReport for attaId: " + attaId);
-                        }
+        // Suppress eventReport (0df00071646 SsoEventReport)
+        hookSafe(crCls, "eventReport", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[ChannelPatch] Neutralized ChannelReport.eventReport");
+            }
+        });
+
+        // Neutralize commonReport and batchCommonReport for sensitive telemetry attaIds
+        XC_MethodHook attaFilterHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
+                    String attaId = (String) p.args[0];
+                    if ("0df00071646".equals(attaId) || "00e00075618".equals(attaId) ||
+                        "02f00075617".equals(attaId) || "0b500076578".equals(attaId)) {
+                        p.setResult(null);
+                        XposedEntry.log("[ChannelPatch] Suppressed ChannelReport for attaId: " + attaId);
                     }
                 }
-            };
-            HookUtils.hookAllMethods(crCls, "commonReport", attaFilterHook);
-            HookUtils.hookAllMethods(crCls, "batchCommonReport", attaFilterHook);
-        }
+            }
+        };
+        hookSafe(crCls, "commonReport", lpparam, attaFilterHook);
+        hookSafe(crCls, "batchCommonReport", lpparam, attaFilterHook);
     }
-
 
     /**
      * QQ 9.3.70 APK signature and integrity checks.
@@ -263,32 +256,66 @@ public class QQ950PatchHook {
      * - ApkSignatureSchemeV2Verifier.g(String): returns true (verifies V2 signature)
      * - ApkExternalInfoTool (com.tencent.securitysdk.utils.a.f(File)): getSecurityCodeV1
      */
-    private static void hookSignatureAndIntegrity() {
+    private static void hookSignatureAndIntegrity(XC_LoadPackage.LoadPackageParam lpparam) {
         // ApkSignatureSchemeV2Verifier.g(String apkPath)
         final String v2Cls = "com.tencent.securitysdk.utils.ApkSignatureSchemeV2Verifier";
-        if (HookUtils.classExists(v2Cls)) {
-            HookUtils.hookAllMethods(v2Cls, "g", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(true);
-                    XposedEntry.log("[SignaturePatch] Neutralized ApkSignatureSchemeV2Verifier.g");
-                }
-            });
-        }
+        hookSafe(v2Cls, "g", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(true);
+                XposedEntry.log("[SignaturePatch] Neutralized ApkSignatureSchemeV2Verifier.g");
+            }
+        });
 
         // ApkExternalInfoTool: getSecurityCodeV1(File)
         final String extCls = "com.tencent.securitysdk.utils.a";
-        if (HookUtils.classExists(extCls)) {
-            HookUtils.hookAllMethods(extCls, "f", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.getResult() == null) {
-                        p.setResult("qq_security_verified");
-                        XposedEntry.log("[SignaturePatch] Fallback ApkExternalInfoTool security code");
+        hookSafe(extCls, "f", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.getResult() == null) {
+                    p.setResult("qq_security_verified");
+                    XposedEntry.log("[SignaturePatch] Fallback ApkExternalInfoTool security code");
+                }
+            }
+        });
+    }
+
+    /**
+     * Cuckoo & Warbler JVMTI Agent and bytecode instrumentation neutralizer.
+     * Prevents libcuckoo.so JVMTI agent loading, debuggable ART mode mutation, and bytecode introspection.
+     */
+    private static void hookCuckooAndWarbler(XC_LoadPackage.LoadPackageParam lpparam) {
+        // 1. Warbler.a() -> returns false (blocks nativeMakeArtDebuggable)
+        hookSafe("com.tencent.mobileqq.warbler.Warbler", "a", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+                XposedEntry.log("[CuckooPatch] Neutralized Warbler.a (prevented nativeMakeArtDebuggable)");
+            }
+        });
+
+        // 2. Cuckoo.init(boolean) -> empty (blocks JVMTI agent attach and cuckoo startup)
+        hookSafe("com.tencent.mobileqq.cuckoo.Cuckoo", "init", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[CuckooPatch] Neutralized Cuckoo.init (prevented JVMTI agent loading)");
+            }
+        });
+
+        // 3. Android runtime Debug.attachJvmtiAgent -> blocks libcuckoo.so or any suspicious JVMTI agent
+        HookUtils.hookAllMethods("android.os.Debug", "attachJvmtiAgent", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 0 && p.args[0] instanceof String) {
+                    String agent = (String) p.args[0];
+                    if (agent.contains("cuckoo") || agent.contains("warbler")) {
+                        p.setResult(null);
+                        XposedEntry.log("[CuckooPatch] Blocked Debug.attachJvmtiAgent: " + agent);
                     }
                 }
-            });
-        }
+            }
+        });
     }
 
     // ============ Tier 2: object-return risk detection (Safe Dynamic Proxies) ============
@@ -590,12 +617,19 @@ public class QQ950PatchHook {
      */
     private static void hookTroopSecurityTipsBannerCrash(XC_LoadPackage.LoadPackageParam lpparam) {
         ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
+        hookTroopSecurityTipsBannerCrashWithClassLoader(cl);
+    }
+
+    private static final java.util.Set<Class<?>> sHookedBannerClasses =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    public static void hookTroopSecurityTipsBannerCrashWithClassLoader(ClassLoader cl) {
         if (cl == null) return;
 
         // 1. Guard TroopSecurityTipsBanner methods
         final String bannerCls = "com.tencent.mobileqq.troop.tipsbar.TroopSecurityTipsBanner";
         Class<?> bannerClass = XposedHelpers.findClassIfExists(bannerCls, cl);
-        if (bannerClass != null) {
+        if (bannerClass != null && sHookedBannerClasses.add(bannerClass)) {
             // Hook method 'm' directly
             HookUtils.hookAllMethods(bannerClass, "m", new XC_MethodHook() {
                 @Override
@@ -694,6 +728,7 @@ public class QQ950PatchHook {
         try {
             resolvePendingSafeHooks(cl);
             hookFaceRecognitionAndMFAWithClassLoader(cl);
+            hookTroopSecurityTipsBannerCrashWithClassLoader(cl);
             hookKickDiagnostics(cl);
             hookTuringRiskDetectWithClassLoader(cl);
             hookTuringDIDWithClassLoader(cl);
@@ -1887,18 +1922,20 @@ public class QQ950PatchHook {
     private static void hookDetectionSourcesAtOrigin(XC_LoadPackage.LoadPackageParam lpparam) {
         // 1. Location Detection Source: TencentLocation & SosoLocation
         String[] tencentLocClasses = {
-            "com.tencent.map.geolocation.internal.TencentLocationImpl",
-            "com.tencent.map.geolocation.internal.TencentExtraKeys"
+            "c.t.m.g.h3",
+            "com.tencent.map.geolocation.TencentLocation",
+            "com.tencent.map.geolocation.sapp.TencentLocation",
+            "com.tencent.map.geolocation.internal.TencentExtraKeys",
+            "com.tencent.map.geolocation.sapp.internal.TencentExtraKeys"
         };
         for (String cls : tencentLocClasses) {
-            if (!HookUtils.classExists(cls)) continue;
-            HookUtils.hookAllMethods(cls, "getFakeReason", new XC_MethodHook() {
+            hookSafe(cls, "getFakeReason", lpparam, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(0); // 0 = genuine, zero anomaly
                 }
             });
-            HookUtils.hookAllMethods(cls, "isMockGps", new XC_MethodHook() {
+            hookSafe(cls, "isMockGps", lpparam, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(0);
@@ -1907,45 +1944,41 @@ public class QQ950PatchHook {
         }
 
         final String sosoLocCls = "com.tencent.mobileqq.soso.location.data.SosoLocation";
-        if (HookUtils.classExists(sosoLocCls)) {
-            HookUtils.hookAllConstructors(sosoLocCls, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+        hookSafe(sosoLocCls, "<init>", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                try {
+                    XposedHelpers.setIntField(p.thisObject, "fakeReason", 0);
+                } catch (Throwable ignored) { }
+            }
+        });
+
+        hookSafe(sosoLocCls, "clone", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.getResult() != null) {
                     try {
-                        XposedHelpers.setIntField(p.thisObject, "fakeReason", 0);
+                        XposedHelpers.setIntField(p.getResult(), "fakeReason", 0);
                     } catch (Throwable ignored) { }
                 }
-            });
-
-            HookUtils.hookAllMethods(sosoLocCls, "clone", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.getResult() != null) {
-                        try {
-                            XposedHelpers.setIntField(p.getResult(), "fakeReason", 0);
-                        } catch (Throwable ignored) { }
-                    }
-                }
-            });
-        }
+            }
+        });
 
         final String lbsMgrCls = "com.tencent.mobileqq.soso.location.LbsManagerService";
-        if (HookUtils.classExists(lbsMgrCls)) {
-            HookUtils.hookAllMethods(lbsMgrCls, "notifySec", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
-                        try {
-                            Object sosoLbsInfo = p.args[1];
-                            Object sosoLocation = XposedHelpers.getObjectField(sosoLbsInfo, "mLocation");
-                            if (sosoLocation != null) {
-                                XposedHelpers.setIntField(sosoLocation, "fakeReason", 0);
-                            }
-                        } catch (Throwable ignored) { }
-                    }
+        hookSafe(lbsMgrCls, "notifySec", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
+                    try {
+                        Object sosoLbsInfo = p.args[1];
+                        Object sosoLocation = XposedHelpers.getObjectField(sosoLbsInfo, "mLocation");
+                        if (sosoLocation != null) {
+                            XposedHelpers.setIntField(sosoLocation, "fakeReason", 0);
+                        }
+                    } catch (Throwable ignored) { }
                 }
-            });
-        }
+            }
+        });
 
         // Framework Location: isFromMockProvider & isMock
         HookUtils.hookAllMethods("android.location.Location", "isFromMockProvider", new XC_MethodHook() {
@@ -1963,46 +1996,40 @@ public class QQ950PatchHook {
 
         // 2. Physical Sensor Detection Source: qqprotect.qsec.b, c, d
         final String qsecBCls = "com.tencent.qqprotect.qsec.b";
-        if (HookUtils.classExists(qsecBCls)) {
-            HookUtils.hookAllMethods(qsecBCls, "b", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    Object res = p.getResult();
-                    if (res == null || "-1".equals(res) || "".equals(res) || "null".equals(res)) {
-                        p.setResult("{x=0.231, y=9.765, z=0.412}");
-                        XposedEntry.log("[DetectionSource] Cleaned qsec.b accelerometer -> realistic reading");
-                    }
+        hookSafe(qsecBCls, "b", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res == null || "-1".equals(res) || "".equals(res) || "null".equals(res)) {
+                    p.setResult("{x=0.231, y=9.765, z=0.412}");
+                    XposedEntry.log("[DetectionSource] Cleaned qsec.b accelerometer -> realistic reading");
                 }
-            });
-        }
+            }
+        });
 
         final String qsecCCls = "com.tencent.qqprotect.qsec.c";
-        if (HookUtils.classExists(qsecCCls)) {
-            HookUtils.hookAllMethods(qsecCCls, "b", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    Object res = p.getResult();
-                    if (res == null || "-1".equals(res) || "".equals(res) || "null".equals(res)) {
-                        p.setResult("{x=0.001, y=0.002, z=0.001}");
-                        XposedEntry.log("[DetectionSource] Cleaned qsec.c gyroscope -> realistic reading");
-                    }
+        hookSafe(qsecCCls, "b", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res == null || "-1".equals(res) || "".equals(res) || "null".equals(res)) {
+                    p.setResult("{x=0.001, y=0.002, z=0.001}");
+                    XposedEntry.log("[DetectionSource] Cleaned qsec.c gyroscope -> realistic reading");
                 }
-            });
-        }
+            }
+        });
 
         final String qsecDCls = "com.tencent.qqprotect.qsec.d";
-        if (HookUtils.classExists(qsecDCls)) {
-            HookUtils.hookAllMethods(qsecDCls, "b", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    Object res = p.getResult();
-                    if (res instanceof Number && ((Number) res).floatValue() <= 0.0f) {
-                        p.setResult(150.0f);
-                        XposedEntry.log("[DetectionSource] Cleaned qsec.d light sensor -> 150.0 lux");
-                    }
+        hookSafe(qsecDCls, "b", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object res = p.getResult();
+                if (res instanceof Number && ((Number) res).floatValue() <= 0.0f) {
+                    p.setResult(150.0f);
+                    XposedEntry.log("[DetectionSource] Cleaned qsec.d light sensor -> 150.0 lux");
                 }
-            });
-        }
+            }
+        });
 
         // 3. Screen / Display & Remote Control Detection Source: Display & Ganliang
         HookUtils.hookAllMethods("android.view.Display", "getOwnerPackageName", new XC_MethodHook() {
@@ -2034,45 +2061,41 @@ public class QQ950PatchHook {
         });
 
         final String ganliangCls = "com.tencent.qqprotect.ganliang.Ganliang";
-        if (HookUtils.classExists(ganliangCls)) {
-            // Prevent imposing FLAG_SECURE (8192) on activity window
-            HookUtils.hookAllMethods(ganliangCls, "g", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    p.setResult(null);
-                    XposedEntry.log("[DetectionSource] Neutralized Ganliang.g (prevented FLAG_SECURE)");
-                }
-            });
+        // Prevent imposing FLAG_SECURE (8192) on activity window
+        hookSafe(ganliangCls, "g", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[DetectionSource] Neutralized Ganliang.g (prevented FLAG_SECURE)");
+            }
+        });
 
-            // Normalize Cmd0x9747Req display package report
-            HookUtils.hookAllMethods(ganliangCls, "f", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null) {
-                        if (p.args.length >= 2 && p.args[1] instanceof java.util.List) {
-                            ((java.util.List) p.args[1]).clear();
-                        }
-                        if (p.args.length >= 4) {
-                            p.args[3] = 1;
-                        }
+        // Normalize Cmd0x9747Req display package report
+        hookSafe(ganliangCls, "f", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null) {
+                    if (p.args.length >= 2 && p.args[1] instanceof java.util.List) {
+                        ((java.util.List) p.args[1]).clear();
                     }
-                    XposedEntry.log("[DetectionSource] Normalized Ganliang.f (0 mirror apps, screenCnt=1) and allowed report");
+                    if (p.args.length >= 4) {
+                        p.args[3] = 1;
+                    }
                 }
-            });
-        }
+                XposedEntry.log("[DetectionSource] Normalized Ganliang.f (0 mirror apps, screenCnt=1) and allowed report");
+            }
+        });
 
         // 4. SourceDir LastModified Detection Source
         final String qsecACls = "com.tencent.qqprotect.qsec.a";
-        if (HookUtils.classExists(qsecACls)) {
-            HookUtils.hookAllMethods(qsecACls, "o", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.getResult() instanceof Number && ((Number) p.getResult()).longValue() <= 0L) {
-                        p.setResult(1727000000000L);
-                    }
+        hookSafe(qsecACls, "o", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.getResult() instanceof Number && ((Number) p.getResult()).longValue() <= 0L) {
+                    p.setResult(1727000000000L);
                 }
-            });
-        }
+            }
+        });
 
         // 5. Accessibility Services & Dtc Telemetry Sanitization (prevents bin.mt.plus / todesk / uuremote detection)
         final String[] suspiciousAssistKeywords = {
@@ -2768,7 +2791,11 @@ public class QQ950PatchHook {
                 String key = ph.className + "#" + ph.methodName + "@" + clazz.hashCode();
                 if (sHookedSafeKeys.add(key)) {
                     try {
-                        HookUtils.hookAllMethods(clazz, ph.methodName, ph.callback);
+                        if ("<init>".equals(ph.methodName)) {
+                            HookUtils.hookAllConstructors(clazz, ph.callback);
+                        } else {
+                            HookUtils.hookAllMethods(clazz, ph.methodName, ph.callback);
+                        }
                     } catch (Throwable t) {
                         XposedEntry.log("[PendingSafeHook] Failed to hook " + ph.className + "." + ph.methodName + ": " + t.getMessage());
                     }
@@ -2784,11 +2811,20 @@ public class QQ950PatchHook {
 
     private static void hookSafe(final String className, final String methodName, XC_LoadPackage.LoadPackageParam lpparam, final XC_MethodHook callback) {
         ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
-        Class<?> clazz = XposedHelpers.findClassIfExists(className, cl);
+        hookSafe(className, methodName, cl, callback);
+    }
+
+    private static void hookSafe(final String className, final String methodName, ClassLoader cl, final XC_MethodHook callback) {
+        if (cl == null) cl = HookConfig.getClassLoader();
+        Class<?> clazz = cl != null ? XposedHelpers.findClassIfExists(className, cl) : null;
         if (clazz != null) {
             String key = className + "#" + methodName + "@" + clazz.hashCode();
             if (sHookedSafeKeys.add(key)) {
-                HookUtils.hookAllMethods(clazz, methodName, callback);
+                if ("<init>".equals(methodName)) {
+                    HookUtils.hookAllConstructors(clazz, callback);
+                } else {
+                    HookUtils.hookAllMethods(clazz, methodName, callback);
+                }
             }
         } else {
             // NEVER hook ClassLoader.loadClass! It adds massive CPU delay to all class resolution in ART.
