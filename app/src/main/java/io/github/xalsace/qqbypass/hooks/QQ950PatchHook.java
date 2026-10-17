@@ -461,6 +461,7 @@ public class QQ950PatchHook {
         hookSafe(monCls, "getPackageInfo", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
                 if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
                     String pkg = ((String) p.args[1]).toLowerCase();
                     for (String kw : sensitivePkgKeywords) {
@@ -477,6 +478,7 @@ public class QQ950PatchHook {
         hookSafe(monCls, "getRunningAppProcesses", lpparam, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
                 if (p.getResult() instanceof java.util.List) {
                     java.util.List<?> list = (java.util.List<?>) p.getResult();
                     java.util.List<Object> clean = new java.util.ArrayList<>();
@@ -520,6 +522,7 @@ public class QQ950PatchHook {
         hookSafe(pkgUtilCls, "isAppInstalled", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
                 if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
                     String pkg = ((String) p.args[1]).toLowerCase();
                     for (String kw : sensitivePkgKeywords) {
@@ -535,6 +538,7 @@ public class QQ950PatchHook {
         hookSafe(pkgUtilCls, "checkAppInstalled", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
                 if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
                     String pkg = ((String) p.args[1]).toLowerCase();
                     for (String kw : sensitivePkgKeywords) {
@@ -550,6 +554,7 @@ public class QQ950PatchHook {
         hookSafe(pkgUtilCls, "checkAppInstalledBatch", lpparam, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
                 if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
                     String req = ((String) p.args[1]).toLowerCase();
                     for (String kw : sensitivePkgKeywords) {
@@ -2724,43 +2729,7 @@ public class QQ950PatchHook {
     private static void hookRFixFailureSanitization(XC_LoadPackage.LoadPackageParam lpparam) {
         XposedEntry.log("[Tier7] Initializing RFix & Hotfix failure sanitization and telemetry drop");
 
-        // 1. RFixLoadResult: Force isLoaderSuccess and isSuccess to true
-        hookSafe("com.tencent.rfix.loader.entity.RFixLoadResult", "isLoaderSuccess", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(true);
-            }
-        });
-        hookSafe("com.tencent.rfix.loader.entity.RFixLoadResult", "isSuccess", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(true);
-            }
-        });
-
-        // 2. PatchLoadEngineBase: neutralize LOAD_RESULT_PATCH_LOADER_FAIL in tryLoadPatchInternal
-        hookSafe("com.tencent.rfix.loader.engine.PatchLoadEngineBase", "tryLoadPatchInternal", lpparam, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length > 0 && p.args[0] != null) {
-                    Object loadResult = p.args[0];
-                    try {
-                        Object resultObj = XposedHelpers.getObjectField(loadResult, "result");
-                        if (resultObj != null && resultObj.toString().contains("FAIL")) {
-                            Class enumCls = resultObj.getClass();
-                            Object successEnum = Enum.valueOf(enumCls, "LOAD_RESULT_SUCCESS");
-                            XposedHelpers.setObjectField(loadResult, "result", successEnum);
-                            XposedHelpers.setIntField(loadResult, "subResult", 0);
-                            XposedEntry.log("[RFixPatch] Neutralized PatchLoadEngineBase failure result -> LOAD_RESULT_SUCCESS");
-                        }
-                    } catch (Throwable t) {
-                        XposedEntry.log("[RFixPatch] Error neutralizing loadResult: " + t.getMessage());
-                    }
-                }
-            }
-        });
-
-        // 3. RFix Quality Reporter: Drop failure reports in com.tencent.rfix.lib.reporter.e
+        // 1. RFix Quality Reporter: Drop failure reports in com.tencent.rfix.lib.reporter.e
         XC_MethodHook dropFailureReportHook = new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -2819,7 +2788,7 @@ public class QQ950PatchHook {
             }
         });
 
-        // 4. RFix ATTASwitch: Force disable RFix ATTA/WeData network reporting
+        // 2. RFix ATTASwitch: Force disable RFix ATTA/WeData network reporting
         hookSafe("com.tencent.rfix.lib.atta.RFixATTASwitch", "a", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -2827,7 +2796,7 @@ public class QQ950PatchHook {
             }
         });
 
-        // 5. RFix ATTA Database & Upload Helper (com.tencent.rfix.lib.atta.e)
+        // 3. RFix ATTA Database & Upload Helper (com.tencent.rfix.lib.atta.e)
         hookSafe("com.tencent.rfix.lib.atta.e", "d", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -2844,7 +2813,7 @@ public class QQ950PatchHook {
             }
         });
 
-        // 6. WeData Reporter (com.tencent.rfix.lib.wedata.base.d)
+        // 4. WeData Reporter (com.tencent.rfix.lib.wedata.base.d)
         hookSafe("com.tencent.rfix.lib.wedata.base.d", "c", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -2860,7 +2829,7 @@ public class QQ950PatchHook {
             }
         });
 
-        // 7. RFix Bugly tag initializer (com.tencent.rfix.lib.bugly.a)
+        // 5. RFix Bugly tag initializer (com.tencent.rfix.lib.bugly.a)
         hookSafe("com.tencent.rfix.lib.bugly.a", "a", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
@@ -2870,180 +2839,6 @@ public class QQ950PatchHook {
                         if (!isSuccess) {
                             p.setResult(null);
                             XposedEntry.log("[RFixPatch] Suppressed Bugly updatePatchTag for failed hotfix");
-                        }
-                    } catch (Throwable ignored) {}
-                }
-            }
-        });
-
-        // 8. RFix SafeMode Keeper (com.tencent.rfix.loader.safemode.RFixSafeModeKeeper)
-        final String safeModeKeeperCls = "com.tencent.rfix.loader.safemode.RFixSafeModeKeeper";
-        hookSafe(safeModeKeeperCls, "checkSafeMode", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(0); // RESULT_OK
-            }
-        });
-        hookSafe(safeModeKeeperCls, "reachP1Limit", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(false);
-            }
-        });
-        hookSafe(safeModeKeeperCls, "reachP2Limit", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(false);
-            }
-        });
-        hookSafe(safeModeKeeperCls, "reachP3Limit", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(false);
-            }
-        });
-        hookSafe(safeModeKeeperCls, "writeLastCrashFile", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-            }
-        });
-        hookSafe(safeModeKeeperCls, "handlePatchCrash", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-            }
-        });
-
-        // 9. RFix SafeMode Info (com.tencent.rfix.loader.safemode.RFixSafeModeInfo)
-        final String rfixSafeModeInfoCls = "com.tencent.rfix.loader.safemode.RFixSafeModeInfo";
-        hookSafe(rfixSafeModeInfoCls, "loadStoreInfo", lpparam, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    XposedHelpers.setIntField(p.thisObject, "p1Count", 0);
-                    XposedHelpers.setIntField(p.thisObject, "p2Count", 0);
-                    Object list = XposedHelpers.getObjectField(p.thisObject, "p3CrashTimes");
-                    if (list instanceof java.util.List) {
-                        ((java.util.List) list).clear();
-                    }
-                } catch (Throwable ignored) {}
-            }
-        });
-        hookSafe(rfixSafeModeInfoCls, "saveStoreInfo", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    XposedHelpers.setIntField(p.thisObject, "p1Count", 0);
-                    XposedHelpers.setIntField(p.thisObject, "p2Count", 0);
-                    Object list = XposedHelpers.getObjectField(p.thisObject, "p3CrashTimes");
-                    if (list instanceof java.util.List) {
-                        ((java.util.List) list).clear();
-                    }
-                } catch (Throwable ignored) {}
-            }
-        });
-
-        // 10. RFixGlobalPreferences: Neutralize safeModeInterceptVersion & reset lastInstallRetryCount
-        final String rfixGlobalPrefCls = "com.tencent.rfix.loader.storage.RFixGlobalPreferences";
-        hookSafe(rfixGlobalPrefCls, "loadStoreInfo", lpparam, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    XposedHelpers.setObjectField(p.thisObject, "safeModeInterceptVersion", null);
-                    XposedHelpers.setIntField(p.thisObject, "lastInstallRetryCount", 0);
-                } catch (Throwable ignored) {}
-            }
-        });
-        hookSafe(rfixGlobalPrefCls, "saveStoreInfo", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    XposedHelpers.setObjectField(p.thisObject, "safeModeInterceptVersion", null);
-                    XposedHelpers.setIntField(p.thisObject, "lastInstallRetryCount", 0);
-                } catch (Throwable ignored) {}
-            }
-        });
-
-        // 11. RFixPatchInfo: Force lastInstallResult to 0 (PATCH_RESULT_OK) and mainVerified to true
-        final String rfixPatchInfoCls = "com.tencent.rfix.loader.entity.RFixPatchInfo";
-        hookSafe(rfixPatchInfoCls, "loadStoreInfo", lpparam, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    int cur = XposedHelpers.getIntField(p.thisObject, "lastInstallResult");
-                    if (cur != 0) {
-                        XposedHelpers.setIntField(p.thisObject, "lastInstallResult", 0);
-                    }
-                    XposedHelpers.setBooleanField(p.thisObject, "mainVerified", true);
-                    XposedHelpers.setBooleanField(p.thisObject, "removePatch", false);
-                } catch (Throwable ignored) {}
-            }
-        });
-        hookSafe(rfixPatchInfoCls, "saveStoreInfo", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    XposedHelpers.setIntField(p.thisObject, "lastInstallResult", 0);
-                    XposedHelpers.setBooleanField(p.thisObject, "mainVerified", true);
-                    XposedHelpers.setBooleanField(p.thisObject, "removePatch", false);
-                } catch (Throwable ignored) {}
-            }
-        });
-
-        // 12. PatchLoadEngineBase: checkPatchSafeMode & checkPatchInfo
-        final String patchLoadEngineBaseCls = "com.tencent.rfix.loader.engine.PatchLoadEngineBase";
-        hookSafe(patchLoadEngineBaseCls, "checkPatchSafeMode", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    ClassLoader cl = p.thisObject.getClass().getClassLoader();
-                    Class<?> enumCls = XposedHelpers.findClass("com.tencent.rfix.loader.utils.RFixConstants$LoadResult", cl);
-                    p.setResult(Enum.valueOf((Class<Enum>) enumCls, "LOAD_RESULT_SUCCESS"));
-                } catch (Throwable ignored) {}
-            }
-        });
-        hookSafe(patchLoadEngineBaseCls, "checkPatchInfo", lpparam, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    Object res = p.getResult();
-                    if (res != null && res.toString().contains("FAIL")) {
-                        Class<?> enumCls = res.getClass();
-                        p.setResult(Enum.valueOf((Class<Enum>) enumCls, "LOAD_RESULT_SUCCESS"));
-                    }
-                } catch (Throwable ignored) {}
-            }
-        });
-
-        // 13. PatchEngineBase: sanitize install results in f and e
-        final String patchEngineBaseCls = "com.tencent.rfix.lib.engine.PatchEngineBase";
-        hookSafe(patchEngineBaseCls, "f", lpparam, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                Object res = p.getResult();
-                if (res != null && res.getClass().isEnum()) {
-                    String name = ((Enum<?>) res).name();
-                    if (name.contains("INTERCEPT") || name.contains("FAIL") || name.contains("LIMIT")) {
-                        try {
-                            p.setResult(Enum.valueOf((Class<Enum>) res.getClass(), "PATCH_RESULT_OK"));
-                        } catch (Throwable ignored) {}
-                    }
-                }
-            }
-        });
-        hookSafe(patchEngineBaseCls, "e", lpparam, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                Object res = p.getResult();
-                if (res != null) {
-                    try {
-                        Object aObj = XposedHelpers.getObjectField(res, "a");
-                        if (aObj != null && aObj.getClass().isEnum()) {
-                            String name = ((Enum<?>) aObj).name();
-                            if (name.contains("FAIL") || name.contains("INTERCEPT") || name.contains("EXCEPTION") || name.contains("LIMIT")) {
-                                XposedHelpers.setObjectField(res, "a", Enum.valueOf((Class<Enum>) aObj.getClass(), "PATCH_RESULT_OK"));
-                            }
                         }
                     } catch (Throwable ignored) {}
                 }

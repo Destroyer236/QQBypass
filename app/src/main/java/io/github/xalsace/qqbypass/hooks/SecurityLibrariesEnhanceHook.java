@@ -287,21 +287,7 @@ public class SecurityLibrariesEnhanceHook {
                     }
                 });
 
-                // init / b -> 0 (SUCCESS)
-                HookUtils.hookAllMethods(clazz, "nativeInit", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        param.setResult(0);
-                    }
-                });
-                HookUtils.hookAllMethods(clazz, "b", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        param.setResult(0);
-                    }
-                });
-
-                XposedEntry.log("[ShadowHook] Successfully neutralized com.bytedance.shadowhook.ShadowHook");
+                XposedEntry.log("[ShadowHook] Successfully neutralized com.bytedance.shadowhook.ShadowHook records");
             }
         });
     }

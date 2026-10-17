@@ -211,6 +211,12 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         ClassLoader cl = (ClassLoader) param.thisObject;
                         if (cl != null) {
+                            String clStr = cl.toString().toLowerCase();
+                            if (clStr.contains("moe.ono") || clStr.contains("lzlnb") || clStr.contains("cnm") ||
+                                clStr.contains("qauxv") || clStr.contains("org.lsposed") || clStr.contains("dexkit") ||
+                                clStr.contains("cn.jesse") || clStr.contains("lspatch")) {
+                                return;
+                            }
                             sLateHookExecutor.execute(() -> dispatchLateStageHooks(cl));
                         }
                     }

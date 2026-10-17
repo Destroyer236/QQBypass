@@ -515,24 +515,40 @@ public class DynamicXposedDetectionHook {
             || lower.contains("qqbypass");
     }
 
+    private static boolean isModuleClassLoader(Object obj) {
+        if (obj == null) return false;
+        String clStr = obj.toString().toLowerCase();
+        return clStr.contains("moe.ono") || clStr.contains("lzlnb") || clStr.contains("cnm")
+            || clStr.contains("qauxv") || clStr.contains("lsposed") || clStr.contains("lspatch")
+            || clStr.contains("dexkit") || clStr.contains("luckypray") || clStr.contains("cn.jesse");
+    }
+
     private static boolean isCallerWhitelisted() {
         try {
             bypassStackFilter.set(true);
+            String tName = Thread.currentThread().getName();
+            if (tName != null) {
+                String lt = tName.toLowerCase();
+                if (lt.contains("qauxv") || lt.contains("ioctl") || lt.contains("singleneuron")
+                        || lt.contains("lspatch") || lt.contains("lsposed") || lt.contains("xposed")
+                        || lt.contains("ono") || lt.contains("lzlnb") || lt.contains("cnm")
+                        || lt.contains("se-dexkit") || lt.contains("luckypray")) {
+                    return true;
+                }
+            }
+            ClassLoader contextCl = Thread.currentThread().getContextClassLoader();
+            if (contextCl != null) {
+                String clStr = contextCl.toString().toLowerCase();
+                if (clStr.contains("qauxv") || clStr.contains("lspatch") || clStr.contains("lsposed")
+                        || clStr.contains("ono") || clStr.contains("lzlnb") || clStr.contains("cnm")
+                        || clStr.contains("dexkit") || clStr.contains("luckypray")) {
+                    return true;
+                }
+            }
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
             for (StackTraceElement elem : stack) {
                 String cls = elem.getClassName();
                 if (cls == null) continue;
-                if (cls.equals(DynamicXposedDetectionHook.class.getName())
-                    || cls.equals("java.lang.Thread")
-                    || cls.equals("java.lang.Class")
-                    || cls.equals("java.lang.ClassLoader")
-                    || cls.startsWith("java.lang.reflect.")
-                    || cls.startsWith("sun.reflect.")
-                    || cls.startsWith("dalvik.system.")
-                    || cls.startsWith("de.robv.android.xposed.XC_MethodHook")
-                    || cls.startsWith("de.robv.android.xposed.XposedBridge")) {
-                    continue;
-                }
                 if (cls.startsWith("io.github.xalsace.")
                     || cls.startsWith("io.github.qauxv.")
                     || cls.startsWith("cc.ioctl.")
@@ -552,12 +568,11 @@ public class DynamicXposedDetectionHook {
                     || cls.startsWith("lzlnb.cnm.")
                     || cls.startsWith("cnm0.")
                     || cls.startsWith("lzlnb.")
+                    || cls.startsWith("cn.jesse.")
                     || cls.startsWith("org.luckypray.dexkit.")
                     || cls.startsWith("com.tencent.mmkv.")) {
                     return true;
                 }
-                // First non-reflection caller is not in module whitelist
-                return false;
             }
             return false;
         } finally {
@@ -573,7 +588,7 @@ public class DynamicXposedDetectionHook {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (inReflectionHook.get()) return;
-                    if (param.args != null && param.args.length > 2 && param.args[2] == moduleLoader) return;
+                    if (param.args != null && param.args.length > 2 && (param.args[2] == moduleLoader || isModuleClassLoader(param.args[2]))) return;
                     try {
                         inReflectionHook.set(true);
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
@@ -588,9 +603,16 @@ public class DynamicXposedDetectionHook {
                 }
             };
 
-            // 1-arg Class.forName(String)
-            HookUtils.hookMethod(Class.class, "forName", String.class, forNameHook);
-            // 3-arg Class.forName(String, boolean, ClassLoader)
+            // NEVER hook 1-arg Class.forName(String)!
+            // In Android ART, 1-arg Class.forName(String) is @CallerSensitive and relies on
+            // VMStack.getCallingClassLoader() to identify the caller's ClassLoader. Hooking it with
+            // Xposed inserts XposedBridge/reflection frames on the stack, forcing VMStack to fall back
+            // to BootClassLoader (null), which causes all internal QQ Class.forName() lookups (such as
+            // QRoute resolving QQCoreBridgeImpl in classes3.dex) to fail with ClassNotFoundException.
+            // Calls to Class.forName(String) naturally delegate to ClassLoader.loadClass, which is
+            // already protected by loadClassHook below.
+
+            // 3-arg Class.forName(String, boolean, ClassLoader) - explicitly passes ClassLoader so safe to hook
             HookUtils.hookMethod(Class.class, "forName", String.class, boolean.class, ClassLoader.class, forNameHook);
 
             // Hook ClassLoader.loadClass(String) and loadClass(String, boolean)
@@ -598,6 +620,7 @@ public class DynamicXposedDetectionHook {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (inReflectionHook.get()) return;
+                    if (isModuleClassLoader(param.thisObject)) return;
                     try {
                         inReflectionHook.set(true);
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
@@ -619,6 +642,7 @@ public class DynamicXposedDetectionHook {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (inReflectionHook.get()) return;
+                    if (isModuleClassLoader(param.thisObject)) return;
                     try {
                         inReflectionHook.set(true);
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
@@ -638,6 +662,7 @@ public class DynamicXposedDetectionHook {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (inReflectionHook.get()) return;
+                    if (isModuleClassLoader(param.thisObject)) return;
                     try {
                         inReflectionHook.set(true);
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
@@ -669,6 +694,7 @@ public class DynamicXposedDetectionHook {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (inReflectionHook.get()) return;
+                    if (isModuleClassLoader(param.thisObject)) return;
                     try {
                         inReflectionHook.set(true);
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {

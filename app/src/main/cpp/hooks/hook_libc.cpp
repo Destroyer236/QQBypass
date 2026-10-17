@@ -69,6 +69,10 @@ static int (*real_kill_ptr)(pid_t, int) = nullptr;
 static int (*real_tkill_ptr)(pid_t, int) = nullptr;
 static int (*real_tgkill_ptr)(pid_t, pid_t, int) = nullptr;
 static int (*real_raise_ptr)(int) = nullptr;
+typedef int (*prctl_func_t)(int, unsigned long, unsigned long, unsigned long, unsigned long);
+static prctl_func_t real_prctl_ptr = nullptr;
+typedef long (*ptrace_func_t)(int, pid_t, void*, void*);
+static ptrace_func_t real_ptrace_ptr = nullptr;
 
 static void ensure_real_funcs() {
     if (!real_fopen_ptr) real_fopen_ptr = (FILE* (*)(const char*, const char*))dlsym(RTLD_DEFAULT, "fopen");
@@ -110,6 +114,8 @@ static void ensure_real_funcs() {
     if (!real_tkill_ptr) real_tkill_ptr = (int (*)(pid_t, int))dlsym(RTLD_DEFAULT, "tkill");
     if (!real_tgkill_ptr) real_tgkill_ptr = (int (*)(pid_t, pid_t, int))dlsym(RTLD_DEFAULT, "tgkill");
     if (!real_raise_ptr) real_raise_ptr = (int (*)(int))dlsym(RTLD_DEFAULT, "raise");
+    if (!real_prctl_ptr) real_prctl_ptr = (prctl_func_t)dlsym(RTLD_DEFAULT, "prctl");
+    if (!real_ptrace_ptr) real_ptrace_ptr = (ptrace_func_t)dlsym(RTLD_DEFAULT, "ptrace");
 }
 
 static bool is_caller_security_dso(void* return_address) {
@@ -125,7 +131,7 @@ static bool is_caller_security_dso(void* return_address) {
             strcasestr(f, "libqzone_check") || strcasestr(f, "libdexloader") ||
             strcasestr(f, "libtsmqqsc") || strcasestr(f, "libbugly") ||
             strcasestr(f, "libandroid_desensitization") ||
-            strcasestr(f, "libqqPerfNativeTool") || strcasestr(f, "libshadowhook") ||
+            strcasestr(f, "libqqPerfNativeTool") ||
             strcasestr(f, "librmonitor") || strcasestr(f, "libqimei") ||
             strcasestr(f, "libkcsdk") || strcasestr(f, "libnativefilescan") ||
             strcasestr(f, "libunusedcodecheck") || strcasestr(f, "libthreadsuspend") ||
@@ -138,21 +144,52 @@ static bool is_caller_security_dso(void* return_address) {
     return false;
 }
 
+static bool is_graphics_caller(void* return_address) {
+    if (!return_address) return false;
+    Dl_info info;
+    if (dladdr(return_address, &info) && info.dli_fname) {
+        const char* f = info.dli_fname;
+        if (strstr(f, "libhwui") || strstr(f, "libGLES") || strstr(f, "mali") ||
+            strstr(f, "libvulkan") || strstr(f, "libEGL") || strstr(f, "libui") ||
+            strstr(f, "libgui") || strstr(f, "libgraphicsenv") || strstr(f, "libskia") ||
+            strstr(f, "libcomposer") || strstr(f, "gralloc") || strstr(f, "libcamera") ||
+            strstr(f, "libion") || strstr(f, "libdma_heap") || strstr(f, "android.hardware.graphics")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool is_caller_qa(void* return_address) {
     if (!return_address) return false;
+    if (is_graphics_caller(return_address)) return true;
     Dl_info info;
     if (dladdr(return_address, &info) && info.dli_fname) {
         const char* f = info.dli_fname;
         if (strstr(f, "qauxv") || strstr(f, "qa_dyn_lib") || strstr(f, "libqauxv") || strstr(f, "io.github.qauxv") ||
             strstr(f, "libmmkv") || strstr(f, "libjavacore") || strstr(f, "libopenjdk") ||
-            strstr(f, "libart") || strstr(f, "liblspd") || strstr(f, "libxposed") ||
+            strstr(f, "libart") || strstr(f, "libartbase") || strstr(f, "libopenjdkjvm") ||
+            strstr(f, "libandroidio") || strstr(f, "libandroid_runtime") ||
+            strstr(f, "libnativehelper") || strstr(f, "libnativeloader") ||
+            strstr(f, "libziparchive") || strstr(f, "libdexfile") ||
+            strstr(f, "liblspd") || strstr(f, "libxposed") ||
             strstr(f, "qqbypass") || strstr(f, "libnative-bypass") || strstr(f, "dexkit") ||
             strstr(f, "liblspatch") || strstr(f, "lspatch") || strstr(f, "libpine") || strstr(f, "libsandhook") ||
-            strstr(f, "libcnm") || strstr(f, "liball-jni") || strstr(f, "moe.ono") || strstr(f, "ono") || strstr(f, "lzlnb")) {
+            strstr(f, "libcnm") || strstr(f, "liball-jni") || strstr(f, "moe.ono") || strstr(f, "ono") || strstr(f, "lzlnb") ||
+            strstr(f, "cnm0") || strstr(f, "cn.jesse") || strstr(f, "luckypray") || strstr(f, "libdexkit")) {
             return true;
         }
+    } else {
+        // JIT-compiled Java bytecode or anonymous memory is NEVER a security DSO
+        return true;
     }
     return false;
+}
+
+static inline bool should_filter_proc_maps(void* return_address) {
+    if (is_graphics_caller(return_address)) return false;
+    if (is_caller_qa(return_address)) return false;
+    return true;
 }
 
 static bool is_qa_private_path(const char* path) {
@@ -807,15 +844,19 @@ FILE* fake_fopen(const char* pathname, const char* mode) {
             }
         }
         if (strstr(pathname, "smaps")) {
-            LOGI("Intercepted fopen smaps: %s", pathname);
-            FILE* fake = build_filtered_smaps();
-            if (fake) return fake;
+            if (should_filter_proc_maps(__builtin_return_address(0))) {
+                LOGI("Intercepted fopen smaps: %s", pathname);
+                FILE* fake = build_filtered_smaps();
+                if (fake) return fake;
+            }
         }
         else if (strcmp(pathname, "/proc/self/maps") == 0 ||
             (strstr(pathname, "/proc/") && strstr(pathname, "/maps"))) {
-            LOGI("Intercepted fopen maps: %s", pathname);
-            FILE* fake = build_filtered_maps();
-            if (fake) return fake;
+            if (should_filter_proc_maps(__builtin_return_address(0))) {
+                LOGI("Intercepted fopen maps: %s", pathname);
+                FILE* fake = build_filtered_maps();
+                if (fake) return fake;
+            }
         }
         if (is_proc_mountinfo_path(pathname)) {
             LOGI("Intercepted fopen mountinfo: %s", pathname);
@@ -926,22 +967,26 @@ int fake_open(const char* pathname, int flags, ...) {
             }
         }
         if (strstr(pathname, "smaps")) {
-            LOGI("Intercepted open smaps: %s", pathname);
-            FILE* fake = build_filtered_smaps();
-            if (fake) {
-                int fd = dup(fileno(fake));
-                fclose(fake);
-                return fd;
+            if (should_filter_proc_maps(__builtin_return_address(0))) {
+                LOGI("Intercepted open smaps: %s", pathname);
+                FILE* fake = build_filtered_smaps();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
             }
         }
         else if (strcmp(pathname, "/proc/self/maps") == 0 ||
             (strstr(pathname, "/proc/") && strstr(pathname, "/maps"))) {
-            LOGI("Intercepted open maps: %s", pathname);
-            FILE* fake = build_filtered_maps();
-            if (fake) {
-                int fd = dup(fileno(fake));
-                fclose(fake);
-                return fd;
+            if (should_filter_proc_maps(__builtin_return_address(0))) {
+                LOGI("Intercepted open maps: %s", pathname);
+                FILE* fake = build_filtered_maps();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
             }
         }
         if (is_proc_mountinfo_path(pathname)) {
@@ -1051,22 +1096,26 @@ int fake_openat(int dirfd, const char* pathname, int flags, ...) {
             }
         }
         if (strstr(pathname, "smaps")) {
-            LOGI("Intercepted openat smaps: %s", pathname);
-            FILE* fake = build_filtered_smaps();
-            if (fake) {
-                int fd = dup(fileno(fake));
-                fclose(fake);
-                return fd;
+            if (should_filter_proc_maps(__builtin_return_address(0))) {
+                LOGI("Intercepted openat smaps: %s", pathname);
+                FILE* fake = build_filtered_smaps();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
             }
         }
         else if (strcmp(pathname, "/proc/self/maps") == 0 ||
             (strstr(pathname, "/proc/") && strstr(pathname, "/maps"))) {
-            LOGI("Intercepted openat maps: %s", pathname);
-            FILE* fake = build_filtered_maps();
-            if (fake) {
-                int fd = dup(fileno(fake));
-                fclose(fake);
-                return fd;
+            if (should_filter_proc_maps(__builtin_return_address(0))) {
+                LOGI("Intercepted openat maps: %s", pathname);
+                FILE* fake = build_filtered_maps();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
             }
         }
         if (is_proc_mountinfo_path(pathname)) {
@@ -1386,21 +1435,23 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
     else if (g_bytehook_hooks_installed) result = BYTEHOOK_CALL_PREV(fake_dladdr, addr, info);
     else result = dladdr(addr, info);
     if (result != 0 && info && info->dli_fname) {
-        const char* hidden[] = {
-            "libnative-bypass", "libbytehook", "xalsace",
-            "lsposed", "dexkit", "libdexkit",
-            "lspatch", "liblspatch", "libriru", "libzygisk",
-            "libapatch", "liball-jni", "moe.ono", "libcnm",
-            "substrate", "cydia", "xposed", nullptr
-        };
-        for (int i = 0; hidden[i]; i++) {
-            if (strcasestr(info->dli_fname, hidden[i])) {
-                LOGD("Hidden dladdr library: %s", info->dli_fname);
-                info->dli_fname = "/system/lib64/libc.so";
-                info->dli_fbase = nullptr;
-                info->dli_sname = nullptr;
-                info->dli_saddr = nullptr;
-                return result;
+        if (!is_caller_qa(__builtin_return_address(0))) {
+            const char* hidden[] = {
+                "libnative-bypass", "libbytehook", "xalsace",
+                "lsposed", "dexkit", "libdexkit",
+                "lspatch", "liblspatch", "libriru", "libzygisk",
+                "libapatch", "liball-jni", "moe.ono", "libcnm",
+                "substrate", "cydia", "xposed", nullptr
+            };
+            for (int i = 0; hidden[i]; i++) {
+                if (strcasestr(info->dli_fname, hidden[i])) {
+                    LOGD("Hidden dladdr library: %s", info->dli_fname);
+                    info->dli_fname = "/system/lib64/libc.so";
+                    info->dli_fbase = nullptr;
+                    info->dli_sname = nullptr;
+                    info->dli_saddr = nullptr;
+                    return result;
+                }
             }
         }
         const char* qa_mt_hidden[] = {
@@ -1450,17 +1501,19 @@ struct dl_iterate_cookie {
 static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, void* data) {
     auto* cookie = static_cast<dl_iterate_cookie*>(data);
     if (info && info->dlpi_name) {
-        const char* hidden[] = {
-            "libnative-bypass", "libbytehook", "xalsace",
-            "lsposed", "dexkit", "libdexkit",
-            "lspatch", "liblspatch", "libriru", "libzygisk",
-            "libapatch", "liball-jni", "moe.ono", "libcnm",
-            "substrate", "cydia", "xposed", nullptr
-        };
-        for (int i = 0; hidden[i]; i++) {
-            if (strcasestr(info->dlpi_name, hidden[i])) {
-                LOGD("Hidden library in dl_iterate_phdr: %s", info->dlpi_name);
-                return 0; // 跳过此条目
+        if (!is_caller_qa(cookie->caller_addr)) {
+            const char* hidden[] = {
+                "libnative-bypass", "libbytehook", "xalsace",
+                "lsposed", "dexkit", "libdexkit",
+                "lspatch", "liblspatch", "libriru", "libzygisk",
+                "libapatch", "liball-jni", "moe.ono", "libcnm",
+                "substrate", "cydia", "xposed", nullptr
+            };
+            for (int i = 0; hidden[i]; i++) {
+                if (strcasestr(info->dlpi_name, hidden[i])) {
+                    LOGD("Hidden library in dl_iterate_phdr: %s", info->dlpi_name);
+                    return 0; // 跳过此条目
+                }
             }
         }
         const char* qa_mt_hidden[] = {
@@ -1831,6 +1884,10 @@ static int fake_uname(struct utsname* buf) {
     return ret;
 }
 
+static void* s_cached_qauxv_core0 = nullptr;
+static void* s_cached_cnm = nullptr;
+static void* s_cached_all_jni = nullptr;
+
 static void* fake_dlopen(const char* filename, int flags) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
@@ -1838,8 +1895,25 @@ static void* fake_dlopen(const char* filename, int flags) {
     if (real_dlopen_ptr) handle = real_dlopen_ptr(filename, flags);
     else if (g_bytehook_hooks_installed) handle = BYTEHOOK_CALL_PREV(fake_dlopen, filename, flags);
     else handle = dlopen(filename, flags);
-    if (handle && filename && strstr(filename, "libqimei.so")) {
-        hook_libqimei::patch_libqimei_in_memory();
+
+    if (handle) {
+        if (filename && strstr(filename, "libqimei.so")) {
+            hook_libqimei::patch_libqimei_in_memory();
+        } else if (filename && strstr(filename, "libqauxv-core0")) {
+            s_cached_qauxv_core0 = handle;
+        } else if (filename && strstr(filename, "libcnm")) {
+            s_cached_cnm = handle;
+        } else if (filename && strstr(filename, "liball-jni")) {
+            s_cached_all_jni = handle;
+        }
+    } else if (filename) {
+        if (strstr(filename, "libqauxv-core0") && s_cached_qauxv_core0) {
+            return s_cached_qauxv_core0;
+        } else if (strstr(filename, "libcnm") && s_cached_cnm) {
+            return s_cached_cnm;
+        } else if (strstr(filename, "liball-jni") && s_cached_all_jni) {
+            return s_cached_all_jni;
+        }
     }
     return handle;
 }
@@ -1855,8 +1929,25 @@ static void* fake_android_dlopen_ext(const char* filename, int flags, const void
         pfn_ext fn = (pfn_ext)dlsym(RTLD_DEFAULT, "android_dlopen_ext");
         if (fn) handle = fn(filename, flags, extinfo);
     }
-    if (handle && filename && strstr(filename, "libqimei.so")) {
-        hook_libqimei::patch_libqimei_in_memory();
+
+    if (handle) {
+        if (filename && strstr(filename, "libqimei.so")) {
+            hook_libqimei::patch_libqimei_in_memory();
+        } else if (filename && strstr(filename, "libqauxv-core0")) {
+            s_cached_qauxv_core0 = handle;
+        } else if (filename && strstr(filename, "libcnm")) {
+            s_cached_cnm = handle;
+        } else if (filename && strstr(filename, "liball-jni")) {
+            s_cached_all_jni = handle;
+        }
+    } else if (filename) {
+        if (strstr(filename, "libqauxv-core0") && s_cached_qauxv_core0) {
+            return s_cached_qauxv_core0;
+        } else if (strstr(filename, "libcnm") && s_cached_cnm) {
+            return s_cached_cnm;
+        } else if (strstr(filename, "liball-jni") && s_cached_all_jni) {
+            return s_cached_all_jni;
+        }
     }
     return handle;
 }
@@ -1971,22 +2062,26 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
                 }
             }
             if (strstr(path, "smaps")) {
-                LOGI("fake_syscall: openat smaps redirected: %s", path);
-                FILE* fake = build_filtered_smaps();
-                if (fake) {
-                    int fd = dup(fileno(fake));
-                    fclose(fake);
-                    return fd;
+                if (should_filter_proc_maps(__builtin_return_address(0))) {
+                    LOGI("fake_syscall: openat smaps redirected: %s", path);
+                    FILE* fake = build_filtered_smaps();
+                    if (fake) {
+                        int fd = dup(fileno(fake));
+                        fclose(fake);
+                        return fd;
+                    }
                 }
             }
             if (strcmp(path, "/proc/self/maps") == 0 ||
                 (strstr(path, "/proc/") && strstr(path, "/maps"))) {
-                LOGI("fake_syscall: openat maps redirected: %s", path);
-                FILE* fake = build_filtered_maps();
-                if (fake) {
-                    int fd = dup(fileno(fake));
-                    fclose(fake);
-                    return fd;
+                if (should_filter_proc_maps(__builtin_return_address(0))) {
+                    LOGI("fake_syscall: openat maps redirected: %s", path);
+                    FILE* fake = build_filtered_maps();
+                    if (fake) {
+                        int fd = dup(fileno(fake));
+                        fclose(fake);
+                        return fd;
+                    }
                 }
             }
             if (is_proc_mountinfo_path(path)) {
@@ -2200,13 +2295,11 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
 
 static long fake_ptrace(int request, pid_t pid, void* addr, void* data) {
     SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
     if (request == 0 /* PTRACE_TRACEME */) {
         LOGI("fake_ptrace: PTRACE_TRACEME neutralized");
         return 0;
     }
-    typedef long (*ptrace_func_t)(int, pid_t, void*, void*);
-    static ptrace_func_t real_ptrace_ptr = nullptr;
-    if (!real_ptrace_ptr) real_ptrace_ptr = (ptrace_func_t)dlsym(RTLD_DEFAULT, "ptrace");
     if (real_ptrace_ptr) return real_ptrace_ptr(request, pid, addr, data);
     if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_ptrace, request, pid, addr, data);
     return syscall(__NR_ptrace, request, pid, addr, data);
@@ -2214,15 +2307,13 @@ static long fake_ptrace(int request, pid_t pid, void* addr, void* data) {
 
 static int fake_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5) {
     SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
     if (option == PR_SET_DUMPABLE && arg2 == 0) {
         LOGI("fake_prctl: PR_SET_DUMPABLE(0) neutralized");
         return 0;
     } else if (option == PR_GET_DUMPABLE) {
         return 1;
     }
-    typedef int (*prctl_func_t)(int, unsigned long, unsigned long, unsigned long, unsigned long);
-    static prctl_func_t real_prctl_ptr = nullptr;
-    if (!real_prctl_ptr) real_prctl_ptr = (prctl_func_t)dlsym(RTLD_DEFAULT, "prctl");
     if (real_prctl_ptr) return real_prctl_ptr(option, arg2, arg3, arg4, arg5);
     if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_prctl, option, arg2, arg3, arg4, arg5);
     return syscall(__NR_prctl, option, arg2, arg3, arg4, arg5);
