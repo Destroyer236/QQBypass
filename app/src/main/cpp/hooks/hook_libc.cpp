@@ -166,12 +166,24 @@ static bool is_qa_private_path(const char* path) {
            strcasestr(path, "libqauxv-core0") != nullptr ||
            strcasestr(path, "libqauxv-core1") != nullptr ||
            strcasestr(path, "qnotified") != nullptr ||
+           strcasestr(path, "global_config") != nullptr ||
+           strcasestr(path, "oat_inline_deopt_cache") != nullptr ||
+           strcasestr(path, "last_use_emoticon_time") != nullptr ||
+           strcasestr(path, "sDumpTG_") != nullptr ||
+           strcasestr(path, "qauxv_") != nullptr ||
            strcasestr(path, "ono_mmkv") != nullptr ||
            strcasestr(path, "ono_hcb_") != nullptr ||
+           strcasestr(path, "ono_bubble_cache") != nullptr ||
+           strcasestr(path, "ono_image_tag") != nullptr ||
+           strcasestr(path, "ono_need_find_method") != nullptr ||
            strcasestr(path, "moe.ono") != nullptr ||
+           strcasestr(path, "/ONO") != nullptr ||
            strcasestr(path, "sesearchcache") != nullptr ||
            strcasestr(path, "files/.se") != nullptr ||
+           strcasestr(path, ".se") != nullptr ||
            strcasestr(path, "kc.dat") != nullptr ||
+           strcasestr(path, ".sys_cache") != nullptr ||
+           strcasestr(path, "config/pz") != nullptr ||
            strcasestr(path, "libcnm") != nullptr ||
            strcasestr(path, "liball-jni") != nullptr;
 }
@@ -284,6 +296,10 @@ static inline bool is_security_hidden_path(const char* path, void* return_addres
 
 static bool is_sensitive_name_for_caller(const char* name, void* return_address) {
     if (!name || !name[0]) return false;
+    // CRITICAL: Module callers must have full access to their own files and configs!
+    if (is_caller_qa(return_address)) {
+        return false;
+    }
     if (strcmp(name, "su") == 0 ||
         strcmp(name, "magisk") == 0 ||
         strcmp(name, "magiskd") == 0 ||
@@ -308,8 +324,11 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "bin.mt", "mt2", "singleneuron", "bytebuddy",
         "thanos", "termux", "duckusb", "lspatch",
         "org.lsposed.lspatch", "moe.ono", "ono_mmkv", "ono_hcb_",
+        "ono_bubble_cache", "ono_image_tag", "ono_need_find_method", "ONO",
         "lzlnb", "libcnm", "liball-jni", "cnm0",
-        "sesearchcache", "kc.dat", ".se",
+        "sesearchcache", "kc.dat", ".se", ".sys_cache",
+        "global_config", "oat_inline_deopt_cache", "last_use_emoticon_time",
+        "sDumpTG_", "qauxv", "qa_mmkv", "tmp_qa_", "qnotified",
         "kernelsu", "apatch", "supersu", "superuser", "kingroot", "kinguser",
         "oneclickroot", "rootgenius", "shuamesu", "appcloner", "microvirtd",
         "bdsu", "sutemp", "sudo", "config.prop", "init.svc.microvirtd",
@@ -320,9 +339,6 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
     }
 
     if (is_qa_private_path(name)) {
-        if (is_caller_qa(return_address)) {
-            return false;
-        }
         return true;
     }
     return false;

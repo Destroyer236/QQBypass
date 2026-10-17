@@ -8,6 +8,10 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import io.github.xalsace.qqbypass.detector.DexMethodData;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.RandomAccessFile;
+import java.io.FileNotFoundException;
 import java.net.NetworkInterface;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -51,6 +55,8 @@ public class DynamicRootDetectionHook {
 
         // Universal hook: File methods - catches all path checks
         hookFileChecks();
+        hookFileStreams();
+        hookSharedPreferences(lpparam);
 
         // Environment properties & package inventory checks
         hookInstalledPackages(lpparam);
@@ -201,6 +207,65 @@ public class DynamicRootDetectionHook {
             }
         };
         HookUtils.hookAllMethods(File.class, "listFiles", listFilesHook);
+    }
+
+    private static void hookFileStreams() {
+        XC_MethodHook streamHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                if (param.args == null || param.args.length == 0 || param.args[0] == null) return;
+                String path = null;
+                Object first = param.args[0];
+                if (first instanceof File) {
+                    path = ((File) first).getAbsolutePath();
+                } else if (first instanceof String) {
+                    path = (String) first;
+                }
+                if (path != null && isSuspiciousPath(path)) {
+                    if (isCallerQAuxv()) {
+                        return;
+                    }
+                    XposedEntry.log("File stream blocked: " + path);
+                    UnifiedHookCoordinator.notifyNativeIfAvailable("file_blocked", path);
+                    throw new FileNotFoundException("No such file or directory: " + path);
+                }
+            }
+        };
+
+        try {
+            HookUtils.hookAllConstructors(FileInputStream.class, streamHook);
+            HookUtils.hookAllConstructors(FileOutputStream.class, streamHook);
+            HookUtils.hookAllConstructors(RandomAccessFile.class, streamHook);
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook file streams: " + t.getMessage());
+        }
+    }
+
+    private static void hookSharedPreferences(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> contextImplClass = XposedHelpers.findClassIfExists("android.app.ContextImpl", lpparam.classLoader);
+            if (contextImplClass == null) {
+                contextImplClass = XposedHelpers.findClassIfExists("android.app.ContextImpl", ClassLoader.getSystemClassLoader());
+            }
+            if (contextImplClass != null) {
+                HookUtils.hookMethod(contextImplClass, "getSharedPreferences", String.class, int.class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args == null || param.args.length == 0 || !(param.args[0] instanceof String)) return;
+                        String name = (String) param.args[0];
+                        if (isSuspiciousPrefName(name)) {
+                            if (isCallerQAuxv()) {
+                                return;
+                            }
+                            XposedEntry.log("SharedPreferences probe blocked: " + name);
+                            param.args[0] = "__qb_empty_dummy_pref__";
+                        }
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedEntry.log("Failed to hook getSharedPreferences: " + t.getMessage());
+        }
     }
 
     private static void hookGathererRootCheck(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -1625,7 +1690,6 @@ public class DynamicRootDetectionHook {
                     cls.startsWith("net.bytebuddy.") ||
                     cls.startsWith("io.github.libxposed.") ||
                     cls.startsWith("com.android.dx.") ||
-                    cls.startsWith("com.tencent.mmkv.") ||
                     cls.startsWith("android.content.res.XResources") ||
                     cls.startsWith("de.robv.android.xposed.") ||
                     cls.startsWith("moe.ono.") ||
@@ -1712,6 +1776,20 @@ public class DynamicRootDetectionHook {
         return false;
     }
 
+    public static boolean isSuspiciousPrefName(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.contains("sesearchcache") ||
+               lower.contains("qnotified") ||
+               lower.contains("ono_") ||
+               lower.contains("moe.ono") ||
+               lower.contains("lzlnb") ||
+               lower.contains("qauxv") ||
+               lower.contains("global_config") ||
+               lower.contains("xposed") ||
+               lower.contains("lsposed");
+    }
+
     public static boolean isSuspiciousPath(String path) {
         if (path == null) return false;
 
@@ -1726,7 +1804,9 @@ public class DynamicRootDetectionHook {
         if (lower.contains("qa_mmkv") || lower.contains("tmp_qa_")
                 || lower.contains("qa_dyn_lib") || lower.contains("qa_misc")
                 || lower.contains("io.github.qauxv") || lower.contains("libqauxv")
-                || lower.contains("qnotified")) {
+                || lower.contains("qnotified") || lower.contains("global_config")
+                || lower.contains("oat_inline_deopt_cache") || lower.contains("last_use_emoticon_time")
+                || lower.contains("sdumptg_") || lower.contains("qauxv_")) {
             if (isCallerQAuxv()) {
                 return false;
             }
@@ -1742,7 +1822,10 @@ public class DynamicRootDetectionHook {
         }
 
         // ovo (moe.ono) private storage, mmkv, and preferences
-        if (lower.contains("ono_mmkv") || lower.contains("ono_hcb_") || lower.contains("moe.ono")) {
+        if (lower.contains("ono_mmkv") || lower.contains("ono_hcb_") || lower.contains("moe.ono")
+                || lower.contains("ono_bubble_cache") || lower.contains("ono_image_tag")
+                || lower.contains("ono_need_find_method") || lower.contains("/ono/")
+                || lower.endsWith("/ono") || lower.equals("ono")) {
             if (isCallerQAuxv()) {
                 return false;
             }
@@ -1751,8 +1834,10 @@ public class DynamicRootDetectionHook {
 
         // 模了个块 (lzlnb.cnm.hook) private cache and files
         if (lower.contains("files/.se") || lower.contains(".se/kc.dat")
-                || lower.contains("sesearchcache") || lower.contains("lzlnb")
-                || lower.contains("libcnm.so") || lower.contains("liball-jni.so")) {
+                || lower.contains("kc.dat") || lower.contains(".sys_cache")
+                || lower.contains("config/pz") || lower.contains("sesearchcache")
+                || lower.contains("lzlnb") || lower.contains("libcnm.so")
+                || lower.contains("liball-jni.so")) {
             if (isCallerQAuxv()) {
                 return false;
             }
