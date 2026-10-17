@@ -14,6 +14,7 @@
 #include <sys/syscall.h>
 #include <link.h>
 #include <dirent.h>
+#include <signal.h>
 
 namespace hook_libc {
 
@@ -44,6 +45,10 @@ typedef void (*prop_read_cb_t)(void* cookie, const char* name, const char* value
 static void (*real_system_property_read_callback_ptr)(const prop_info*, prop_read_cb_t, void*) = nullptr;
 typedef long (*syscall_func_t)(long, void*, void*, void*, void*, void*, void*);
 static syscall_func_t real_syscall_ptr = nullptr;
+static int (*real_kill_ptr)(pid_t, int) = nullptr;
+static int (*real_tkill_ptr)(pid_t, int) = nullptr;
+static int (*real_tgkill_ptr)(pid_t, pid_t, int) = nullptr;
+static int (*real_raise_ptr)(int) = nullptr;
 
 static void ensure_real_funcs() {
     if (!real_fopen_ptr) real_fopen_ptr = (FILE* (*)(const char*, const char*))dlsym(RTLD_DEFAULT, "fopen");
@@ -70,6 +75,10 @@ static void ensure_real_funcs() {
     if (!real_system_property_find_ptr) real_system_property_find_ptr = (const prop_info* (*)(const char*))dlsym(RTLD_DEFAULT, "__system_property_find");
     if (!real_system_property_read_callback_ptr) real_system_property_read_callback_ptr = (void (*)(const prop_info*, prop_read_cb_t, void*))dlsym(RTLD_DEFAULT, "__system_property_read_callback");
     if (!real_syscall_ptr) real_syscall_ptr = (syscall_func_t)dlsym(RTLD_DEFAULT, "syscall");
+    if (!real_kill_ptr) real_kill_ptr = (int (*)(pid_t, int))dlsym(RTLD_DEFAULT, "kill");
+    if (!real_tkill_ptr) real_tkill_ptr = (int (*)(pid_t, int))dlsym(RTLD_DEFAULT, "tkill");
+    if (!real_tgkill_ptr) real_tgkill_ptr = (int (*)(pid_t, pid_t, int))dlsym(RTLD_DEFAULT, "tgkill");
+    if (!real_raise_ptr) real_raise_ptr = (int (*)(int))dlsym(RTLD_DEFAULT, "raise");
 }
 
 static bool is_caller_security_dso(void* return_address) {
@@ -80,7 +89,9 @@ static bool is_caller_security_dso(void* return_address) {
         if (strstr(f, "libfekit") || strstr(f, "libturing") ||
             strstr(f, "libqqdid") || strstr(f, "libmsf") ||
             strstr(f, "libqsec") || strstr(f, "libsec") ||
-            strstr(f, "libtears") || strstr(f, "libbeacon")) {
+            strstr(f, "libtears") || strstr(f, "libbeacon") ||
+            strstr(f, "libwtlogin") || strstr(f, "libmsaoaidsec") ||
+            strstr(f, "libqzone_check") || strstr(f, "libdexloader")) {
             return true;
         }
     }
@@ -95,7 +106,8 @@ static bool is_caller_qa(void* return_address) {
         if (strstr(f, "qauxv") || strstr(f, "qa_dyn_lib") || strstr(f, "libqauxv") || strstr(f, "io.github.qauxv") ||
             strstr(f, "libmmkv") || strstr(f, "libjavacore") || strstr(f, "libopenjdk") ||
             strstr(f, "libart") || strstr(f, "liblspd") || strstr(f, "libxposed") ||
-            strstr(f, "qqbypass") || strstr(f, "libnative-bypass") || strstr(f, "dexkit")) {
+            strstr(f, "qqbypass") || strstr(f, "libnative-bypass") || strstr(f, "dexkit") ||
+            strstr(f, "liblspatch") || strstr(f, "lspatch") || strstr(f, "libpine") || strstr(f, "libsandhook")) {
             return true;
         }
     }
@@ -163,7 +175,24 @@ static inline bool is_security_hidden_path(const char* path, void* return_addres
         return false;
     }
 
-    // 2. Sensitive root/xposed paths
+    // 2. LSPatch private files & cache:
+    // If called by Tencent security DSO, block it completely!
+    if (strcasestr(path, "lspatch")) {
+        if (is_caller_security_dso(return_address)) {
+            return true;
+        }
+        if (is_caller_qa(return_address)) {
+            return false;
+        }
+        // Direct probe of lspatch root folder in cache/files (not ART loading files in origin/)
+        if ((strstr(path, "/cache/lspatch") && !strstr(path, "/cache/lspatch/origin/")) ||
+            (strstr(path, "/files/lspatch") && !strstr(path, "/files/lspatch/origin/"))) {
+            return true;
+        }
+        return false;
+    }
+
+    // 3. Sensitive root/xposed paths
     if (is_sensitive_path(path)) {
         if (is_caller_qa(return_address)) {
             return false;
@@ -171,7 +200,7 @@ static inline bool is_security_hidden_path(const char* path, void* return_addres
         return true;
     }
 
-    // 3. MT Manager private paths
+    // 4. MT Manager private paths
     if (is_mt_private_path(path)) {
         if (is_caller_qa(return_address)) {
             return false;
@@ -179,7 +208,7 @@ static inline bool is_security_hidden_path(const char* path, void* return_addres
         return true;
     }
 
-    // 4. QAuxiliary private files (qa_mmkv, tmp_qa_, qa_dyn_lib, qa_misc):
+    // 5. QAuxiliary private files (qa_mmkv, tmp_qa_, qa_dyn_lib, qa_misc):
     // Only block when called by Tencent security DSOs!
     // QA itself, MMKV, and Java runtime MUST have full access!
     // Directory scans (readdir/getdents64) already hide these from general scans!
@@ -215,7 +244,8 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "shamiko", "apatch", "npatch", "lspilot", "fusehide",
         "simplehook", "libchecker", "shizuku", "vtools",
         "bin.mt", "mt2", "singleneuron", "bytebuddy",
-        "thanos", "termux", "duckusb", nullptr
+        "thanos", "termux", "duckusb", "lspatch",
+        "org.lsposed.lspatch", nullptr
     };
     for (int i = 0; root_patterns[i]; i++) {
         if (strcasestr(name, root_patterns[i])) return true;
@@ -1223,6 +1253,86 @@ static void fake_system_property_read_callback(const prop_info* pi, void (*callb
     }
 }
 
+static bool is_anti_tamper_kill(pid_t tgid, pid_t tid, int sig, void* return_address) {
+    (void)tid;
+    pid_t self_pid = getpid();
+    bool targets_self = (tgid == self_pid || tgid == 0 || tgid == -1);
+
+    // 1. Userspace self-directed crash/abort signals: SIGSEGV (11), SIGBUS (7), SIGILL (4), SIGFPE (8), SIGTRAP (5)
+    // Legitimate code NEVER sends SIGSEGV/SIGBUS/SIGILL to itself via kill/tgkill!
+    // This is exclusively Tencent security DSO anti-tamper self-harm/suicide to terminate threads like thread_sp_norma!
+    if (targets_self && (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL || sig == SIGFPE || sig == SIGTRAP)) {
+        LOGI("Neutralized self-directed crash signal (sig=%d, tgid=%d, tid=%d) to prevent thread/process kill", sig, tgid, tid);
+        return true;
+    }
+
+    // 2. Tencent security DSOs intentionally terminating the process (SIGKILL, SIGTERM, SIGABRT)
+    if (targets_self && is_caller_security_dso(return_address)) {
+        if (sig == SIGKILL || sig == SIGTERM || sig == SIGABRT) {
+            LOGI("Neutralized security DSO suicide signal (sig=%d, tgid=%d, tid=%d)", sig, tgid, tid);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static int fake_kill(pid_t pid, int sig) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    if (is_anti_tamper_kill(pid, 0, sig, __builtin_return_address(0))) {
+        return 0;
+    }
+    if (real_kill_ptr) return real_kill_ptr(pid, sig);
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_kill, pid, sig);
+#ifdef __NR_kill
+    return (int)syscall(__NR_kill, pid, sig);
+#else
+    return 0;
+#endif
+}
+
+static int fake_tkill(pid_t tid, int sig) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    if (is_anti_tamper_kill(getpid(), tid, sig, __builtin_return_address(0))) {
+        return 0;
+    }
+    if (real_tkill_ptr) return real_tkill_ptr(tid, sig);
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_tkill, tid, sig);
+#ifdef __NR_tkill
+    return (int)syscall(__NR_tkill, tid, sig);
+#else
+    return 0;
+#endif
+}
+
+static int fake_tgkill(pid_t tgid, pid_t tid, int sig) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    if (is_anti_tamper_kill(tgid, tid, sig, __builtin_return_address(0))) {
+        return 0;
+    }
+    if (real_tgkill_ptr) return real_tgkill_ptr(tgid, tid, sig);
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_tgkill, tgid, tid, sig);
+#ifdef __NR_tgkill
+    return (int)syscall(__NR_tgkill, tgid, tid, sig);
+#else
+    return 0;
+#endif
+}
+
+static int fake_raise(int sig) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    if (is_anti_tamper_kill(getpid(), gettid(), sig, __builtin_return_address(0))) {
+        return 0;
+    }
+    if (real_raise_ptr) return real_raise_ptr(sig);
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_raise, sig);
+    return fake_tgkill(getpid(), gettid(), sig);
+}
+
 long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5, void* a6) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
@@ -1394,6 +1504,34 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
             return 0;
         }
     }
+#ifdef __NR_kill
+    else if (number == __NR_kill) {
+        pid_t pid = (pid_t)(uintptr_t)a1;
+        int sig = (int)(uintptr_t)a2;
+        if (is_anti_tamper_kill(pid, 0, sig, __builtin_return_address(0))) {
+            return 0;
+        }
+    }
+#endif
+#ifdef __NR_tkill
+    else if (number == __NR_tkill) {
+        pid_t tid = (pid_t)(uintptr_t)a1;
+        int sig = (int)(uintptr_t)a2;
+        if (is_anti_tamper_kill(getpid(), tid, sig, __builtin_return_address(0))) {
+            return 0;
+        }
+    }
+#endif
+#ifdef __NR_tgkill
+    else if (number == __NR_tgkill) {
+        pid_t tgid = (pid_t)(uintptr_t)a1;
+        pid_t tid = (pid_t)(uintptr_t)a2;
+        int sig = (int)(uintptr_t)a3;
+        if (is_anti_tamper_kill(tgid, tid, sig, __builtin_return_address(0))) {
+            return 0;
+        }
+    }
+#endif
 
     if (real_syscall_ptr) {
         return real_syscall_ptr(number, a1, a2, a3, a4, a5, a6);
@@ -1447,6 +1585,10 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "fstatat64", (void*)fake_fstatat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "syscall", (void*)fake_syscall, nullptr, nullptr);
     bytehook_hook_all(nullptr, "ptrace", (void*)fake_ptrace, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "kill", (void*)fake_kill, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "tkill", (void*)fake_tkill, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "tgkill", (void*)fake_tgkill, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "raise", (void*)fake_raise, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_get", (void*)fake_system_property_get, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_find", (void*)fake_system_property_find, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_read_callback", (void*)fake_system_property_read_callback, nullptr, nullptr);

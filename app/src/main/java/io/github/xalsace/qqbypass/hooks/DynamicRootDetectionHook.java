@@ -88,6 +88,9 @@ public class DynamicRootDetectionHook {
                 String path = file.getAbsolutePath();
 
                 if (isSuspiciousPath(path)) {
+                    if (isCallerQAuxv()) {
+                        return;
+                    }
                     param.setResult(false);
                     XposedEntry.log("File check blocked: " + path);
                     UnifiedHookCoordinator.notifyNativeIfAvailable("file_blocked", path);
@@ -109,6 +112,9 @@ public class DynamicRootDetectionHook {
                 String path = file.getAbsolutePath();
 
                 if (isSuspiciousPath(path)) {
+                    if (isCallerQAuxv()) {
+                        return;
+                    }
                     param.setResult(0L);
                     UnifiedHookCoordinator.notifyNativeIfAvailable("file_blocked", path);
                 }
@@ -125,6 +131,7 @@ public class DynamicRootDetectionHook {
                     File dir = param.thisObject instanceof File ? (File) param.thisObject : null;
                     List<String> filtered = new ArrayList<>(list.length);
                     for (String name : list) {
+                        if (name.equalsIgnoreCase("lspatch")) continue;
                         if (isSuspiciousPath(name)) continue;
                         if (dir != null && isSuspiciousPath(new File(dir, name).getAbsolutePath())) continue;
                         filtered.add(name);
@@ -146,7 +153,7 @@ public class DynamicRootDetectionHook {
                     if (list.length == 0) return;
                     List<File> filtered = new ArrayList<>(list.length);
                     for (File f : list) {
-                        if (f != null && isSuspiciousPath(f.getAbsolutePath())) continue;
+                        if (f != null && ("lspatch".equalsIgnoreCase(f.getName()) || isSuspiciousPath(f.getAbsolutePath()))) continue;
                         filtered.add(f);
                     }
                     if (filtered.size() != list.length) {
@@ -523,6 +530,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(pmsClass, "getInstalledPackages", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -546,6 +554,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(pmsClass, "getInstalledApplications", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -661,6 +670,7 @@ public class DynamicRootDetectionHook {
             XC_MethodHook queryActivitiesHook = new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -694,6 +704,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(pmsClass, "queryIntentServices", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -718,6 +729,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(pmsClass, "queryBroadcastReceivers", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -742,6 +754,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(pmsClass, "queryContentProviders", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -768,7 +781,23 @@ public class DynamicRootDetectionHook {
                     Object res = param.getResult();
                     if (res instanceof android.content.pm.ProviderInfo) {
                         android.content.pm.ProviderInfo pi = (android.content.pm.ProviderInfo) res;
-                        if (isSuspiciousPackage(pi.packageName) || (pi.authority != null && (pi.authority.contains("qauxv") || pi.authority.contains("lsposed")))) {
+                        if (isSuspiciousPackage(pi.packageName) || (pi.authority != null && (pi.authority.contains("qauxv") || pi.authority.contains("lsposed") || pi.authority.contains("lspatch")))) {
+                            if (isCallerQAuxv()) return;
+                            param.setResult(null);
+                        }
+                    }
+                }
+            });
+
+            // Hook resolveService
+            HookUtils.hookAllMethods(pmsClass, "resolveService", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    Object res = param.getResult();
+                    if (res instanceof android.content.pm.ResolveInfo) {
+                        android.content.pm.ResolveInfo ri = (android.content.pm.ResolveInfo) res;
+                        String pkg = ri.serviceInfo != null ? ri.serviceInfo.packageName : null;
+                        if (isSuspiciousPackage(pkg)) {
                             if (isCallerQAuxv()) return;
                             param.setResult(null);
                         }
@@ -1259,6 +1288,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(monitorClass, "queryIntentActivities", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -1290,6 +1320,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(monitorClass, "queryIntentServices", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -1314,6 +1345,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(monitorClass, "getLastApplicationInfoList", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -1332,6 +1364,7 @@ public class DynamicRootDetectionHook {
             HookUtils.hookAllMethods(monitorClass, "getLastPackageInfoList", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerQAuxv()) return;
                     Object res = param.getResult();
                     if (res instanceof List) {
                         List<?> list = (List<?>) res;
@@ -1403,18 +1436,24 @@ public class DynamicRootDetectionHook {
             String tName = Thread.currentThread().getName();
             if (tName != null) {
                 String lt = tName.toLowerCase();
-                if (lt.contains("qauxv") || lt.contains("ioctl") || lt.contains("singleneuron")) {
+                if (lt.contains("qauxv") || lt.contains("ioctl") || lt.contains("singleneuron")
+                        || lt.contains("lspatch") || lt.contains("lsposed") || lt.contains("xposed")) {
                     return true;
                 }
             }
             ClassLoader cl = Thread.currentThread().getContextClassLoader();
-            if (cl != null && cl.toString().toLowerCase().contains("qauxv")) {
-                return true;
+            if (cl != null) {
+                String clStr = cl.toString().toLowerCase();
+                if (clStr.contains("qauxv") || clStr.contains("lspatch") || clStr.contains("lsposed")) {
+                    return true;
+                }
             }
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
             for (StackTraceElement elem : stack) {
                 String cls = elem.getClassName();
                 if (cls != null && (
+                    cls.startsWith("org.lsposed.") ||
+                    cls.startsWith("top.canyie.") ||
                     cls.startsWith("io.github.qauxv.") ||
                     cls.startsWith("cc.ioctl.") ||
                     cls.startsWith("me.singleneuron.") ||
@@ -1529,6 +1568,14 @@ public class DynamicRootDetectionHook {
             return true;
         }
 
+        // LSPatch private cache/files directories: allow LSPatch/modules, hide from QQ scanners
+        if (lower.contains("lspatch")) {
+            if (isCallerQAuxv()) {
+                return false;
+            }
+            return true;
+        }
+
         // MT Manager paths & storage: hide from QQ
         if (lower.contains("bin.mt.plus") || lower.contains("bin.mt.manager")
                 || lower.contains("bin.mt.termex") || lower.contains("bin.mt.")
@@ -1573,6 +1620,7 @@ public class DynamicRootDetectionHook {
         return lower.contains("magisk") || lower.contains("supersu")
             || lower.contains("superuser") || lower.contains("xposed")
             || lower.contains("lsposed") || lower.contains("edxposed")
+            || lower.contains("lspatch") || lower.contains("top.canyie") || lower.contains("canyie")
             || lower.contains("kernelsu") || lower.contains("apatch")
             || lower.contains("shamiko") || lower.contains("frida")
             || lower.contains("me.weishu") || lower.contains("me.bmax")

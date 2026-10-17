@@ -255,6 +255,7 @@ public class DynamicXposedDetectionHook {
             || lower.contains("yahfa") || lower.contains("epic")
             || lower.contains("pine") || lower.contains("taichi")
             || lower.contains("top.canyie") || lower.contains("liblspd")
+            || lower.contains("lspatch") || lower.contains("liblspatch")
             // Filter our own module and native dependencies
             || lower.contains("xalsace") || lower.contains("qqbypass")
             || lower.contains("bypass") || lower.contains("libnative-bypass")
@@ -271,7 +272,7 @@ public class DynamicXposedDetectionHook {
             return traces;
         }
 
-        // Fast-path: check if caller of getStackTrace is QAuxiliary, MMKV, or bypass module
+        // Fast-path: check if caller of getStackTrace is QAuxiliary, MMKV, LSPatch, or bypass module
         for (StackTraceElement element : traces) {
             String cls = element.getClassName();
             if (cls == null) continue;
@@ -283,6 +284,7 @@ public class DynamicXposedDetectionHook {
             if (cls.startsWith("io.github.qauxv.") || cls.startsWith("cc.ioctl.")
                     || cls.startsWith("me.singleneuron.") || cls.startsWith("nep.timeline.")
                     || cls.startsWith("me.ketal.") || cls.startsWith("xyz.nextalone.")
+                    || cls.startsWith("org.lsposed.") || cls.startsWith("top.canyie.")
                     || cls.startsWith("com.tencent.mmkv.")) {
                 return traces;
             }
@@ -297,6 +299,7 @@ public class DynamicXposedDetectionHook {
             String lower = cls.toLowerCase();
             if (lower.contains("de.robv.android.xposed") ||
                 lower.contains("org.lsposed") ||
+                lower.contains("lspatch") ||
                 lower.contains("io.github.xalsace") ||
                 lower.contains("edxposed") ||
                 lower.contains("sandhook") ||
@@ -425,9 +428,11 @@ public class DynamicXposedDetectionHook {
         String lower = name.toLowerCase();
         return lower.startsWith("de.robv.android.xposed.")
             || lower.startsWith("org.lsposed.")
+            || lower.contains("lspatch")
             || lower.startsWith("edxposed.")
             || lower.startsWith("com.swift.sandhook.")
             || lower.startsWith("top.canyie.pine.")
+            || lower.startsWith("top.canyie.")
             || lower.startsWith("lab.galaxy.yahfa.")
             || lower.startsWith("me.ele.epic.")
             || lower.startsWith("me.weishu.exposed.")
@@ -470,6 +475,8 @@ public class DynamicXposedDetectionHook {
                     || cls.startsWith("bin.mt.")
                     || cls.startsWith("de.robv.android.xposed.")
                     || cls.startsWith("org.lsposed.")
+                    || cls.startsWith("top.canyie.")
+                    || cls.contains("lspatch")
                     || cls.startsWith("com.tencent.mmkv.")) {
                     return true;
                 }
@@ -538,10 +545,11 @@ public class DynamicXposedDetectionHook {
                     Object res = param.getResult();
                     if (res instanceof String) {
                         String s = (String) res;
-                        if (s.contains("xposed") || s.contains("lsposed") || s.contains("edxposed")) {
+                        if (s.contains("xposed") || s.contains("lsposed") || s.contains("edxposed") || s.contains("lspatch")) {
                             param.setResult(s.replaceAll("(?i)xposed", "dalvik")
                                             .replaceAll("(?i)lsposed", "dalvik")
-                                            .replaceAll("(?i)edxposed", "dalvik"));
+                                            .replaceAll("(?i)edxposed", "dalvik")
+                                            .replaceAll("(?i)lspatch", "dalvik"));
                         }
                     }
                 }
@@ -555,7 +563,7 @@ public class DynamicXposedDetectionHook {
     private static boolean containsSensitiveLog(String s) {
         if (s == null) return false;
         String lower = s.toLowerCase();
-        return lower.contains("xposed") || lower.contains("lsposed") || lower.contains("qauxv")
+        return lower.contains("xposed") || lower.contains("lsposed") || lower.contains("lspatch") || lower.contains("qauxv")
             || lower.contains("qqbypass") || lower.contains("nativebypass") || lower.contains("native-bypass")
             || lower.contains("dexkit") || lower.contains("bin.mt") || lower.contains("npatch")
             || lower.contains("bytebuddy") || lower.contains("singleneuron") || lower.contains("magisk")
