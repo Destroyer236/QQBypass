@@ -18,6 +18,7 @@
 #include <sys/utsname.h>
 #include <sys/vfs.h>
 #include <sys/statvfs.h>
+#include <sys/prctl.h>
 #include "hook_libqimei.h"
 
 #ifndef ST_RDONLY
@@ -2145,6 +2146,23 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
             return 0;
         }
     }
+#if defined(__aarch64__)
+    else if (number == 167) {
+#elif defined(__arm__)
+    else if (number == 172) {
+#elif defined(__NR_prctl)
+    else if (number == __NR_prctl) {
+#else
+    else if (false) {
+#endif
+        int option = (int)(uintptr_t)a1;
+        if (option == PR_SET_DUMPABLE && (long)a2 == 0) {
+            LOGI("fake_syscall: prctl(PR_SET_DUMPABLE, 0) neutralized");
+            return 0;
+        } else if (option == PR_GET_DUMPABLE) {
+            return 1;
+        }
+    }
 #ifdef __NR_kill
     else if (number == __NR_kill) {
         pid_t pid = (pid_t)(uintptr_t)a1;
@@ -2194,6 +2212,22 @@ static long fake_ptrace(int request, pid_t pid, void* addr, void* data) {
     return syscall(__NR_ptrace, request, pid, addr, data);
 }
 
+static int fake_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5) {
+    SAFE_BYTEHOOK_SCOPE();
+    if (option == PR_SET_DUMPABLE && arg2 == 0) {
+        LOGI("fake_prctl: PR_SET_DUMPABLE(0) neutralized");
+        return 0;
+    } else if (option == PR_GET_DUMPABLE) {
+        return 1;
+    }
+    typedef int (*prctl_func_t)(int, unsigned long, unsigned long, unsigned long, unsigned long);
+    static prctl_func_t real_prctl_ptr = nullptr;
+    if (!real_prctl_ptr) real_prctl_ptr = (prctl_func_t)dlsym(RTLD_DEFAULT, "prctl");
+    if (real_prctl_ptr) return real_prctl_ptr(option, arg2, arg3, arg4, arg5);
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_prctl, option, arg2, arg3, arg4, arg5);
+    return syscall(__NR_prctl, option, arg2, arg3, arg4, arg5);
+}
+
 void install_hooks() {
     LOGI("Installing libc hooks (ByteHook)...");
     ensure_real_funcs();
@@ -2227,6 +2261,7 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "fstatat64", (void*)fake_fstatat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "syscall", (void*)fake_syscall, nullptr, nullptr);
     bytehook_hook_all(nullptr, "ptrace", (void*)fake_ptrace, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "prctl", (void*)fake_prctl, nullptr, nullptr);
     bytehook_hook_all(nullptr, "kill", (void*)fake_kill, nullptr, nullptr);
     bytehook_hook_all(nullptr, "tkill", (void*)fake_tkill, nullptr, nullptr);
     bytehook_hook_all(nullptr, "tgkill", (void*)fake_tgkill, nullptr, nullptr);

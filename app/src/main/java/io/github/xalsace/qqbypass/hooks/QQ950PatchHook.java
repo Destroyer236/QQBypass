@@ -89,6 +89,9 @@ public class QQ950PatchHook {
         hookSignatureAndIntegrity(lpparam);
         hookTroopSecurityTipsBannerCrash(lpparam);
         hookCuckooAndWarbler(lpparam);
+        hookScreenSecurityAndRootDetection(lpparam);
+        hookPandoraAndPackageUtil(lpparam);
+        hookDtcTelemetry(lpparam);
 
         // Tier 2: object-return risk-detection blocks (Dynamic Proxy safe, zero NPE risk)
         hookTuringRiskDetect();
@@ -314,6 +317,309 @@ public class QQ950PatchHook {
                         XposedEntry.log("[CuckooPatch] Blocked Debug.attachJvmtiAgent: " + agent);
                     }
                 }
+            }
+        });
+
+        // 4. Guard Cuckoo registration/lifecycle methods to prevent UnsatisfiedLinkError or IllegalArgumentException
+        String[] cuckooMethods = {"registMethod", "registClassCallback", "destoryMethod", "destoryClassCallback", "startCuckoo", "registClassJNI", "destoryClassJNI"};
+        for (String cm : cuckooMethods) {
+            hookSafe("com.tencent.mobileqq.cuckoo.Cuckoo", cm, lpparam, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.method instanceof Method && ((Method) p.method).getReturnType() == int.class) {
+                        p.setResult(1);
+                    } else if (p.method instanceof Method && ((Method) p.method).getReturnType() == int[].class) {
+                        p.setResult(new int[0]);
+                    } else {
+                        p.setResult(null);
+                    }
+                }
+            });
+        }
+
+        // 5. Neutralize ParcelHooker startHookParcel/endHookParcel (which triggers Cuckoo JVMTI interception)
+        final String parcelHookerCls = "com.tencent.mobileqq.app.message.hookparcel.ParcelHooker";
+        hookSafe(parcelHookerCls, "startHookParcel", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+                XposedEntry.log("[CuckooPatch] Preempted ParcelHooker.startHookParcel");
+            }
+        });
+        hookSafe(parcelHookerCls, "endHookParcel", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+            }
+        });
+    }
+
+    /**
+     * Defense against Screen Security, Remote Control Detection & Root Environment Scans:
+     * - com.tenpay.security.ScreenSecurityDetector: isAtRisk/isScreenRecording -> false, registerListener -> no-op
+     * - com.tenpay.charge.v2.util.ChargeV2Utils: isDeviceRooted -> false
+     * - com.tencent.camerasdk.avreport.DeviceInfo: isDeviceRooted -> false
+     * - org.light.device.LightDeviceUtils: isRooted -> false
+     * - com.tencent.gathererga.core.internal.provider.impl.UserInfoImpl: isRooted -> clean false provider result
+     */
+    private static void hookScreenSecurityAndRootDetection(XC_LoadPackage.LoadPackageParam lpparam) {
+        // 1. TenPay ScreenSecurityDetector
+        final String ssdCls = "com.tenpay.security.ScreenSecurityDetector";
+        hookSafe(ssdCls, "isAtRisk", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+                XposedEntry.log("[ScreenSecurity] Neutralized ScreenSecurityDetector.isAtRisk -> false");
+            }
+        });
+        hookSafe(ssdCls, "isScreenRecording", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe(ssdCls, "registerListener", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+            }
+        });
+        hookSafe(ssdCls, "registerScreenRecordingCallback", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(null);
+            }
+        });
+
+        // 2. TenPay & CameraSDK & LightDevice Root Checks
+        hookSafe("com.tenpay.charge.v2.util.ChargeV2Utils", "isDeviceRooted", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe("com.tencent.camerasdk.avreport.DeviceInfo", "isDeviceRooted", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe("org.light.device.LightDeviceUtils", "isRooted", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+
+        // 3. GathererGA UserInfoImpl.isRooted
+        final String userInfoCls = "com.tencent.gathererga.core.internal.provider.impl.UserInfoImpl";
+        hookSafe(userInfoCls, "isRooted", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.thisObject == null) return;
+                ClassLoader cl = p.thisObject.getClass().getClassLoader();
+                Class<?> resCls = XposedHelpers.findClassIfExists("com.tencent.gathererga.core.internal.provider.c", cl);
+                if (resCls != null) {
+                    try {
+                        Object fakeRes = XposedHelpers.newInstance(resCls, 0L, Boolean.FALSE);
+                        p.setResult(fakeRes);
+                        XposedEntry.log("[RootPatch] Sanitized UserInfoImpl.isRooted -> false");
+                        return;
+                    } catch (Throwable ignored) { }
+                }
+                Class<?> iface = XposedHelpers.findClassIfExists("com.tencent.gathererga.core.f", cl);
+                if (iface != null) {
+                    Object proxy = Proxy.newProxyInstance(cl, new Class<?>[]{iface}, new InvocationHandler() {
+                        @Override
+                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                            String mName = method.getName();
+                            if ("getErrorCode".equals(mName) || "a".equals(mName)) return 0L;
+                            if ("getResult".equals(mName) || "b".equals(mName)) return Boolean.FALSE;
+                            return null;
+                        }
+                    });
+                    p.setResult(proxy);
+                }
+            }
+        });
+    }
+
+    /**
+     * Package scanning, process enumeration, and PandoraEx app monitors defense:
+     * - com.tencent.qmethod.pandoraex.monitor.InstalledAppListMonitor
+     * - com.tencent.mobileqq.utils.PackageUtil
+     */
+    private static void hookPandoraAndPackageUtil(XC_LoadPackage.LoadPackageParam lpparam) {
+        final String[] sensitivePkgKeywords = {
+            "xposed", "lsposed", "magisk", "topjohnwu", "weishu", "bmax", "apatch", "frida",
+            "edxposed", "sandhook", "taichi", "riru", "zygisk", "fake", "location", "mock",
+            "turing", "xalsace", "qqbypass", "qauxv", "moe.ono", "lzlnb", "cnm"
+        };
+
+        // 1. PandoraEx InstalledAppListMonitor
+        final String monCls = "com.tencent.qmethod.pandoraex.monitor.InstalledAppListMonitor";
+        hookSafe(monCls, "getPackageInfo", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
+                    String pkg = ((String) p.args[1]).toLowerCase();
+                    for (String kw : sensitivePkgKeywords) {
+                        if (pkg.contains(kw)) {
+                            p.setThrowable(new android.content.pm.PackageManager.NameNotFoundException((String) p.args[1]));
+                            XposedEntry.log("[PackageShield] PandoraEx getPackageInfo hidden: " + p.args[1]);
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        hookSafe(monCls, "getRunningAppProcesses", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.getResult() instanceof java.util.List) {
+                    java.util.List<?> list = (java.util.List<?>) p.getResult();
+                    java.util.List<Object> clean = new java.util.ArrayList<>();
+                    for (Object item : list) {
+                        if (item instanceof android.app.ActivityManager.RunningAppProcessInfo) {
+                            android.app.ActivityManager.RunningAppProcessInfo info = (android.app.ActivityManager.RunningAppProcessInfo) item;
+                            String proc = info.processName != null ? info.processName.toLowerCase() : "";
+                            boolean hide = false;
+                            for (String kw : sensitivePkgKeywords) {
+                                if (proc.contains(kw)) {
+                                    hide = true;
+                                    break;
+                                }
+                            }
+                            if (!hide && info.pkgList != null) {
+                                for (String pkg : info.pkgList) {
+                                    if (pkg != null) {
+                                        String pkgLower = pkg.toLowerCase();
+                                        for (String kw : sensitivePkgKeywords) {
+                                            if (pkgLower.contains(kw)) {
+                                                hide = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (hide) break;
+                                }
+                            }
+                            if (!hide) clean.add(item);
+                        } else {
+                            clean.add(item);
+                        }
+                    }
+                    p.setResult(clean);
+                }
+            }
+        });
+
+        // 2. PackageUtil
+        final String pkgUtilCls = "com.tencent.mobileqq.utils.PackageUtil";
+        hookSafe(pkgUtilCls, "isAppInstalled", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
+                    String pkg = ((String) p.args[1]).toLowerCase();
+                    for (String kw : sensitivePkgKeywords) {
+                        if (pkg.contains(kw)) {
+                            p.setResult(false);
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        hookSafe(pkgUtilCls, "checkAppInstalled", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
+                    String pkg = ((String) p.args[1]).toLowerCase();
+                    for (String kw : sensitivePkgKeywords) {
+                        if (pkg.contains(kw)) {
+                            p.setResult("0");
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        hookSafe(pkgUtilCls, "checkAppInstalledBatch", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
+                    String req = ((String) p.args[1]).toLowerCase();
+                    for (String kw : sensitivePkgKeywords) {
+                        if (req.contains(kw)) {
+                            String[] parts = ((String) p.args[1]).split("\\|");
+                            StringBuilder sb = new StringBuilder();
+                            for (int i = 0; i < parts.length; i++) {
+                                if (i > 0) sb.append("|");
+                                sb.append("0");
+                            }
+                            p.setResult(sb.toString());
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Dtc (Device Telemetry Center) Defense:
+     * - isAbnormalConfig -> false
+     * - isDebugVersion -> false
+     * - checkAppInstalled -> sanitize
+     * - getAccessibility* -> sanitize
+     * - getNetworkInterfaceNames -> "wlan0,rmnet_data0"
+     */
+    private static void hookDtcTelemetry(XC_LoadPackage.LoadPackageParam lpparam) {
+        final String dtcCls = "com.tencent.mobileqq.dt.app.Dtc";
+        hookSafe(dtcCls, "isAbnormalConfig", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+                XposedEntry.log("[DtcPatch] Suppressed Dtc.isAbnormalConfig -> false");
+            }
+        });
+        hookSafe(dtcCls, "isDebugVersion", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe("com.tencent.util.AppSetting", "isDebugVersion", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        });
+        hookSafe(dtcCls, "getNetworkInterfaceNames", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult("wlan0,rmnet_data0");
+            }
+        });
+        hookSafe(dtcCls, "getAccessibilityEnabledStatus", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(0);
+            }
+        });
+        hookSafe(dtcCls, "getAccessibilityEnabledServiceList", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult("");
+            }
+        });
+        hookSafe(dtcCls, "getAccessibilityServiceList", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult("");
             }
         });
     }
@@ -802,6 +1108,18 @@ public class QQ950PatchHook {
                 HookUtils.hookAllMethods(kickApiImplCls, "kick", kickApiHook);
                 HookUtils.hookAllMethods(kickApiImplCls, "onKickedOffLine", kickApiHook);
                 HookUtils.hookAllMethods(kickApiImplCls, "onKicked", kickApiHook);
+                HookUtils.hookAllMethods(kickApiImplCls, "shouldIgnoreNotifyMsfStatusChanged", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                        p.setResult(true);
+                    }
+                });
+                HookUtils.hookAllMethods(kickApiImplCls, "getBeInterceptor", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                        p.setResult(true);
+                    }
+                });
                 XposedEntry.log("[KickShield] Hooked KickApiImpl methods (switchable)");
             }
 

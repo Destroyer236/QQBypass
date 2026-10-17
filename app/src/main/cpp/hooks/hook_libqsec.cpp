@@ -184,7 +184,8 @@ void install_qsec_hooks() {
         "libthreadsuspend.so", "libqqPerfNativeTool.so",
         "libcuckoo.so", "libwarbler.so", "libtsmqqsc.so",
         "libqq_la.so", "libqqdid.so", "libturingxq.so", "libturingmfa.so",
-        "libtencentloc.so", nullptr
+        "libtencentloc.so", "libshadowhook.so", "libbugly_shadowhook.so",
+        "libMMANDKSignature.so", "liblogcathook.so", nullptr
     };
     for (int i = 0; targets[i]; i++) {
         const char* target = targets[i];
