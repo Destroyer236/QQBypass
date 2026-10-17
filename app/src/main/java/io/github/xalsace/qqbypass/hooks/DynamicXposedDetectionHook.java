@@ -461,6 +461,8 @@ public class DynamicXposedDetectionHook {
             || lower.startsWith("lzlnb.cnm.")
             || lower.startsWith("cnm0.")
             || lower.contains("neibuff")
+            || lower.startsWith("com.applisto.appcloner.")
+            || lower.contains("appcloner")
             || lower.startsWith("lzlnb.");
     }
 

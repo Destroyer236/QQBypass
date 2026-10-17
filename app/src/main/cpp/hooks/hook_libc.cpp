@@ -91,7 +91,9 @@ static bool is_caller_security_dso(void* return_address) {
             strstr(f, "libqsec") || strstr(f, "libsec") ||
             strstr(f, "libtears") || strstr(f, "libbeacon") ||
             strstr(f, "libwtlogin") || strstr(f, "libmsaoaidsec") ||
-            strstr(f, "libqzone_check") || strstr(f, "libdexloader")) {
+            strstr(f, "libqzone_check") || strstr(f, "libdexloader") ||
+            strstr(f, "libtsmqqsc") || strstr(f, "libbugly") ||
+            strstr(f, "libandroid_desensitization")) {
             return true;
         }
     }
@@ -167,6 +169,11 @@ bool is_sensitive_path(const char* path) {
         "bytehook", "native-bypass", "apatch", "fusehide", "simplehook",
         "libchecker", "shizuku", "vtools", "bin.mt", "bin.mt.plus", "bin.mt.termex",
         "thanos", "termux", "duckusb",
+        "me.weishu.kernelsu", "me.bmax.apatch", "eu.chainfire.supersu",
+        "com.koushikdutta.superuser", "com.noshufou.android.su", "com.kingroot.kinguser",
+        "com.kingo.root", "com.smedialink.oneclickroot", "com.zhiqupk.root.global",
+        "com.shuame.rootgenius", "com.applisto.appcloner", ".android_system_config.prop",
+        "ku.sud", "shuamesu", "libbugly_shadowhook", "libshadowhook_nothing",
         "/data/data/io.github.qauxv", "/data/user/0/io.github.qauxv",
         nullptr
     };
@@ -256,7 +263,10 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "thanos", "termux", "duckusb", "lspatch",
         "org.lsposed.lspatch", "moe.ono", "ono_mmkv", "ono_hcb_",
         "lzlnb", "libcnm", "liball-jni", "cnm0",
-        "sesearchcache", "kc.dat", ".se", nullptr
+        "sesearchcache", "kc.dat", ".se",
+        "kernelsu", "apatch", "supersu", "superuser", "kingroot", "kinguser",
+        "oneclickroot", "rootgenius", "shuamesu", "appcloner", "microvirtd",
+        nullptr
     };
     for (int i = 0; root_patterns[i]; i++) {
         if (strcasestr(name, root_patterns[i])) return true;
@@ -466,7 +476,7 @@ FILE* build_filtered_smaps() {
     return fake;
 }
 
-// 构造过滤掉 root / magisk 挂载点的 mounts 临时文件
+// 构造过滤掉 root / magisk / loop 挂载点的 mounts 临时文件
 FILE* build_filtered_mounts() {
     ensure_real_funcs();
     if (!real_fopen_ptr || !real_fgets_ptr) return nullptr;
@@ -483,8 +493,9 @@ FILE* build_filtered_mounts() {
 
     char line[512];
     const char* blacklist[] = {
-        "magisk", "core/mirror", "core/img", "/data/adb",
-        "modules", "ksu", "apatch", "overlay", "lsposed",
+        "/dev/block/loop", "magisk", "core/mirror", "core/img", "/data/adb",
+        "modules", "ksu", "apatch", "overlay", "lsposed", "lspatch",
+        "moe.ono", "ono_mmkv", "lzlnb", "cnm",
         nullptr
     };
 
@@ -498,6 +509,87 @@ FILE* build_filtered_mounts() {
     fclose(real);
     rewind(fake);
     return fake;
+}
+
+// 构造过滤掉 root / loop 设备 / 模块 / overlay 挂载的 mountinfo 虚拟文件
+FILE* build_filtered_mountinfo() {
+    ensure_real_funcs();
+    if (!real_fopen_ptr || !real_fgets_ptr) return nullptr;
+
+    FILE* real = real_fopen_ptr("/proc/self/mountinfo", "r");
+    if (!real) real = real_fopen_ptr("/proc/mountinfo", "r");
+    if (!real) return nullptr;
+
+    FILE* fake = create_memory_file("mountinfo");
+    if (!fake) {
+        fclose(real);
+        return nullptr;
+    }
+
+    char line[2048];
+    const char* blacklist[] = {
+        "/dev/block/loop", "magisk", "core/mirror", "core/img", "/data/adb",
+        "modules", "ksu", "apatch", "overlay", "lsposed", "lspatch",
+        "moe.ono", "ono_mmkv", "lzlnb", "cnm",
+        nullptr
+    };
+
+    while (real_fgets_ptr(line, sizeof(line), real)) {
+        bool filter = false;
+        for (int i = 0; blacklist[i]; i++) {
+            if (strcasestr(line, blacklist[i])) { filter = true; break; }
+        }
+        if (!filter) fputs(line, fake);
+    }
+    fclose(real);
+    rewind(fake);
+    return fake;
+}
+
+// 构造沙箱默认 SELinux context 虚拟文件，防止 Turing 检测到 permissive 或 root domain
+FILE* build_filtered_selinux_attr() {
+    FILE* fake = create_memory_file("attr_current");
+    if (!fake) return nullptr;
+    fputs("u:r:untrusted_app:s0:c512,c768\n", fake);
+    rewind(fake);
+    return fake;
+}
+
+static bool is_proc_mountinfo_path(const char* path) {
+    if (!path) return false;
+    return (strcmp(path, "/proc/self/mountinfo") == 0 ||
+            strcmp(path, "/proc/thread-self/mountinfo") == 0 ||
+            (strncmp(path, "/proc/", 6) == 0 && strstr(path, "/mountinfo")));
+}
+
+static bool is_proc_mounts_path(const char* path) {
+    if (!path) return false;
+    return (strcmp(path, "/proc/mounts") == 0 ||
+            strcmp(path, "/proc/self/mounts") == 0 ||
+            strcmp(path, "/proc/thread-self/mounts") == 0 ||
+            (strncmp(path, "/proc/", 6) == 0 && strstr(path, "/mounts")));
+}
+
+static bool is_proc_attr_current_path(const char* path) {
+    if (!path) return false;
+    return (strcmp(path, "/proc/self/attr/current") == 0 ||
+            strcmp(path, "/proc/thread-self/attr/current") == 0 ||
+            (strncmp(path, "/proc/", 6) == 0 && strstr(path, "/attr/current")));
+}
+
+static bool is_sensitive_prop_name(const char* name) {
+    if (!name) return false;
+    const char* props[] = {
+        "magisk", "ksu", "apatch", "microvirtd",
+        ".android_system_config.prop",
+        "vbox", "qemu", "goldfish", "nox",
+        "genymotion", "bluestacks", "bignox",
+        "droid4x", "andy", "ttVM", nullptr
+    };
+    for (int i = 0; props[i]; i++) {
+        if (strcasestr(name, props[i])) return true;
+    }
+    return false;
 }
 
 // 构造过滤掉 TracerPid / 跟踪调试状态的 status 虚拟文件
@@ -578,11 +670,19 @@ static FILE* fake_fopen(const char* pathname, const char* mode) {
             FILE* fake = build_filtered_maps();
             if (fake) return fake;
         }
-        if (strcmp(pathname, "/proc/mounts") == 0 ||
-            strcmp(pathname, "/proc/self/mounts") == 0 ||
-            strcmp(pathname, "/proc/self/mountinfo") == 0) {
+        if (is_proc_mountinfo_path(pathname)) {
+            LOGI("Intercepted fopen mountinfo: %s", pathname);
+            FILE* fake = build_filtered_mountinfo();
+            if (fake) return fake;
+        }
+        if (is_proc_mounts_path(pathname)) {
             LOGI("Intercepted fopen mounts: %s", pathname);
             FILE* fake = build_filtered_mounts();
+            if (fake) return fake;
+        }
+        if (is_proc_attr_current_path(pathname)) {
+            LOGI("Intercepted fopen attr/current: %s", pathname);
+            FILE* fake = build_filtered_selinux_attr();
             if (fake) return fake;
         }
         if (strcmp(pathname, "/proc/self/status") == 0 ||
@@ -680,11 +780,27 @@ static int fake_open(const char* pathname, int flags, ...) {
                 return fd;
             }
         }
-        if (strcmp(pathname, "/proc/mounts") == 0 ||
-            strcmp(pathname, "/proc/self/mounts") == 0 ||
-            strcmp(pathname, "/proc/self/mountinfo") == 0) {
+        if (is_proc_mountinfo_path(pathname)) {
+            LOGI("Intercepted open mountinfo: %s", pathname);
+            FILE* fake = build_filtered_mountinfo();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (is_proc_mounts_path(pathname)) {
             LOGI("Intercepted open mounts: %s", pathname);
             FILE* fake = build_filtered_mounts();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (is_proc_attr_current_path(pathname)) {
+            LOGI("Intercepted open attr/current: %s", pathname);
+            FILE* fake = build_filtered_selinux_attr();
             if (fake) {
                 int fd = dup(fileno(fake));
                 fclose(fake);
@@ -771,11 +887,27 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
                 return fd;
             }
         }
-        if (strcmp(pathname, "/proc/mounts") == 0 ||
-            strcmp(pathname, "/proc/self/mounts") == 0 ||
-            strcmp(pathname, "/proc/self/mountinfo") == 0) {
+        if (is_proc_mountinfo_path(pathname)) {
+            LOGI("Intercepted openat mountinfo: %s", pathname);
+            FILE* fake = build_filtered_mountinfo();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (is_proc_mounts_path(pathname)) {
             LOGI("Intercepted openat mounts: %s", pathname);
             FILE* fake = build_filtered_mounts();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (is_proc_attr_current_path(pathname)) {
+            LOGI("Intercepted openat attr/current: %s", pathname);
+            FILE* fake = build_filtered_selinux_attr();
             if (fake) {
                 int fd = dup(fileno(fake));
                 fclose(fake);
@@ -954,6 +1086,20 @@ static ssize_t sanitize_readlink_buffer(char* buf, size_t bufsiz, ssize_t ret) {
         }
     } else if (strstr(buf, "memfd:mounts")) {
         const char* rep = "/proc/mounts";
+        size_t rlen = strlen(rep);
+        if (bufsiz > rlen) {
+            strncpy(buf, rep, bufsiz);
+            return rlen;
+        }
+    } else if (strstr(buf, "memfd:mountinfo")) {
+        const char* rep = "/proc/self/mountinfo";
+        size_t rlen = strlen(rep);
+        if (bufsiz > rlen) {
+            strncpy(buf, rep, bufsiz);
+            return rlen;
+        }
+    } else if (strstr(buf, "memfd:attr_current")) {
+        const char* rep = "/proc/self/attr/current";
         size_t rlen = strlen(rep);
         if (bufsiz > rlen) {
             strncpy(buf, rep, bufsiz);
@@ -1210,7 +1356,7 @@ static int fake_system_property_get(const char* name, char* value) {
         strcpy(value, "stopped");
         return strlen("stopped");
     }
-    if (strstr(name, "magisk") || strstr(name, "ksu") || strstr(name, "apatch")) {
+    if (is_sensitive_prop_name(name)) {
         value[0] = '\0';
         return 0;
     }
@@ -1222,7 +1368,7 @@ static int fake_system_property_get(const char* name, char* value) {
 static const prop_info* fake_system_property_find(const char* name) {
     SAFE_BYTEHOOK_SCOPE();
     if (name) {
-        if (strstr(name, "magisk") || strstr(name, "ksu") || strstr(name, "apatch")) {
+        if (is_sensitive_prop_name(name)) {
             return nullptr;
         }
     }
@@ -1252,7 +1398,7 @@ static void prop_read_callback_wrapper(void* cookie, const char* name, const cha
     else if (strcmp(name, "persist.sys.adb.engineermode") == 0) spoof_val = "0";
     else if (strcmp(name, "sys.usb.config") == 0 || strcmp(name, "sys.usb.state") == 0 || strcmp(name, "persist.sys.usb.config") == 0) spoof_val = "none";
     else if (strcmp(name, "init.svc.adbd") == 0) spoof_val = "stopped";
-    else if (strstr(name, "magisk") || strstr(name, "ksu") || strstr(name, "apatch")) spoof_val = "";
+    else if (is_sensitive_prop_name(name)) spoof_val = "";
 
     if (pcc && pcc->orig_callback) {
         pcc->orig_callback(pcc->orig_cookie, name, spoof_val, serial);
@@ -1402,11 +1548,27 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
                     return fd;
                 }
             }
-            if (strcmp(path, "/proc/mounts") == 0 ||
-                strcmp(path, "/proc/self/mounts") == 0 ||
-                strcmp(path, "/proc/self/mountinfo") == 0) {
+            if (is_proc_mountinfo_path(path)) {
+                LOGI("fake_syscall: openat mountinfo redirected: %s", path);
+                FILE* fake = build_filtered_mountinfo();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
+            }
+            if (is_proc_mounts_path(path)) {
                 LOGI("fake_syscall: openat mounts redirected: %s", path);
                 FILE* fake = build_filtered_mounts();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
+            }
+            if (is_proc_attr_current_path(path)) {
+                LOGI("fake_syscall: openat attr/current redirected: %s", path);
+                FILE* fake = build_filtered_selinux_attr();
                 if (fake) {
                     int fd = dup(fileno(fake));
                     fclose(fake);

@@ -19,6 +19,8 @@ bool is_sensitive_name(const char* name);
 FILE* build_filtered_maps();
 FILE* build_filtered_smaps();
 FILE* build_filtered_mounts();
+FILE* build_filtered_mountinfo();
+FILE* build_filtered_selinux_attr();
 FILE* build_filtered_status();
 FILE* build_filtered_wchan();
 

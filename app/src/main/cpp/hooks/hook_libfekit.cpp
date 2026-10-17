@@ -43,6 +43,10 @@ static FILE* fake_popen(const char* command, const char* type) {
     SAFE_BYTEHOOK_SCOPE();
 
     if (command) {
+        if (strstr(command, "mountinfo") || strstr(command, "/proc/self/mountinfo")) {
+            LOGI("Redirected popen mountinfo: %s", command);
+            return hook_libc::build_filtered_mountinfo();
+        }
         if (strstr(command, "mount") || strstr(command, "/proc/mounts")) {
             LOGI("Redirected popen mount: %s", command);
             return hook_libc::build_filtered_mounts();
@@ -80,7 +84,14 @@ static char* fake_strstr(const char* haystack, const char* needle) {
             "bin.mt", "mt.plus", "top.nkbe.npatch", "npatch", "singleneuron", "bytebuddy",
             "nep.timeline", "me.ketal", "me.hd", "xyz.nextalone", "top.linl",
             "lspatch", "org.lsposed.lspatch", "moe.ono", "ono", "lzlnb", "cnm", "libcnm", "liball-jni",
-            "sesearchcache", nullptr
+            "sesearchcache",
+            "me.weishu.kernelsu", "me.bmax.apatch", "eu.chainfire.supersu",
+            "com.koushikdutta.superuser", "com.noshufou.android.su", "com.kingroot.kinguser",
+            "com.kingo.root", "com.smedialink.oneclickroot", "com.zhiqupk.root.global",
+            "com.shuame.rootgenius", "com.applisto.appcloner",
+            "RuntimeEnvCensor", "parse_libart", "detection_libfekit_file",
+            "VMStack_getThreadStackTrace", "trpc.o3.report.Report.SsoReport",
+            nullptr
         };
         for (int i = 0; sensitive[i]; i++) {
             if (strcasecmp(needle, sensitive[i]) == 0 || strstr(needle, sensitive[i])) {

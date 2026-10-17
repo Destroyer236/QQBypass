@@ -1694,7 +1694,9 @@ public class DynamicRootDetectionHook {
             || lower.contains("moe.ono") || lower.contains("lzlnb")
             || lower.contains("cnm") || lower.contains("libcnm")
             || lower.contains("liball-jni")
-            || lower.contains("duckusb") || lower.contains("termux");
+            || lower.contains("duckusb") || lower.contains("termux")
+            || lower.contains(".android_system_config.prop") || lower.contains("microvirtd")
+            || lower.contains("ku.sud") || lower.contains("shuamesu");
     }
 
     public static boolean isSuspiciousPackage(String pkg) {
@@ -1739,6 +1741,9 @@ public class DynamicRootDetectionHook {
             || lower.contains("duckusb") || lower.contains("droidvnc")
             || lower.contains("moe.ono") || lower.contains("lzlnb")
             || lower.contains("cnm")
+            || lower.contains("applisto") || lower.contains("kingroot")
+            || lower.contains("kinguser") || lower.contains("oneclickroot")
+            || lower.contains("rootgenius") || lower.contains("shuame")
             || lower.contains("termux") || lower.contains(".hook");
     }
 }
