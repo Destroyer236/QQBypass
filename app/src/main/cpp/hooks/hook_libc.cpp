@@ -180,6 +180,7 @@ bool is_sensitive_path(const char* path) {
         "libqqPerfNativeTool", "libandroid_desensitization", "libshadowhook",
         "init.svc.microvirtd", "config.prop", "/.android",
         "/data/data/io.github.qauxv", "/data/user/0/io.github.qauxv",
+        "mountify", "tricky_store", "metamodule", "ksud", "zygisksu",
         nullptr
     };
     for (int i = 0; hidden[i]; i++) {
@@ -507,6 +508,7 @@ FILE* build_filtered_mounts() {
         "/dev/block/loop", "magisk", "core/mirror", "core/img", "/data/adb",
         "modules", "ksu", "apatch", "overlay", "lsposed", "lspatch",
         "moe.ono", "ono_mmkv", "lzlnb", "cnm",
+        "mountify", "tricky_store", "metamodule", "ksud", "zygisksu",
         nullptr
     };
 
@@ -542,6 +544,7 @@ FILE* build_filtered_mountinfo() {
         "/dev/block/loop", "magisk", "core/mirror", "core/img", "/data/adb",
         "modules", "ksu", "apatch", "overlay", "lsposed", "lspatch",
         "moe.ono", "ono_mmkv", "lzlnb", "cnm",
+        "mountify", "tricky_store", "metamodule", "ksud", "zygisksu",
         nullptr
     };
 
@@ -555,6 +558,48 @@ FILE* build_filtered_mountinfo() {
     fclose(real);
     rewind(fake);
     return fake;
+}
+
+// 构造过滤掉 Xposed / LSPosed / Zygisk / Magisk / KernelSU unix domain socket 的 net/unix 虚拟文件
+FILE* build_filtered_net_unix() {
+    ensure_real_funcs();
+    if (!real_fopen_ptr || !real_fgets_ptr) return nullptr;
+
+    FILE* real = real_fopen_ptr("/proc/net/unix", "r");
+    if (!real) return nullptr;
+
+    FILE* fake = create_memory_file("net_unix");
+    if (!fake) {
+        fclose(real);
+        return nullptr;
+    }
+
+    char line[1024];
+    const char* blacklist[] = {
+        "lsp", "lspbridge", "lsp_dex2oat", "lsposed", "xposed",
+        "zn_", "zygisk", "magisk", "ksu", "ksud", "apatch", "daemonsu",
+        "qauxv", "ono", "lzlnb", "cnm", "frida", "mountify", "tricky_store",
+        nullptr
+    };
+
+    while (real_fgets_ptr(line, sizeof(line), real)) {
+        bool filter = false;
+        for (int i = 0; blacklist[i]; i++) {
+            if (strcasestr(line, blacklist[i])) { filter = true; break; }
+        }
+        if (!filter) fputs(line, fake);
+    }
+    fclose(real);
+    rewind(fake);
+    return fake;
+}
+
+static bool is_proc_net_unix_path(const char* path) {
+    if (!path) return false;
+    return (strcmp(path, "/proc/net/unix") == 0 ||
+            strcmp(path, "/proc/self/net/unix") == 0 ||
+            strcmp(path, "/proc/thread-self/net/unix") == 0 ||
+            (strncmp(path, "/proc/", 6) == 0 && strstr(path, "/net/unix")));
 }
 
 // 构造沙箱默认 SELinux context 虚拟文件，防止 Turing 检测到 permissive 或 root domain
@@ -730,6 +775,11 @@ static FILE* fake_fopen(const char* pathname, const char* mode) {
             FILE* fake = build_filtered_mounts();
             if (fake) return fake;
         }
+        if (is_proc_net_unix_path(pathname)) {
+            LOGI("Intercepted fopen net/unix: %s", pathname);
+            FILE* fake = build_filtered_net_unix();
+            if (fake) return fake;
+        }
         if (is_proc_attr_current_path(pathname)) {
             LOGI("Intercepted fopen attr/current: %s", pathname);
             FILE* fake = build_filtered_selinux_attr();
@@ -853,6 +903,15 @@ static int fake_open(const char* pathname, int flags, ...) {
                 return fd;
             }
         }
+        if (is_proc_net_unix_path(pathname)) {
+            LOGI("Intercepted open net/unix: %s", pathname);
+            FILE* fake = build_filtered_net_unix();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
         if (is_proc_attr_current_path(pathname)) {
             LOGI("Intercepted open attr/current: %s", pathname);
             FILE* fake = build_filtered_selinux_attr();
@@ -963,6 +1022,15 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
         if (is_proc_mounts_path(pathname)) {
             LOGI("Intercepted openat mounts: %s", pathname);
             FILE* fake = build_filtered_mounts();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (is_proc_net_unix_path(pathname)) {
+            LOGI("Intercepted openat net/unix: %s", pathname);
+            FILE* fake = build_filtered_net_unix();
             if (fake) {
                 int fd = dup(fileno(fake));
                 fclose(fake);
@@ -1672,6 +1740,15 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
             if (is_proc_mounts_path(path)) {
                 LOGI("fake_syscall: openat mounts redirected: %s", path);
                 FILE* fake = build_filtered_mounts();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
+            }
+            if (is_proc_net_unix_path(path)) {
+                LOGI("fake_syscall: openat net/unix redirected: %s", path);
+                FILE* fake = build_filtered_net_unix();
                 if (fake) {
                     int fd = dup(fileno(fake));
                     fclose(fake);

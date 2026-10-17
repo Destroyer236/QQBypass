@@ -41,9 +41,6 @@ public class RootDetectionHook {
 
         // Hook Runtime.exec to prevent su detection
         hookRuntimeExec();
-
-        // Hook PackageManager to hide root apps
-        hookPackageManager();
     }
 
     private static void hookWloginRoot() {
@@ -81,20 +78,27 @@ public class RootDetectionHook {
     }
 
     private static void hookFileExists() {
-        // Hook File.exists() to hide su binaries and root manager apps
-        HookUtils.hookMethod(File.class, "exists",
-            new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    File file = (File) param.thisObject;
-                    String path = file.getAbsolutePath();
-
-                    // Common su paths
-                    if (isSuspiciousPath(path)) {
+        // Hook File status methods to hide su binaries and root artifacts
+        XC_MethodHook fileCheckHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                File file = (File) param.thisObject;
+                String path = file.getAbsolutePath();
+                if (isSuspiciousPath(path)) {
+                    String methodName = param.method.getName();
+                    if ("length".equals(methodName)) {
+                        param.setResult(0L);
+                    } else {
                         param.setResult(false);
                     }
                 }
-            });
+            }
+        };
+
+        HookUtils.hookMethod(File.class, "exists", fileCheckHook);
+        HookUtils.hookMethod(File.class, "canRead", fileCheckHook);
+        HookUtils.hookMethod(File.class, "canExecute", fileCheckHook);
+        HookUtils.hookMethod(File.class, "length", fileCheckHook);
     }
 
     private static void hookRuntimeExec() {
@@ -109,8 +113,8 @@ public class RootDetectionHook {
                         // Block root-detection commands
                         if (command.contains("su") ||
                             command.contains("magisk") ||
-                            command.contains("/system/xbin/which") ||
-                            command.contains("mount") && command.contains("grep")) {
+                            command.contains("which") ||
+                            (command.contains("mount") && command.contains("grep"))) {
 
                             XposedEntry.log("Blocked Runtime.exec: " + command);
                             // Return a dummy process that exits immediately
@@ -121,23 +125,8 @@ public class RootDetectionHook {
             });
     }
 
-    private static void hookPackageManager() {
-        // Hook PackageManager to hide root management apps
-        String[] methods = {"getPackageInfo", "getApplicationInfo", "getInstalledPackages", "getInstalledApplications"};
-
-        for (String method : methods) {
-            HookUtils.hookAllMethods("android.app.ApplicationPackageManager", method,
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                        // Filter out root management apps from results
-                        // Implementation depends on return type
-                    }
-                });
-        }
-    }
-
     private static boolean isSuspiciousPath(String path) {
+        if (path == null) return false;
         // Comprehensive list of root-related paths
         String[] suspiciousPaths = {
             "/data/local/su",
@@ -155,15 +144,15 @@ public class RootDetectionHook {
             "/system/etc/init.d/99SuperSUDaemon",
             "/dev/com.koushikdutta.superuser.daemon/",
             "/system/xbin/daemonsu",
-            // Magisk
-            "/data/adb/magisk",
+            // Magisk & KernelSU & APatch
+            "/data/adb",
             "/sbin/.magisk",
             "/cache/magisk.log",
-            "/data/magisk.img",
-            "/data/adb/magisk.img",
-            // KernelSU
-            "/data/adb/ksu",
-            "/data/adb/ksud"
+            "mountify",
+            "tricky_store",
+            "zygisksu",
+            "metamodule",
+            "busybox"
         };
 
         for (String suspicious : suspiciousPaths) {

@@ -69,6 +69,7 @@ public class NetworkReportHook {
 
         // Inspection checks (TuringFD /proc scanner neutralization)
         hookTuringFD(lpparam);
+        hookTuringEridanus(lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader());
     }
 
     /**
@@ -315,6 +316,76 @@ public class NetworkReportHook {
                 XposedEntry.log("[TuringFD] proc-reader lookup failed: " + t.getMessage());
             }
         }).start();
+    }
+
+    private static boolean isSensitiveTuringPath(String path) {
+        if (path == null) return false;
+        String lower = path.toLowerCase();
+        return lower.contains("/system/bin/su") || lower.contains("/system/xbin/su") ||
+               lower.contains("/sbin/su") || lower.contains("/data/local/su") ||
+               lower.contains("/data/adb") || lower.contains("magisk") ||
+               lower.contains("kernelsu") || lower.contains("apatch") ||
+               lower.contains("xposed") || lower.contains("lsposed") ||
+               lower.contains("qauxv") || lower.contains("busybox") ||
+               lower.contains("mountify") || lower.contains("tricky_store") ||
+               lower.contains("zygisksu") || lower.contains("frida") ||
+               lower.contains("bin.mt") || lower.contains("daemonsu");
+    }
+
+    private static void hookTuringEridanus(ClassLoader cl) {
+        if (cl == null) return;
+        String[] eridanusClasses = {
+            "com.tencent.turingfd.sdk.xq.Eridanus",
+            "com.tencent.tfd.sdk.wxa.Eridanus"
+        };
+        for (String clsName : eridanusClasses) {
+            Class<?> clazz = XposedHelpers.findClassIfExists(clsName, cl);
+            if (clazz != null) {
+                XC_MethodHook byteReaderHook = new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args == null || param.args.length < 1 || !(param.args[0] instanceof String)) {
+                            return;
+                        }
+                        String path = (String) param.args[0];
+                        if (path == null) return;
+
+                        if (isSensitiveTuringPath(path)) {
+                            XposedEntry.log("[TuringEridanus] Blocked sensitive file read: " + path);
+                            param.setResult(null);
+                            return;
+                        }
+
+                        if (path.contains("/status") && path.startsWith("/proc/")) {
+                            XposedEntry.log("[TuringEridanus] Sanitized status read: " + path);
+                            String fakeStatus = "Name:\tcom.tencent.mobileqq\nState:\tS (sleeping)\nTgid:\t" 
+                                + android.os.Process.myPid() + "\nPid:\t" + android.os.Process.myPid() 
+                                + "\nPPid:\t1\nTracerPid:\t0\nUid:\t10361\t10361\t10361\t10361\nGid:\t10361\t10361\t10361\t10361\n";
+                            param.setResult(fakeStatus.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            return;
+                        }
+
+                        if (path.contains("/cmdline") && path.startsWith("/proc/")) {
+                            param.setResult("com.tencent.mobileqq\0".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            return;
+                        }
+
+                        if (path.contains("selinux/enforce")) {
+                            param.setResult("1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            return;
+                        }
+
+                        if (path.contains("net/unix")) {
+                            param.setResult("".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            return;
+                        }
+                    }
+                };
+                HookUtils.hookAllMethods(clazz, "a", byteReaderHook);
+                HookUtils.hookAllMethods(clazz, "b", byteReaderHook);
+                XposedEntry.log("[TuringFD] Hooked Eridanus byte readers on " + clsName);
+            }
+        }
     }
 
     private static void hookWlogin(XC_LoadPackage.LoadPackageParam lpparam) {

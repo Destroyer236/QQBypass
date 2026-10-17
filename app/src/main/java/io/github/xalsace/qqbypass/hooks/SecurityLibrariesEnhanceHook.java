@@ -540,9 +540,9 @@ public class SecurityLibrariesEnhanceHook {
     }
 
     /**
-     * 6. Neutralize MSF Core offline kick dispatch:
+     * 6. Switchable MSF Core offline kick dispatch:
      * com.tencent.mobileqq.msf.core.t.a(FromServiceMsg, ToServiceMsg)
-     * Suppresses StatSvc.ReqMSFOffline, StatSvc.ReqForceOffline, MessageSvc.PushForceOffline.
+     * Suppresses StatSvc.ReqMSFOffline, StatSvc.ReqForceOffline, MessageSvc.PushForceOffline when enabled.
      */
     private static void hookMSFCoreKick(ClassLoader cl) {
         final String tCls = "com.tencent.mobileqq.msf.core.t";
@@ -566,13 +566,17 @@ public class SecurityLibrariesEnhanceHook {
                                 "StatSvc.ReqForceOffline".equals(cmd) ||
                                 "MessageSvc.PushForceOffline".equals(cmd) ||
                                 (cmd != null && cmd.toLowerCase().contains("offlinepush"))) {
-                                XposedEntry.log("[MSFShield] Dropped MSF offline push packet: cmd=" + cmd);
-                                param.setResult(true);
+                                if (HookConfig.isKickInterceptEnabled()) {
+                                    XposedEntry.log("[MSFShield] Dropped MSF offline push packet: cmd=" + cmd);
+                                    param.setResult(true);
+                                } else {
+                                    XposedEntry.log("[MSFDiagnostic] Observed MSF offline push packet: cmd=" + cmd);
+                                }
                             }
                         }
                     }
                 });
-                XposedEntry.log("[MSFShield] Successfully hooked com.tencent.mobileqq.msf.core.t for offline kick suppression");
+                XposedEntry.log("[MSFShield] Successfully hooked com.tencent.mobileqq.msf.core.t (switchable)");
             }
         });
     }

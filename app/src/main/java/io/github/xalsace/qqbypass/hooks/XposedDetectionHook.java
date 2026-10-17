@@ -34,7 +34,34 @@ public class XposedDetectionHook {
         "org.meowcat.edxposed.manager",
         "io.github.lsposed.manager",
         "org.lsposed.manager",
-        "com.topjohnwu.magisk"
+        "com.topjohnwu.magisk",
+        "io.github.vvb2060.magisk",
+        "me.weishu.kernelsu",
+        "com.sukernel",
+        "io.github.a13e300.ksuwebui",
+        "me.bmax.apatch",
+        "top.canyie.pine",
+        "top.nkbe.npatch",
+        "org.lsposed.lspatch",
+        "io.github.qauxv",
+        "moe.ono",
+        "bin.mt.plus",
+        "bin.mt.manager",
+        "bin.mt.termex",
+        "com.termux",
+        "eu.chainfire.supersu",
+        "com.koushikdutta.superuser",
+        "com.noshufou.android.su",
+        "com.kingroot.kinguser",
+        "com.kingo.root",
+        "com.smedialink.oneclickroot",
+        "com.zhiqupk.root.global",
+        "com.shuame.rootgenius",
+        "com.applisto.appcloner",
+        "com.catchingnow.icebox",
+        "com.fakemydevice",
+        "re.frida.server",
+        "io.github.xalsace.qqbypass"
     };
 
     private static final String[] HOOK_LIBRARY_PATTERNS = {
@@ -72,7 +99,7 @@ public class XposedDetectionHook {
             new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args.length > 0) {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String packageName = (String) param.args[0];
                         if (isXposedPackage(packageName)) {
                             XposedEntry.log("Blocked PackageManager query for: " + packageName);
@@ -87,7 +114,7 @@ public class XposedDetectionHook {
             new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args.length > 0) {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                         String packageName = (String) param.args[0];
                         if (isXposedPackage(packageName)) {
                             param.setThrowable(new android.content.pm.PackageManager.NameNotFoundException());
@@ -111,6 +138,50 @@ public class XposedDetectionHook {
                             if (!isXposedPackage(pkgName)) {
                                 filtered.add(pkg);
                             }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+        HookUtils.hookAllMethods("android.app.ApplicationPackageManager", "getInstalledApplications",
+            new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.getResult() != null) {
+                        @SuppressWarnings("unchecked")
+                        List<Object> apps = (List<Object>) param.getResult();
+                        List<Object> filtered = new ArrayList<>();
+
+                        for (Object app : apps) {
+                            String pkgName = (String) XposedHelpers.getObjectField(app, "packageName");
+                            if (!isXposedPackage(pkgName)) {
+                                filtered.add(app);
+                            }
+                        }
+                        param.setResult(filtered);
+                    }
+                }
+            });
+
+        HookUtils.hookAllMethods("android.app.ApplicationPackageManager", "queryIntentActivities",
+            new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.getResult() != null) {
+                        @SuppressWarnings("unchecked")
+                        List<Object> resolves = (List<Object>) param.getResult();
+                        List<Object> filtered = new ArrayList<>();
+
+                        for (Object ri : resolves) {
+                            Object activityInfo = XposedHelpers.getObjectField(ri, "activityInfo");
+                            if (activityInfo != null) {
+                                String pkgName = (String) XposedHelpers.getObjectField(activityInfo, "packageName");
+                                if (isXposedPackage(pkgName)) {
+                                    continue;
+                                }
+                            }
+                            filtered.add(ri);
                         }
                         param.setResult(filtered);
                     }
@@ -215,8 +286,16 @@ public class XposedDetectionHook {
 
     private static boolean isXposedPackage(String packageName) {
         if (packageName == null) return false;
+        String lower = packageName.toLowerCase();
+        if (lower.contains("lsposed") || lower.contains("edxposed") ||
+            lower.contains("kernelsu") || lower.contains("magisk") ||
+            lower.contains("apatch") || lower.contains("npatch") ||
+            lower.contains("xposed") || lower.contains("qauxv") ||
+            lower.contains("fakemydevice")) {
+            return true;
+        }
         for (String xposedPkg : XPOSED_PACKAGES) {
-            if (packageName.equals(xposedPkg)) {
+            if (packageName.equalsIgnoreCase(xposedPkg)) {
                 return true;
             }
         }

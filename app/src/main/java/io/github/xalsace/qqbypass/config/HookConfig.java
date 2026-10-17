@@ -11,8 +11,8 @@ public class HookConfig {
     public static ClassLoader classLoader;
 
     // Module version info & cache schema
-    public static final int MODULE_VERSION_CODE = 43;
-    public static final String MODULE_VERSION_NAME = "1.0.43";
+    public static final int MODULE_VERSION_CODE = 44;
+    public static final String MODULE_VERSION_NAME = "1.0.44";
     public static final int CACHE_SCHEMA_VERSION = 3;
 
     // Feature toggles
@@ -26,6 +26,37 @@ public class HookConfig {
     public static boolean ENABLE_RUNTIME_BYPASS = true;
     public static boolean ENABLE_QQ950_PATCH = true;        // QQ 9.3.50 detection-point completion
     public static boolean ENABLE_QQ950_RISK_BLOCK = true;   // Tier 2: object-return risk blocks (NPE-caveat; disable if NPE appears)
+
+    // Kick Interception feature toggle (可开关：拦截下线功能)
+    // 默认开启，但支持通过 flag 文件、系统属性动态即时关闭/开启
+    public static boolean ENABLE_KICK_INTERCEPT = true;
+
+    /**
+     * 判断当前是否开启拦截下线功能。
+     * 支持多层控制：
+     * 1. 禁用标记文件：/data/data/com.tencent.mobileqq/files/disable_kick_intercept (存在则关闭)
+     * 2. 启用标记文件：/data/data/com.tencent.mobileqq/files/enable_kick_intercept (存在则开启)
+     * 3. 系统属性：persist.qqbypass.kick_intercept (0/false关闭，1/true开启)
+     * 4. 默认回退到 ENABLE_KICK_INTERCEPT 静态配置
+     */
+    public static boolean isKickInterceptEnabled() {
+        try {
+            java.io.File disableFlag = new java.io.File("/data/data/com.tencent.mobileqq/files/disable_kick_intercept");
+            if (disableFlag.exists()) return false;
+            java.io.File enableFlag = new java.io.File("/data/data/com.tencent.mobileqq/files/enable_kick_intercept");
+            if (enableFlag.exists()) return true;
+        } catch (Throwable ignored) {}
+
+        try {
+            Class<?> spCls = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = spCls.getMethod("get", String.class, String.class);
+            String prop = (String) getMethod.invoke(null, "persist.qqbypass.kick_intercept", "");
+            if ("0".equals(prop) || "false".equalsIgnoreCase(prop)) return false;
+            if ("1".equals(prop) || "true".equalsIgnoreCase(prop)) return true;
+        } catch (Throwable ignored) {}
+
+        return ENABLE_KICK_INTERCEPT;
+    }
 
     // Verbose logging (output to LSPosed log via XposedBridge.log)
     public static boolean VERBOSE_LOGGING = true;
