@@ -44,3 +44,8 @@ fastlane/readme.md
 *.swp
 *~
 .DS_Store
+
+# Local private notes
+变更.md
+*.md.bak
+
