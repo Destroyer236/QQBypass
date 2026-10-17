@@ -178,6 +178,7 @@ bool is_sensitive_path(const char* path) {
         "ku.sud", "shuamesu", "libbugly_shadowhook", "libshadowhook_nothing",
         "busybox", "sudo", "bdsu", "sutemp", ".su", "com.topjohnwu.magisk", "topjohnwu",
         "libqqPerfNativeTool", "libandroid_desensitization", "libshadowhook",
+        "init.svc.microvirtd", "config.prop", "/.android",
         "/data/data/io.github.qauxv", "/data/user/0/io.github.qauxv",
         nullptr
     };
@@ -275,7 +276,7 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "sesearchcache", "kc.dat", ".se",
         "kernelsu", "apatch", "supersu", "superuser", "kingroot", "kinguser",
         "oneclickroot", "rootgenius", "shuamesu", "appcloner", "microvirtd",
-        "bdsu", "sutemp", "sudo",
+        "bdsu", "sutemp", "sudo", "config.prop", "init.svc.microvirtd",
         nullptr
     };
     for (int i = 0; root_patterns[i]; i++) {
@@ -587,6 +588,13 @@ static bool is_proc_attr_current_path(const char* path) {
             (strncmp(path, "/proc/", 6) == 0 && strstr(path, "/attr/current")));
 }
 
+static bool is_proc_cgroup_path(const char* path) {
+    if (!path) return false;
+    return (strcmp(path, "/proc/self/cgroup") == 0 ||
+            strcmp(path, "/proc/thread-self/cgroup") == 0 ||
+            (strncmp(path, "/proc/", 6) == 0 && strstr(path, "/cgroup")));
+}
+
 static bool is_sensitive_prop_name(const char* name) {
     if (!name) return false;
     const char* props[] = {
@@ -636,6 +644,38 @@ FILE* build_filtered_wchan() {
     FILE* fake = create_memory_file("wchan");
     if (!fake) return nullptr;
     fputs("sys_epoll_wait\n", fake);
+    rewind(fake);
+    return fake;
+}
+
+// 构造过滤掉 container/docker/root/termux 标志的 cgroup 虚拟文件
+FILE* build_filtered_cgroup() {
+    ensure_real_funcs();
+    if (!real_fopen_ptr || !real_fgets_ptr) return nullptr;
+
+    FILE* real = real_fopen_ptr("/proc/self/cgroup", "r");
+    if (!real) return nullptr;
+
+    FILE* fake = create_memory_file("cgroup");
+    if (!fake) {
+        fclose(real);
+        return nullptr;
+    }
+
+    char line[512];
+    const char* blacklist[] = {
+        "termux", "docker", "lxc", "container", "magisk", "root", "daemon",
+        nullptr
+    };
+
+    while (real_fgets_ptr(line, sizeof(line), real)) {
+        bool filter = false;
+        for (int i = 0; blacklist[i]; i++) {
+            if (strcasestr(line, blacklist[i])) { filter = true; break; }
+        }
+        if (!filter) fputs(line, fake);
+    }
+    fclose(real);
     rewind(fake);
     return fake;
 }
@@ -693,6 +733,11 @@ static FILE* fake_fopen(const char* pathname, const char* mode) {
         if (is_proc_attr_current_path(pathname)) {
             LOGI("Intercepted fopen attr/current: %s", pathname);
             FILE* fake = build_filtered_selinux_attr();
+            if (fake) return fake;
+        }
+        if (is_proc_cgroup_path(pathname)) {
+            LOGI("Intercepted fopen cgroup: %s", pathname);
+            FILE* fake = build_filtered_cgroup();
             if (fake) return fake;
         }
         if (strcmp(pathname, "/proc/self/status") == 0 ||
@@ -817,6 +862,15 @@ static int fake_open(const char* pathname, int flags, ...) {
                 return fd;
             }
         }
+        if (is_proc_cgroup_path(pathname)) {
+            LOGI("Intercepted open cgroup: %s", pathname);
+            FILE* fake = build_filtered_cgroup();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
         if (strcmp(pathname, "/proc/self/status") == 0 ||
             (strstr(pathname, "/proc/") && strstr(pathname, "/status"))) {
             LOGI("Intercepted open status: %s", pathname);
@@ -918,6 +972,15 @@ static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
         if (is_proc_attr_current_path(pathname)) {
             LOGI("Intercepted openat attr/current: %s", pathname);
             FILE* fake = build_filtered_selinux_attr();
+            if (fake) {
+                int fd = dup(fileno(fake));
+                fclose(fake);
+                return fd;
+            }
+        }
+        if (is_proc_cgroup_path(pathname)) {
+            LOGI("Intercepted openat cgroup: %s", pathname);
+            FILE* fake = build_filtered_cgroup();
             if (fake) {
                 int fd = dup(fileno(fake));
                 fclose(fake);
@@ -1122,6 +1185,13 @@ static ssize_t sanitize_readlink_buffer(char* buf, size_t bufsiz, ssize_t ret) {
             strncpy(buf, rep, bufsiz);
             return rlen;
         }
+    } else if (strstr(buf, "memfd:cgroup")) {
+        const char* rep = "/proc/self/cgroup";
+        size_t rlen = strlen(rep);
+        if (bufsiz > rlen) {
+            strncpy(buf, rep, bufsiz);
+            return rlen;
+        }
     }
     return ret;
 }
@@ -1223,6 +1293,7 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
             const char* sec_hidden[] = {
                 "libbugly_shadowhook", "libshadowhook", "librmonitor_base",
                 "librmonitor", "libqqPerfNativeTool", "libandroid_desensitization",
+                "librmonitor_memory", "libBugly-rqd", "libBugly_Native", "libBugly",
                 nullptr
             };
             for (int i = 0; sec_hidden[i]; i++) {
@@ -1275,6 +1346,7 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
             const char* sec_hidden[] = {
                 "libbugly_shadowhook", "libshadowhook", "librmonitor_base",
                 "librmonitor", "libqqPerfNativeTool", "libandroid_desensitization",
+                "librmonitor_memory", "libBugly-rqd", "libBugly_Native", "libBugly",
                 nullptr
             };
             for (int i = 0; sec_hidden[i]; i++) {
@@ -1609,6 +1681,15 @@ long fake_syscall(long number, void* a1, void* a2, void* a3, void* a4, void* a5,
             if (is_proc_attr_current_path(path)) {
                 LOGI("fake_syscall: openat attr/current redirected: %s", path);
                 FILE* fake = build_filtered_selinux_attr();
+                if (fake) {
+                    int fd = dup(fileno(fake));
+                    fclose(fake);
+                    return fd;
+                }
+            }
+            if (is_proc_cgroup_path(path)) {
+                LOGI("fake_syscall: openat cgroup redirected: %s", path);
+                FILE* fake = build_filtered_cgroup();
                 if (fake) {
                     int fd = dup(fileno(fake));
                     fclose(fake);

@@ -56,6 +56,7 @@ public class SecurityLibrariesEnhanceHook {
         hookShadowHook(cl);
         hookQQPerfNativeTool(cl);
         hookDesensitization(cl);
+        hookRMonitorAndBuglyDumpers(cl);
     }
 
     /**
@@ -357,6 +358,108 @@ public class SecurityLibrariesEnhanceHook {
             return "java.lang.Throwable: Normal\n\tat android.os.MessageQueue.nativePollOnce(Native Method)\n";
         }
         return sb.toString();
+    }
+
+    /**
+     * 5. Neutralize RMonitor and Bugly In-Memory Thread & Heap Dumpers (librmonitor_base.so / bytehook)
+     */
+    private static void hookRMonitorAndBuglyDumpers(ClassLoader cl) {
+        // com.tencent.rmonitor.base.thread.suspend.ThreadSuspend: hooks ART stack trace & suspends threads
+        hookSafe(cl, "com.tencent.rmonitor.base.thread.suspend.ThreadSuspend", new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                for (Method m : clazz.getDeclaredMethods()) {
+                    String name = m.getName();
+                    if ("nativeHookStackTrace".equals(name)) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                p.setResult(false);
+                                XposedEntry.log("[RMonitorPatch] Neutralized ThreadSuspend.nativeHookStackTrace");
+                            }
+                        });
+                    } else if ("nativeInit".equals(name)) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                p.setResult(0);
+                                XposedEntry.log("[RMonitorPatch] Neutralized ThreadSuspend.nativeInit");
+                            }
+                        });
+                    } else if ("nativeSuspendThread".equals(name)) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                p.setResult(false);
+                            }
+                        });
+                    } else if ("nativeResumeThread".equals(name)) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                p.setResult(true);
+                            }
+                        });
+                    }
+                }
+            }
+        });
+
+        // com.tencent.bugly.common.heapdump.StripHeapDumper: hooks open/write via ByteHook
+        hookSafe(cl, "com.tencent.bugly.common.heapdump.StripHeapDumper", new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                for (Method m : clazz.getDeclaredMethods()) {
+                    String name = m.getName();
+                    if (name.startsWith("nSet") || name.startsWith("nEnable") || name.startsWith("nStrip")) {
+                        Class<?> ret = m.getReturnType();
+                        if (ret == boolean.class) {
+                            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                                @Override
+                                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                    p.setResult(false);
+                                }
+                            });
+                        } else if (ret == void.class) {
+                            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                                @Override
+                                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                    p.setResult(null);
+                                }
+                            });
+                        }
+                    }
+                }
+                XposedEntry.log("[BuglyPatch] Neutralized StripHeapDumper native hooks");
+            }
+        });
+
+        // com.tencent.bugly.common.heapdump.ForkJvmHeapDumper: forks process to dump memory
+        hookSafe(cl, "com.tencent.bugly.common.heapdump.ForkJvmHeapDumper", new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                for (Method m : clazz.getDeclaredMethods()) {
+                    String name = m.getName();
+                    if ("nInitForkDump".equals(name)) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                p.setResult(false);
+                                XposedEntry.log("[BuglyPatch] Neutralized ForkJvmHeapDumper.nInitForkDump");
+                            }
+                        });
+                    } else if ("dump".equals(name)) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                p.setResult(101); // DUMP_DISABLED / FAIL
+                                XposedEntry.log("[BuglyPatch] Intercepted ForkJvmHeapDumper.dump");
+                            }
+                        });
+                    }
+                }
+            }
+        });
     }
 
     private interface ClassHookCallback {

@@ -298,15 +298,23 @@ public class QQ950PatchHook {
      * On result: ensure errorCode is sanitized to 0L while preserving the authentic deviceToken.
      * If the real execution returns null (e.g. init failure), fallback to safe dynamic proxy to avoid NPE.
      */
+    private static final java.util.Set<String> sHookedTuringClassNames =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     private static void hookTuringRiskDetect() {
-        if (!HookConfig.ENABLE_QQ950_RISK_BLOCK) return;
+        hookTuringRiskDetectWithClassLoader(HookConfig.getClassLoader());
+    }
+
+    public static void hookTuringRiskDetectWithClassLoader(ClassLoader cl) {
+        if (!HookConfig.ENABLE_QQ950_RISK_BLOCK || cl == null) return;
         String[] classes = {
             "com.tencent.tfd.sdk.wxa.TuringRiskService",
             "com.tencent.turingfd.sdk.xq.TuringRiskService"
         };
         for (final String cls : classes) {
-            if (!HookUtils.classExists(cls)) continue;
-            HookUtils.hookAllMethods(cls, "reqRiskDetectV2", new XC_MethodHook() {
+            Class<?> clazz = XposedHelpers.findClassIfExists(cls, cl);
+            if (clazz == null || !sHookedTuringClassNames.add(cls + "@" + cl.hashCode())) continue;
+            HookUtils.hookAllMethods(clazz, "reqRiskDetectV2", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                     Object result = p.getResult();
@@ -374,8 +382,9 @@ public class QQ950PatchHook {
             "com.tencent.tfd.sdk.wxa.o2"
         };
         for (String o2Cls : o2Classes) {
-            if (!HookUtils.classExists(o2Cls)) continue;
-            HookUtils.hookAllMethods(o2Cls, "getErrorCode", new XC_MethodHook() {
+            Class<?> clazz = XposedHelpers.findClassIfExists(o2Cls, cl);
+            if (clazz == null || !sHookedTuringClassNames.add(o2Cls + "@" + cl.hashCode())) continue;
+            HookUtils.hookAllMethods(clazz, "getErrorCode", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(0L);
@@ -436,13 +445,18 @@ public class QQ950PatchHook {
      * Fallback to safe proxy only if result is null to avoid NPE.
      */
     private static void hookTuringDID() {
-        if (!HookConfig.ENABLE_QQ950_RISK_BLOCK) return;
+        hookTuringDIDWithClassLoader(HookConfig.getClassLoader());
+    }
+
+    public static void hookTuringDIDWithClassLoader(ClassLoader cl) {
+        if (!HookConfig.ENABLE_QQ950_RISK_BLOCK || cl == null) return;
         String[] classes = {
             "com.tencent.tfd.sdk.wxa.TuringIDService",
             "com.tencent.turingfd.sdk.xq.TuringIDService"
         };
         for (final String cls : classes) {
-            if (!HookUtils.classExists(cls)) continue;
+            Class<?> clazz = XposedHelpers.findClassIfExists(cls, cl);
+            if (clazz == null || !sHookedTuringClassNames.add(cls + "@" + cl.hashCode())) continue;
             for (String m : new String[]{"getTuringDID", "getTuringDIDCached"}) {
                 HookUtils.hookAllMethods(cls, m, new XC_MethodHook() {
                     @Override
@@ -503,8 +517,9 @@ public class QQ950PatchHook {
             "com.tencent.tfd.sdk.wxa.h2"
         };
         for (String h2Cls : h2Classes) {
-            if (!HookUtils.classExists(h2Cls)) continue;
-            HookUtils.hookAllMethods(h2Cls, "getErrorCode", new XC_MethodHook() {
+            Class<?> clazz = XposedHelpers.findClassIfExists(h2Cls, cl);
+            if (clazz == null || !sHookedTuringClassNames.add(h2Cls + "@" + cl.hashCode())) continue;
+            HookUtils.hookAllMethods(clazz, "getErrorCode", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(0);
@@ -678,6 +693,9 @@ public class QQ950PatchHook {
         try {
             hookFaceRecognitionAndMFAWithClassLoader(cl);
             hookKickDiagnostics(cl);
+            hookTuringRiskDetectWithClassLoader(cl);
+            hookTuringDIDWithClassLoader(cl);
+            hookO3SecurityAndTelemetryWithClassLoader(cl);
         } catch (Throwable t) {
             XposedEntry.log("[LateStage] hookLateStage error: " + t.getMessage());
         }
@@ -1485,12 +1503,23 @@ public class QQ950PatchHook {
      * 5. MainProcess2Fe.b checks display refresh rate <= 30fps, displayId > 0, scrcpy, minicap and sends display_report.
      * 6. QSecChannelImpl sends feEnvReport ("face_detect"), feCameraActionReport ("camera_detect"), and collectReport.
      */
+    private static final java.util.Set<String> sHookedO3ClassNames =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     private static void hookO3SecurityAndTelemetry(XC_LoadPackage.LoadPackageParam lpparam) {
+        ClassLoader cl = lpparam != null && lpparam.classLoader != null ? lpparam.classLoader : HookConfig.getClassLoader();
+        hookO3SecurityAndTelemetryWithClassLoader(cl);
+    }
+
+    public static void hookO3SecurityAndTelemetryWithClassLoader(ClassLoader cl) {
+        if (cl == null) return;
+
         // 1. Hook com.tencent.qqprotect.report.O3Report
         final String o3ReportCls = "com.tencent.qqprotect.report.O3Report";
-        if (HookUtils.classExists(o3ReportCls)) {
+        Class<?> o3ReportClazz = XposedHelpers.findClassIfExists(o3ReportCls, cl);
+        if (o3ReportClazz != null && sHookedO3ClassNames.add(o3ReportCls + "@" + cl.hashCode())) {
             // Neutralize O3Report.d(String, String, String) - sign_report (attaId = "0df00071646")
-            HookUtils.hookAllMethods(o3ReportCls, "d", new XC_MethodHook() {
+            HookUtils.hookAllMethods(o3ReportClazz, "d", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(null);
@@ -1499,7 +1528,7 @@ public class QQ950PatchHook {
             });
 
             // Neutralize O3Report.b(String, List, String) - env_detect (attaId = "00e00075618")
-            HookUtils.hookAllMethods(o3ReportCls, "b", new XC_MethodHook() {
+            HookUtils.hookAllMethods(o3ReportClazz, "b", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(null);
@@ -1508,7 +1537,7 @@ public class QQ950PatchHook {
             });
 
             // Neutralize O3Report.c(String, List) - fakeLocationReport / nearLocationReport
-            HookUtils.hookAllMethods(o3ReportCls, "c", new XC_MethodHook() {
+            HookUtils.hookAllMethods(o3ReportClazz, "c", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult(null);
@@ -1517,7 +1546,7 @@ public class QQ950PatchHook {
             });
 
             // Sanitize / Fulfill O3Report.a(String, ArrayList, ProtoUtils.TroopProtocolObserver)
-            HookUtils.hookAllMethods(o3ReportCls, "a", new XC_MethodHook() {
+            HookUtils.hookAllMethods(o3ReportClazz, "a", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     if (p.args != null && p.args.length >= 3 && p.args[2] != null) {
@@ -1536,87 +1565,132 @@ public class QQ950PatchHook {
             });
         }
 
-        // 2. Hook O3ReportApiImpl & O3NotifySecApiImpl
-        HookUtils.hookAllMethods("com.tencent.qqprotect.qsec.api.impl.O3ReportApiImpl", "report", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-            }
-        });
-        HookUtils.hookAllMethods("com.tencent.qqprotect.qsec.api.impl.O3ReportApiImpl", "reportCommon", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-            }
-        });
-        HookUtils.hookAllMethods("com.tencent.qqprotect.qsec.api.impl.O3NotifySecApiImpl", "sendMessage", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-            }
-        });
+        // 2. Hook O3ReportApiImpl & O3NotifySecApiImpl & O3CollectDataApiImpl
+        Class<?> o3ReportApiCls = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.api.impl.O3ReportApiImpl", cl);
+        if (o3ReportApiCls != null && sHookedO3ClassNames.add("O3ReportApiImpl@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(o3ReportApiCls, "report", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(o3ReportApiCls, "reportCommon", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+        }
+
+        Class<?> o3NotifySecApiCls = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.api.impl.O3NotifySecApiImpl", cl);
+        if (o3NotifySecApiCls != null && sHookedO3ClassNames.add("O3NotifySecApiImpl@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(o3NotifySecApiCls, "sendMessage", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+        }
+
+        Class<?> o3CollectDataApiCls = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.api.impl.O3CollectDataApiImpl", cl);
+        if (o3CollectDataApiCls != null && sHookedO3ClassNames.add("O3CollectDataApiImpl@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(o3CollectDataApiCls, "collectInfo", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult("{}");
+                }
+            });
+            HookUtils.hookAllMethods(o3CollectDataApiCls, "sampling", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(o3CollectDataApiCls, "startCollectInfo", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(o3CollectDataApiCls, "stopCollectInfo", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+        }
 
         // 3. Hook com.tencent.qqprotect.qsec.a (Device profile collector)
-        final String qsecACls = "com.tencent.qqprotect.qsec.a";
-        if (HookUtils.classExists(qsecACls)) {
-            // Sanitize collectInfo JSON: a.e(Context, ArrayList, ArrayList, ArrayList)
-            HookUtils.hookAllMethods(qsecACls, "e", new XC_MethodHook() {
+        Class<?> qsecAClazz = XposedHelpers.findClassIfExists("com.tencent.qqprotect.qsec.a", cl);
+        if (qsecAClazz != null && sHookedO3ClassNames.add("qqprotect.qsec.a@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(qsecAClazz, "e", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                     if (p.getResult() instanceof String) {
                         String raw = (String) p.getResult();
                         try {
                             org.json.JSONObject json = new org.json.JSONObject(raw);
-                            json.put("10", "none"); // sys.usb.config: hide adb
-                            json.put("30", 0);      // accessibility enabled: false
-                            json.put("31", "[]");   // installed accessibility services: empty
-                            json.put("32", "[]");   // enabled accessibility services: empty
-                            json.put("14", "CK_N"); // clean indicator
+                            json.put("10", "none");
+                            json.put("30", 0);
+                            json.put("31", "[]");
+                            json.put("32", "[]");
+                            json.put("14", "CK_N");
                             p.setResult(json.toString());
                             XposedEntry.log("[O3Patch] Sanitized qqprotect.qsec.a.e device profile JSON");
                         } catch (Throwable ignored) { }
                     }
                 }
             });
-
-            // a.n(): returns sys.usb.config
-            HookUtils.hookAllMethods(qsecACls, "n", new XC_MethodHook() {
+            HookUtils.hookAllMethods(qsecAClazz, "n", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult("none");
                 }
             });
-
-            // a.f(Context): enabled accessibility services
-            HookUtils.hookAllMethods(qsecACls, "f", new XC_MethodHook() {
+            HookUtils.hookAllMethods(qsecAClazz, "f", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult("[]");
                 }
             });
-
-            // a.g(Context): installed accessibility services
-            HookUtils.hookAllMethods(qsecACls, "g", new XC_MethodHook() {
+            HookUtils.hookAllMethods(qsecAClazz, "g", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     p.setResult("[]");
+                }
+            });
+            HookUtils.hookAllMethods(qsecAClazz, "o", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.getResult() instanceof Number && ((Number) p.getResult()).longValue() <= 0L) {
+                        p.setResult(1727000000000L);
+                    }
                 }
             });
         }
 
-        // 4. Hook com.tencent.mobileqq.dt.app.MainProcess2Fe (Remote control / scrcpy / minicap / face_detect)
-        final String mp2feCls = "com.tencent.mobileqq.dt.app.MainProcess2Fe";
-        hookSafe(mp2feCls, "d", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                p.setResult(null);
-                XposedEntry.log("[O3Patch] Neutralized MainProcess2Fe.d (GetSocialLockStatus check)");
+        for (String qsecSub : new String[]{"com.tencent.qqprotect.qsec.b", "com.tencent.qqprotect.qsec.c", "com.tencent.qqprotect.qsec.d"}) {
+            Class<?> qSubCls = XposedHelpers.findClassIfExists(qsecSub, cl);
+            if (qSubCls != null && sHookedO3ClassNames.add(qsecSub + "@" + cl.hashCode())) {
+                HookUtils.hookAllMethods(qSubCls, "c", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                        p.setResult(null);
+                    }
+                });
+                HookUtils.hookAllMethods(qSubCls, "d", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                        p.setResult(null);
+                    }
+                });
             }
-        });
+        }
 
-        if (HookUtils.classExists(mp2feCls)) {
-            // MainProcess2Fe.b(AppInterface, dt.api.a): display_report detecting scrcpy/minicap/fps<=30
-            HookUtils.hookAllMethods(mp2feCls, "b", new XC_MethodHook() {
+        // 4. Hook com.tencent.mobileqq.dt.app.MainProcess2Fe
+        Class<?> mp2feClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.app.MainProcess2Fe", cl);
+        if (mp2feClazz != null && sHookedO3ClassNames.add("MainProcess2Fe@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(mp2feClazz, "b", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     if (p.args != null && p.args.length >= 2 && p.args[1] != null) {
@@ -1628,134 +1702,248 @@ public class QQ950PatchHook {
                     XposedEntry.log("[O3Patch] Neutralized MainProcess2Fe.b display_report");
                 }
             });
-
-            // MainProcess2Fe.k(AppInterface, String cmd, JSONObject data, dt.api.a callback)
-            HookUtils.hookAllMethods(mp2feCls, "k", new XC_MethodHook() {
+            HookUtils.hookAllMethods(mp2feClazz, "d", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(mp2feClazz, "f", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(mp2feClazz, "h", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(mp2feClazz, "i", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(mp2feClazz, "j", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(mp2feClazz, "k", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     if (p.args != null && p.args.length >= 2 && p.args[1] instanceof String) {
                         String cmd = (String) p.args[1];
-                        if ("face_detect".equals(cmd) || "camera_detect".equals(cmd) || "display_report".equals(cmd) || "ui_report".equals(cmd)) {
+                        if ("face_detect".equals(cmd) || "camera_detect".equals(cmd) || "display_report".equals(cmd) ||
+                            "ui_report".equals(cmd) || "orc_and_embeding".equals(cmd) || "orc_and_embeding2".equals(cmd)) {
                             if (p.args.length >= 4 && p.args[3] != null) {
                                 try {
                                     XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
                                 } catch (Throwable ignored) { }
                             }
-                            if (p.args.length >= 3 && p.args[2] instanceof org.json.JSONObject) {
-                                org.json.JSONObject data = (org.json.JSONObject) p.args[2];
-                                if (data.has("content")) {
-                                    String c = data.optString("content", "");
-                                    if (c.contains("risk") || c.contains("hook") || c.contains("root") || c.contains("fail")) {
-                                        data.put("content", "{}");
-                                    }
-                                }
-                            }
-                            XposedEntry.log("[O3Patch] Sanitized MainProcess2Fe.k (" + cmd + ")");
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Intercepted and fulfilled MainProcess2Fe.k (" + cmd + ")");
                         }
                     }
                 }
             });
         }
 
-        // 4.1 Hook O3BusinessHandler (recError drop, GetSocialLockStatus safe fulfillment)
-        final String o3HandlerCls = "com.tencent.mobileqq.dt.web.O3BusinessHandler";
-        XC_MethodHook o3HandlerHook = new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length >= 2 && p.args[0] instanceof String) {
-                    String event = (String) p.args[0];
-                    String params = p.args[1] != null ? p.args[1].toString() : "";
-                    if ("recError".equals(event)) {
-                        p.setResult(null);
-                        XposedEntry.log("[O3Patch] Dropped O3BusinessHandler.recError (prevented server lock)");
-                        return;
-                    }
-                    if ("sendRequest".equals(event) && params.contains("GetSocialLockStatus")) {
-                        if (p.args.length >= 3 && p.args[2] != null) {
-                            try {
-                                XposedHelpers.callMethod(p.args[2], "a", 0, "{\"is_locked\":false,\"rsp_code\":0}".getBytes("UTF-8"));
-                            } catch (Throwable ignored) {}
-                        }
-                        p.setResult(null);
-                        XposedEntry.log("[O3Patch] Fulfilled GetSocialLockStatus with safe is_locked=false");
-                        return;
-                    }
-                    if ("display_report".equals(event) || "ui_report".equals(event)) {
-                        if (p.args.length >= 3 && p.args[2] != null) {
-                            try {
-                                XposedHelpers.callMethod(p.args[2], "a", 0, new byte[0]);
-                            } catch (Throwable ignored) {}
-                        }
-                        p.setResult(null);
-                        XposedEntry.log("[O3Patch] Dropped O3BusinessHandler telemetry: " + event);
-                        return;
-                    }
-                }
-            }
-        };
-        hookSafe(o3HandlerCls, "P2", lpparam, o3HandlerHook);
-        hookSafe(o3HandlerCls, "Q2", lpparam, o3HandlerHook);
-
-        // 4.2 Hook dt.model.d & VirtualClickDetection & DTAPIImpl
-        hookSafe("com.tencent.mobileqq.dt.model.d", "b", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
-                    String event = (String) p.args[0];
-                    if ("socialError".equals(event)) {
-                        p.setResult(null);
-                        XposedEntry.log("[O3Patch] Neutralized dt.model.d.b socialError popup");
-                    }
-                }
-            }
-        });
-
-        hookSafe("com.tencent.mobileqq.dt.model.VirtualClickDetection", "e", lpparam, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                try {
-                    XposedHelpers.setBooleanField(p.thisObject, "d", false);
-                    XposedEntry.log("[O3Patch] Disabled VirtualClickDetection");
-                } catch (Throwable ignored) {}
-            }
-        });
-
-        hookSafe("com.tencent.mobileqq.dt.api.impl.DTAPIImpl", "onSecDispatchToAppEvent", lpparam, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
-                    String event = (String) p.args[0];
-                    if ("socialError".equals(event) || "mainProcessCall".equals(event)) {
-                        p.setResult(null);
-                        XposedEntry.log("[O3Patch] Suppressed DTAPIImpl.onSecDispatchToAppEvent: " + event);
-                    }
-                }
-            }
-        });
-
-        // 5. Hook com.tencent.mobileqq.dt.api.impl.QSecChannelImpl
-        final String qsecChannelCls = "com.tencent.mobileqq.dt.api.impl.QSecChannelImpl";
-        if (HookUtils.classExists(qsecChannelCls)) {
-            // feEnvReport(AppInterface, String key, String content, dt.api.a callback)
-            HookUtils.hookAllMethods(qsecChannelCls, "feEnvReport", new XC_MethodHook() {
+        // 5. Hook O3BusinessHandler (P2, Q2, R2, S2)
+        Class<?> o3HandlerClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.web.O3BusinessHandler", cl);
+        if (o3HandlerClazz != null && sHookedO3ClassNames.add("O3BusinessHandler@" + cl.hashCode())) {
+            XC_MethodHook o3HandlerHook = new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 3) {
-                        String content = p.args[2] != null ? p.args[2].toString() : null;
-                        if (content != null && (content.contains("risk") || content.contains("hook") || content.contains("root") || content.contains("fail"))) {
-                            p.args[2] = "{}";
+                    if (p.args != null && p.args.length >= 2 && p.args[0] instanceof String) {
+                        String event = (String) p.args[0];
+                        String params = p.args[1] != null ? p.args[1].toString() : "";
+                        if ("recError".equals(event)) {
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Dropped O3BusinessHandler.recError (prevented server lock)");
+                            return;
+                        }
+                        if (params.contains("GetSocialLockStatus") || ("sendRequest".equals(event) && params.contains("SocialLock"))) {
+                            if (p.args.length >= 3 && p.args[2] != null) {
+                                try {
+                                    XposedHelpers.callMethod(p.args[2], "a", 0, "{\"is_locked\":false,\"rsp_code\":0}".getBytes("UTF-8"));
+                                } catch (Throwable ignored) {}
+                            }
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Fulfilled GetSocialLockStatus with safe is_locked=false");
+                            return;
+                        }
+                        if ("display_report".equals(event) || "ui_report".equals(event) || "notifyVIP".equals(event) ||
+                            params.contains("display_report") || params.contains("camera_detect") ||
+                            params.contains("face_detect") || params.contains("orc_and_embeding") ||
+                            params.contains("login_report") || params.contains("socialError") ||
+                            params.contains("FullSocialLockPunish")) {
+                            if (p.args.length >= 3 && p.args[2] != null) {
+                                try {
+                                    XposedHelpers.callMethod(p.args[2], "a", 0, new byte[0]);
+                                } catch (Throwable ignored) {}
+                            }
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Dropped O3BusinessHandler telemetry: " + event);
+                            return;
                         }
                     }
+                }
+            };
+            HookUtils.hookAllMethods(o3HandlerClazz, "P2", o3HandlerHook);
+            HookUtils.hookAllMethods(o3HandlerClazz, "Q2", o3HandlerHook);
+
+            HookUtils.hookAllMethods(o3HandlerClazz, "R2", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
+                        String cmd = (String) p.args[0];
+                        if (cmd.contains("SocialLock") || cmd.contains("full_social_lock_punish")) {
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Suppressed O3BusinessHandler.R2: " + cmd);
+                        }
+                    }
+                }
+            });
+
+            HookUtils.hookAllMethods(o3HandlerClazz, "S2", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
+                        String cmd = (String) p.args[0];
+                        if (cmd.contains("SocialLock") || cmd.contains("full_social_lock_punish")) {
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Suppressed O3BusinessHandler.S2: " + cmd);
+                        }
+                    }
+                }
+            });
+        }
+
+        // 6. Hook com.tencent.mobileqq.dt.model.d & VirtualClickDetection & DTAPIImpl
+        Class<?> dtModelDClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.model.d", cl);
+        if (dtModelDClazz != null && sHookedO3ClassNames.add("dt.model.d@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(dtModelDClazz, "b", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
+                        String event = (String) p.args[0];
+                        if ("socialError".equals(event)) {
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Neutralized dt.model.d.b socialError popup");
+                        }
+                    }
+                }
+            });
+        }
+
+        Class<?> vcdClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.model.VirtualClickDetection", cl);
+        if (vcdClazz != null && sHookedO3ClassNames.add("VirtualClickDetection@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(vcdClazz, "e", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                    try {
+                        XposedHelpers.setBooleanField(p.thisObject, "d", false);
+                        XposedEntry.log("[O3Patch] Disabled VirtualClickDetection");
+                    } catch (Throwable ignored) {}
+                }
+            });
+        }
+
+        Class<?> dtapiClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.api.impl.DTAPIImpl", cl);
+        if (dtapiClazz != null && sHookedO3ClassNames.add("DTAPIImpl@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(dtapiClazz, "onSecDispatchToAppEvent", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 1 && p.args[0] instanceof String) {
+                        String event = (String) p.args[0];
+                        if ("socialError".equals(event) || "mainProcessCall".equals(event)) {
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Suppressed DTAPIImpl.onSecDispatchToAppEvent: " + event);
+                        }
+                    }
+                }
+            });
+        }
+
+        // 7. Hook com.tencent.mobileqq.dt.api.impl.QSecChannelImpl
+        Class<?> qsecChannelClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.api.impl.QSecChannelImpl", cl);
+        if (qsecChannelClazz != null && sHookedO3ClassNames.add("QSecChannelImpl@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(qsecChannelClazz, "reportEnable", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(false);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "loginReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "loginTouchEvent", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "mainPageReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "mainPageTabReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "regReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "regSmsEvent", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "regTouchEvent", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "setTouchEvent", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "uiEndSensor", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "feEnvReport", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     if (p.args != null && p.args.length >= 4 && p.args[3] != null) {
                         try {
                             XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
                         } catch (Throwable ignored) { }
                     }
+                    p.setResult(null);
                 }
             });
-
-            // feCameraActionReport
-            HookUtils.hookAllMethods(qsecChannelCls, "feCameraActionReport", new XC_MethodHook() {
+            HookUtils.hookAllMethods(qsecChannelClazz, "feCameraActionReport", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     if (p.args != null && p.args.length >= 8 && p.args[7] != null) {
@@ -1763,29 +1951,99 @@ public class QQ950PatchHook {
                             XposedHelpers.callMethod(p.args[7], "onResult", 0, new byte[0]);
                         } catch (Throwable ignored) { }
                     }
+                    p.setResult(null);
                 }
             });
-
-            // collectReport
-            HookUtils.hookAllMethods(qsecChannelCls, "collectReport", new XC_MethodHook() {
+            HookUtils.hookAllMethods(qsecChannelClazz, "collectReport", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args != null && p.args.length >= 3 && p.args[2] instanceof String) {
-                        try {
-                            org.json.JSONObject json = new org.json.JSONObject((String) p.args[2]);
-                            json.put("10", "none");
-                            json.put("30", 0);
-                            json.put("31", "[]");
-                            json.put("32", "[]");
-                            json.put("14", "CK_N");
-                            p.args[2] = json.toString();
-                        } catch (Throwable ignored) { }
-                    }
                     if (p.args != null && p.args.length >= 4 && p.args[3] != null) {
                         try {
                             XposedHelpers.callMethod(p.args[3], "onResult", 0, new byte[0]);
                         } catch (Throwable ignored) { }
                     }
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(qsecChannelClazz, "sendRequest", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    if (p.args != null && p.args.length >= 2 && p.args[1] instanceof String) {
+                        String cmd = (String) p.args[1];
+                        if (cmd.contains("SocialLock") || cmd.contains("GetSocialLockStatus") || cmd.contains("risk")) {
+                            if (p.args.length >= 5 && p.args[4] != null) {
+                                try {
+                                    XposedHelpers.callMethod(p.args[4], "onResult", 0, "{\"is_locked\":false,\"rsp_code\":0}".getBytes("UTF-8"));
+                                } catch (Throwable ignored) {}
+                            }
+                            p.setResult(null);
+                            XposedEntry.log("[O3Patch] Intercepted QSecChannelImpl.sendRequest (" + cmd + ")");
+                        }
+                    }
+                }
+            });
+        }
+
+        // 8. Hook com.tencent.mobileqq.dt.util.b (ui report & touch switch)
+        Class<?> dtUtilBClazz = XposedHelpers.findClassIfExists("com.tencent.mobileqq.dt.util.b", cl);
+        if (dtUtilBClazz != null && sHookedO3ClassNames.add("dt.util.b@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(dtUtilBClazz, "b", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(false);
+                }
+            });
+            HookUtils.hookAllMethods(dtUtilBClazz, "c", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(false);
+                }
+            });
+        }
+
+        // 9. Hook Ganliang & GanliangApiImpl
+        Class<?> ganliangClazz = XposedHelpers.findClassIfExists("com.tencent.qqprotect.ganliang.Ganliang", cl);
+        if (ganliangClazz != null && sHookedO3ClassNames.add("Ganliang@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(ganliangClazz, "h", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                    XposedEntry.log("[GanliangPatch] Neutralized Ganliang.h init");
+                }
+            });
+            HookUtils.hookAllMethods(ganliangClazz, "run", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(ganliangClazz, "g", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(ganliangClazz, "f", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                }
+            });
+            HookUtils.hookAllMethods(ganliangClazz, "checkDeviceRisk", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(0);
+                }
+            });
+        }
+
+        Class<?> ganliangApiImplClazz = XposedHelpers.findClassIfExists("com.tencent.qqprotect.ganliang.api.impl.GanliangApiImpl", cl);
+        if (ganliangApiImplClazz != null && sHookedO3ClassNames.add("GanliangApiImpl@" + cl.hashCode())) {
+            HookUtils.hookAllMethods(ganliangApiImplClazz, "init", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    p.setResult(null);
+                    XposedEntry.log("[GanliangPatch] Neutralized GanliangApiImpl.init");
                 }
             });
         }
