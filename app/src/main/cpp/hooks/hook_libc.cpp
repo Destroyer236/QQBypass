@@ -2319,57 +2319,127 @@ static int fake_prctl(int option, unsigned long arg2, unsigned long arg3, unsign
     return syscall(__NR_prctl, option, arg2, arg3, arg4, arg5);
 }
 
+static bool libc_caller_filter(const char* caller_path_name, void* arg) {
+    (void)arg;
+    if (!caller_path_name || !caller_path_name[0]) return false;
+
+    // 1. NEVER hook vendor drivers, graphics HALs, and display pipeline
+    if (strstr(caller_path_name, "/vendor/") ||
+        strstr(caller_path_name, "/odm/") ||
+        strstr(caller_path_name, "libhwui") ||
+        strstr(caller_path_name, "libGLES") ||
+        strstr(caller_path_name, "mali") ||
+        strstr(caller_path_name, "libvulkan") ||
+        strstr(caller_path_name, "libEGL") ||
+        strstr(caller_path_name, "libui") ||
+        strstr(caller_path_name, "libgui") ||
+        strstr(caller_path_name, "libgraphicsenv") ||
+        strstr(caller_path_name, "libskia") ||
+        strstr(caller_path_name, "libcomposer") ||
+        strstr(caller_path_name, "gralloc") ||
+        strstr(caller_path_name, "libion") ||
+        strstr(caller_path_name, "libdma_heap") ||
+        strstr(caller_path_name, "android.hardware.graphics")) {
+        return false;
+    }
+
+    // 2. NEVER hook Binder, IPC, audio, or media services
+    if (strstr(caller_path_name, "libbinder") ||
+        strstr(caller_path_name, "libhwbinder") ||
+        strstr(caller_path_name, "libhidlbase") ||
+        strstr(caller_path_name, "libmedia") ||
+        strstr(caller_path_name, "libaudioclient") ||
+        strstr(caller_path_name, "libstagefright")) {
+        return false;
+    }
+
+    // 3. NEVER hook ART and standard Java / Android runtime internals
+    if (strstr(caller_path_name, "libart") ||
+        strstr(caller_path_name, "libartbase") ||
+        strstr(caller_path_name, "libopenjdk") ||
+        strstr(caller_path_name, "libjavacore") ||
+        strstr(caller_path_name, "libnativehelper") ||
+        strstr(caller_path_name, "libnativeloader") ||
+        strstr(caller_path_name, "libandroidio") ||
+        strstr(caller_path_name, "libandroid_runtime")) {
+        return false;
+    }
+
+    // 4. NEVER hook third-party Xposed modules and our own DSO
+    if (strstr(caller_path_name, "qauxv") ||
+        strstr(caller_path_name, "moe.ono") ||
+        strstr(caller_path_name, "lzlnb") ||
+        strstr(caller_path_name, "cnm") ||
+        strstr(caller_path_name, "cn.jesse") ||
+        strstr(caller_path_name, "dexkit") ||
+        strstr(caller_path_name, "luckypray") ||
+        strstr(caller_path_name, "libmmkv") ||
+        strstr(caller_path_name, "liblspd") ||
+        strstr(caller_path_name, "libxposed") ||
+        strstr(caller_path_name, "bytebuddy") ||
+        strstr(caller_path_name, "native-bypass") ||
+        strstr(caller_path_name, "qqbypass")) {
+        return false;
+    }
+
+    // Hook all target Tencent security DSOs, business libraries, and the host QQ APK
+    return true;
+}
+
+#define HOOK_PARTIAL_LIBC(sym, fake_func) \
+    bytehook_hook_partial(libc_caller_filter, nullptr, nullptr, (sym), (void*)(fake_func), nullptr, nullptr)
+
 void install_hooks() {
-    LOGI("Installing libc hooks (ByteHook)...");
+    LOGI("Installing libc hooks (ByteHook partial with filter)...");
     ensure_real_funcs();
 
-    bytehook_hook_all(nullptr, "fopen", (void*)fake_fopen, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "fopen64", (void*)fake_fopen, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "open", (void*)fake_open, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "open64", (void*)fake_open, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "__open_2", (void*)fake_open_2, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "openat", (void*)fake_openat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "openat64", (void*)fake_openat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "__openat_2", (void*)fake_openat_2, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "opendir", (void*)fake_opendir, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "readdir", (void*)fake_readdir, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "readdir64", (void*)fake_readdir64, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "readdir_r", (void*)fake_readdir_r, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "readdir64_r", (void*)fake_readdir64_r, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "fgets", (void*)fake_fgets, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "__fgets_chk", (void*)fake_fgets_chk, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "readlink", (void*)fake_readlink, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "readlinkat", (void*)fake_readlinkat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "dladdr", (void*)fake_dladdr, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "dl_iterate_phdr", (void*)fake_dl_iterate_phdr, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "access", (void*)fake_access, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "faccessat", (void*)fake_faccessat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "stat", (void*)fake_stat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "stat64", (void*)fake_stat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "lstat", (void*)fake_lstat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "lstat64", (void*)fake_lstat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "fstatat", (void*)fake_fstatat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "fstatat64", (void*)fake_fstatat, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "syscall", (void*)fake_syscall, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "ptrace", (void*)fake_ptrace, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "prctl", (void*)fake_prctl, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "kill", (void*)fake_kill, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "tkill", (void*)fake_tkill, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "tgkill", (void*)fake_tgkill, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "raise", (void*)fake_raise, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "__system_property_get", (void*)fake_system_property_get, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "__system_property_find", (void*)fake_system_property_find, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "__system_property_read_callback", (void*)fake_system_property_read_callback, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "__system_property_read", (void*)fake_system_property_read, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "popen", (void*)fake_popen, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "pclose", (void*)fake_pclose, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "statfs", (void*)fake_statfs, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "statfs64", (void*)fake_statfs64, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "fstatfs", (void*)fake_fstatfs, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "fstatfs64", (void*)fake_fstatfs64, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "uname", (void*)fake_uname, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "dlopen", (void*)fake_dlopen, nullptr, nullptr);
-    bytehook_hook_all(nullptr, "android_dlopen_ext", (void*)fake_android_dlopen_ext, nullptr, nullptr);
+    HOOK_PARTIAL_LIBC("fopen", fake_fopen);
+    HOOK_PARTIAL_LIBC("fopen64", fake_fopen);
+    HOOK_PARTIAL_LIBC("open", fake_open);
+    HOOK_PARTIAL_LIBC("open64", fake_open);
+    HOOK_PARTIAL_LIBC("__open_2", fake_open_2);
+    HOOK_PARTIAL_LIBC("openat", fake_openat);
+    HOOK_PARTIAL_LIBC("openat64", fake_openat);
+    HOOK_PARTIAL_LIBC("__openat_2", fake_openat_2);
+    HOOK_PARTIAL_LIBC("opendir", fake_opendir);
+    HOOK_PARTIAL_LIBC("readdir", fake_readdir);
+    HOOK_PARTIAL_LIBC("readdir64", fake_readdir64);
+    HOOK_PARTIAL_LIBC("readdir_r", fake_readdir_r);
+    HOOK_PARTIAL_LIBC("readdir64_r", fake_readdir64_r);
+    HOOK_PARTIAL_LIBC("fgets", fake_fgets);
+    HOOK_PARTIAL_LIBC("__fgets_chk", fake_fgets_chk);
+    HOOK_PARTIAL_LIBC("readlink", fake_readlink);
+    HOOK_PARTIAL_LIBC("readlinkat", fake_readlinkat);
+    HOOK_PARTIAL_LIBC("dladdr", fake_dladdr);
+    HOOK_PARTIAL_LIBC("dl_iterate_phdr", fake_dl_iterate_phdr);
+    HOOK_PARTIAL_LIBC("access", fake_access);
+    HOOK_PARTIAL_LIBC("faccessat", fake_faccessat);
+    HOOK_PARTIAL_LIBC("stat", fake_stat);
+    HOOK_PARTIAL_LIBC("stat64", fake_stat);
+    HOOK_PARTIAL_LIBC("lstat", fake_lstat);
+    HOOK_PARTIAL_LIBC("lstat64", fake_lstat);
+    HOOK_PARTIAL_LIBC("fstatat", fake_fstatat);
+    HOOK_PARTIAL_LIBC("fstatat64", fake_fstatat);
+    HOOK_PARTIAL_LIBC("syscall", fake_syscall);
+    HOOK_PARTIAL_LIBC("ptrace", fake_ptrace);
+    HOOK_PARTIAL_LIBC("prctl", fake_prctl);
+    HOOK_PARTIAL_LIBC("kill", fake_kill);
+    HOOK_PARTIAL_LIBC("tkill", fake_tkill);
+    HOOK_PARTIAL_LIBC("tgkill", fake_tgkill);
+    HOOK_PARTIAL_LIBC("raise", fake_raise);
+    HOOK_PARTIAL_LIBC("__system_property_get", fake_system_property_get);
+    HOOK_PARTIAL_LIBC("__system_property_find", fake_system_property_find);
+    HOOK_PARTIAL_LIBC("__system_property_read_callback", fake_system_property_read_callback);
+    HOOK_PARTIAL_LIBC("__system_property_read", fake_system_property_read);
+    HOOK_PARTIAL_LIBC("popen", fake_popen);
+    HOOK_PARTIAL_LIBC("pclose", fake_pclose);
+    HOOK_PARTIAL_LIBC("statfs", fake_statfs);
+    HOOK_PARTIAL_LIBC("statfs64", fake_statfs64);
+    HOOK_PARTIAL_LIBC("fstatfs", fake_fstatfs);
+    HOOK_PARTIAL_LIBC("fstatfs64", fake_fstatfs64);
+    HOOK_PARTIAL_LIBC("uname", fake_uname);
+    HOOK_PARTIAL_LIBC("dlopen", fake_dlopen);
+    HOOK_PARTIAL_LIBC("android_dlopen_ext", fake_android_dlopen_ext);
 
     LOGI("libc hooks installed (filesystem, maps, mounts, syscalls, and properties)");
 }
