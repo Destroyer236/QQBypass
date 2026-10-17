@@ -230,6 +230,7 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
     public static void log(String message) {
         if (!HookConfig.VERBOSE_LOGGING) return;
         try {
+            android.util.Log.i(TAG, message);
             de.robv.android.xposed.XposedBridge.log("[" + TAG + "] " + message);
         } catch (Throwable ignored) {
         }
@@ -238,6 +239,7 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
     public static void logError(String message, Throwable t) {
         if (!HookConfig.VERBOSE_LOGGING) return;
         try {
+            android.util.Log.e(TAG, message, t);
             de.robv.android.xposed.XposedBridge.log("[" + TAG + "] " + message);
             if (t != null) {
                 de.robv.android.xposed.XposedBridge.log(t);
