@@ -28,7 +28,7 @@ public class HookConfig {
     public static boolean ENABLE_QQ950_RISK_BLOCK = true;   // Tier 2: object-return risk blocks (NPE-caveat; disable if NPE appears)
 
     // Kick Interception feature toggle (打包时确定，无需动态开销)
-    public static final boolean ENABLE_KICK_INTERCEPT = true;
+    public static final boolean ENABLE_KICK_INTERCEPT = false;
 
     /**
      * 判断当前是否开启拦截下线功能。
