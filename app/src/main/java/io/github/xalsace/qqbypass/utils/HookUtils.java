@@ -7,6 +7,7 @@ import de.robv.android.xposed.XposedHelpers;
 import io.github.xalsace.qqbypass.config.HookConfig;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 /**
  * Utility class for common Xposed hook operations
@@ -20,9 +21,10 @@ public class HookUtils {
      */
     public static void hookMethod(String className, String methodName, Object... parameterTypesAndCallback) {
         try {
-            Class<?> clazz = XposedHelpers.findClass(className, HookConfig.getClassLoader());
-            XposedHelpers.findAndHookMethod(clazz, methodName, parameterTypesAndCallback);
-            log("Hooked: " + className + "." + methodName);
+            Class<?> clazz = XposedHelpers.findClassIfExists(className, HookConfig.getClassLoader());
+            if (clazz != null) {
+                hookMethod(clazz, methodName, parameterTypesAndCallback);
+            }
         } catch (Throwable t) {
             if (HookConfig.VERBOSE_LOGGING) {
                 log("Failed to hook: " + className + "." + methodName + " - " + t.getMessage());
@@ -34,6 +36,7 @@ public class HookUtils {
      * Hook method with class object
      */
     public static void hookMethod(Class<?> clazz, String methodName, Object... parameterTypesAndCallback) {
+        if (clazz == null || clazz.isInterface()) return;
         try {
             XposedHelpers.findAndHookMethod(clazz, methodName, parameterTypesAndCallback);
             log("Hooked: " + clazz.getName() + "." + methodName);
@@ -49,9 +52,10 @@ public class HookUtils {
      */
     public static void hookAllMethods(String className, String methodName, XC_MethodHook callback) {
         try {
-            Class<?> clazz = XposedHelpers.findClass(className, HookConfig.getClassLoader());
-            XposedBridge.hookAllMethods(clazz, methodName, callback);
-            log("Hooked all methods: " + className + "." + methodName);
+            Class<?> clazz = XposedHelpers.findClassIfExists(className, HookConfig.getClassLoader());
+            if (clazz != null) {
+                hookAllMethods(clazz, methodName, callback);
+            }
         } catch (Throwable t) {
             if (HookConfig.VERBOSE_LOGGING) {
                 log("Failed to hook all methods: " + className + "." + methodName + " - " + t.getMessage());
@@ -63,10 +67,27 @@ public class HookUtils {
      * Hook all methods with specific name on Class object
      */
     public static void hookAllMethods(Class<?> clazz, String methodName, XC_MethodHook callback) {
-        if (clazz == null) return;
+        if (clazz == null || clazz.isInterface()) return;
         try {
-            XposedBridge.hookAllMethods(clazz, methodName, callback);
-            log("Hooked all methods: " + clazz.getName() + "." + methodName);
+            int hooked = 0;
+            for (Method method : clazz.getDeclaredMethods()) {
+                if (method.getName().equals(methodName)) {
+                    if (Modifier.isAbstract(method.getModifiers())) {
+                        continue;
+                    }
+                    try {
+                        XposedBridge.hookMethod(method, callback);
+                        hooked++;
+                    } catch (Throwable t) {
+                        if (HookConfig.VERBOSE_LOGGING) {
+                            log("Failed to hook method: " + clazz.getName() + "." + methodName + " - " + t.getMessage());
+                        }
+                    }
+                }
+            }
+            if (hooked > 0) {
+                log("Hooked " + hooked + " method(s): " + clazz.getName() + "." + methodName);
+            }
         } catch (Throwable t) {
             if (HookConfig.VERBOSE_LOGGING) {
                 log("Failed to hook all methods: " + clazz.getName() + "." + methodName + " - " + t.getMessage());

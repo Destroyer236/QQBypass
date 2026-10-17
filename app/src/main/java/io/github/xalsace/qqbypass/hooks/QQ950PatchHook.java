@@ -2079,7 +2079,7 @@ public class QQ950PatchHook {
     private static void hookDetectionSourcesAtOrigin(XC_LoadPackage.LoadPackageParam lpparam) {
         // 1. Location Detection Source: TencentLocation & SosoLocation
         String[] tencentLocClasses = {
-            "com.tencent.map.geolocation.TencentLocation",
+            "com.tencent.map.geolocation.internal.TencentLocationImpl",
             "com.tencent.map.geolocation.internal.TencentExtraKeys"
         };
         for (String cls : tencentLocClasses) {

@@ -198,7 +198,7 @@ public class XposedDetectionHook {
 
     private static void hookClassLoaderCheck() {
         // Some apps check the ClassLoader chain for Xposed
-        HookUtils.hookMethod(ClassLoader.class, "toString",
+        HookUtils.hookMethod(dalvik.system.BaseDexClassLoader.class, "toString",
             new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {

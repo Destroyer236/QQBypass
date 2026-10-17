@@ -159,18 +159,18 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
 
     private static void hookClassLoaderAndLifecycle(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            // 1. Hook Application.attachBaseContext(Context)
-            de.robv.android.xposed.XposedHelpers.findAndHookMethod(
-                "android.app.Application",
-                lpparam.classLoader,
+            // 1. Hook ContextWrapper.attachBaseContext(Context) for Application
+            de.robv.android.xposed.XposedBridge.hookAllMethods(
+                android.content.ContextWrapper.class,
                 "attachBaseContext",
-                android.content.Context.class,
                 new de.robv.android.xposed.XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                        android.content.Context ctx = (android.content.Context) param.args[0];
-                        if (ctx != null) {
-                            dispatchLateStageHooks(ctx.getClassLoader());
+                        if (param.thisObject instanceof android.app.Application) {
+                            android.content.Context ctx = (android.content.Context) param.args[0];
+                            if (ctx != null) {
+                                dispatchLateStageHooks(ctx.getClassLoader());
+                            }
                         }
                     }
                 }

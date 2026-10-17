@@ -543,9 +543,8 @@ public class DynamicXposedDetectionHook {
             };
 
             HookUtils.hookMethod(Class.class, "forName", String.class, boolean.class, ClassLoader.class, forNameHook);
-            HookUtils.hookMethod(Class.class, "forName", String.class, forNameHook);
 
-            HookUtils.hookMethod(ClassLoader.class, "toString", new XC_MethodHook() {
+            HookUtils.hookMethod(dalvik.system.BaseDexClassLoader.class, "toString", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     Object res = param.getResult();
