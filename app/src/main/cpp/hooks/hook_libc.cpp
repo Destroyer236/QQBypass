@@ -136,8 +136,9 @@ static bool is_caller_security_dso(void* return_address) {
             strcasestr(f, "libkcsdk") || strcasestr(f, "libnativefilescan") ||
             strcasestr(f, "libunusedcodecheck") || strcasestr(f, "libthreadsuspend") ||
             strcasestr(f, "libmatrix") || strcasestr(f, "liblogcathook") ||
-            strcasestr(f, "libcuckoo") || strcasestr(f, "libwechat") ||
-            strcasestr(f, "libtmsdk")) {
+            strcasestr(f, "libcuckoo") || strcasestr(f, "libwarbler") ||
+            strcasestr(f, "libqq_la") || strcasestr(f, "libtencentloc") ||
+            strcasestr(f, "libwechat") || strcasestr(f, "libtmsdk")) {
             return true;
         }
     }
@@ -153,7 +154,9 @@ static bool is_graphics_caller(void* return_address) {
             strstr(f, "libvulkan") || strstr(f, "libEGL") || strstr(f, "libui") ||
             strstr(f, "libgui") || strstr(f, "libgraphicsenv") || strstr(f, "libskia") ||
             strstr(f, "libcomposer") || strstr(f, "gralloc") || strstr(f, "libcamera") ||
-            strstr(f, "libion") || strstr(f, "libdma_heap") || strstr(f, "android.hardware.graphics")) {
+            strstr(f, "libion") || strstr(f, "libdma_heap") || strstr(f, "android.hardware.graphics") ||
+            strstr(f, "libminikin") || strstr(f, "libft2") || strstr(f, "freetype") ||
+            strstr(f, "libharfbuzz") || strstr(f, "libicu")) {
             return true;
         }
     }
@@ -217,8 +220,8 @@ static bool is_qa_private_path(const char* path) {
            strcasestr(path, "moe.ono") != nullptr ||
            strcasestr(path, "/ONO") != nullptr ||
            strcasestr(path, "sesearchcache") != nullptr ||
-           strcasestr(path, "files/.se") != nullptr ||
-           strcasestr(path, ".se") != nullptr ||
+           strstr(path, "files/.se") != nullptr ||
+           strstr(path, "/.se/") != nullptr ||
            strcasestr(path, "kc.dat") != nullptr ||
            strcasestr(path, ".sys_cache") != nullptr ||
            strcasestr(path, "config/pz") != nullptr ||
@@ -249,7 +252,7 @@ bool is_sensitive_path(const char* path) {
         "/system/bin/debuggerd", "/system/bin/debuggerd64", "/system/bin/ddexe",
         "/sys/fs/selinux/enforce",
         "dexkit", "libdexkit", "flatbuffers", "sandhook", "yahfa",
-        "epic", "pine", "taichi", "liblspd", "lsposed", "edxposed",
+        "libepic", "libpine", "taichi", "liblspd", "lsposed", "edxposed",
         "qqbypass", "libnative-bypass", "libbytehook", "xalsace",
         "zygisk_lsposed", "zygisksu",
         "top.nkbe.npatch", "npatch", "org.lsposed.manager", "lspilot",
@@ -261,7 +264,7 @@ bool is_sensitive_path(const char* path) {
         "com.kingo.root", "com.smedialink.oneclickroot", "com.zhiqupk.root.global",
         "com.shuame.rootgenius", "com.applisto.appcloner", ".android_system_config.prop",
         "ku.sud", "shuamesu", "libbugly_shadowhook", "libshadowhook_nothing",
-        "busybox", "sudo", "bdsu", "sutemp", ".su", "com.topjohnwu.magisk", "topjohnwu",
+        "busybox", "sudo", "bdsu", "sutemp", "/.su", "com.topjohnwu.magisk", "topjohnwu",
         "libqqPerfNativeTool", "libandroid_desensitization", "libshadowhook",
         "init.svc.microvirtd", "config.prop", "/.android",
         "/data/data/io.github.qauxv", "/data/user/0/io.github.qauxv",
@@ -355,7 +358,7 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
     }
     const char* root_patterns[] = {
         "magisk", "lsposed", "xposed", "edxposed", "dexkit",
-        "sandhook", "yahfa", "epic", "pine", "taichi",
+        "sandhook", "yahfa", "libepic", "libpine", "taichi",
         "liblspd", "qqbypass", "native-bypass", "bytehook",
         "shamiko", "apatch", "npatch", "lspilot", "fusehide",
         "simplehook", "libchecker", "shizuku", "vtools",
@@ -364,7 +367,7 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "org.lsposed.lspatch", "moe.ono", "ono_mmkv", "ono_hcb_",
         "ono_bubble_cache", "ono_image_tag", "ono_need_find_method", "ONO",
         "lzlnb", "libcnm", "liball-jni", "cnm0",
-        "sesearchcache", "kc.dat", ".se", ".sys_cache",
+        "sesearchcache", "kc.dat", ".sys_cache",
         "global_config", "oat_inline_deopt_cache", "last_use_emoticon_time",
         "sDumpTG_", "qauxv", "qa_mmkv", "tmp_qa_", "qnotified",
         "kernelsu", "apatch", "supersu", "superuser", "kingroot", "kinguser",
@@ -372,6 +375,7 @@ static bool is_sensitive_name_for_caller(const char* name, void* return_address)
         "bdsu", "sutemp", "sudo", "config.prop", "init.svc.microvirtd",
         nullptr
     };
+    if (strcmp(name, ".se") == 0) return true;
     for (int i = 0; root_patterns[i]; i++) {
         if (strcasestr(name, root_patterns[i])) return true;
     }
@@ -2323,38 +2327,42 @@ static bool libc_caller_filter(const char* caller_path_name, void* arg) {
     (void)arg;
     if (!caller_path_name || !caller_path_name[0]) return false;
 
-    // 1. NEVER hook vendor drivers, graphics HALs, and display pipeline
-    if (strstr(caller_path_name, "/vendor/") ||
-        strstr(caller_path_name, "/odm/") ||
+    // 1. NEVER hook Android OS system, apex, product, vendor, odm, or root framework binaries
+    if (strncmp(caller_path_name, "/system/", 8) == 0 ||
+        strncmp(caller_path_name, "/system_ext/", 12) == 0 ||
+        strncmp(caller_path_name, "/product/", 9) == 0 ||
+        strncmp(caller_path_name, "/apex/", 6) == 0 ||
+        strncmp(caller_path_name, "/vendor/", 8) == 0 ||
+        strncmp(caller_path_name, "/odm/", 5) == 0 ||
+        strncmp(caller_path_name, "/data/adb/", 10) == 0 ||
+        strncmp(caller_path_name, "/dev/", 5) == 0) {
+        return false;
+    }
+
+    // 2. NEVER hook graphics, fonts, text shaping, UI rendering, audio, media, or IPC runtime
+    if (strstr(caller_path_name, "libminikin") ||
+        strstr(caller_path_name, "libft2") ||
+        strstr(caller_path_name, "freetype") ||
+        strstr(caller_path_name, "libharfbuzz") ||
+        strstr(caller_path_name, "libicu") ||
         strstr(caller_path_name, "libhwui") ||
-        strstr(caller_path_name, "libGLES") ||
+        strstr(caller_path_name, "libskia") ||
         strstr(caller_path_name, "mali") ||
+        strstr(caller_path_name, "libGLES") ||
         strstr(caller_path_name, "libvulkan") ||
         strstr(caller_path_name, "libEGL") ||
         strstr(caller_path_name, "libui") ||
         strstr(caller_path_name, "libgui") ||
         strstr(caller_path_name, "libgraphicsenv") ||
-        strstr(caller_path_name, "libskia") ||
         strstr(caller_path_name, "libcomposer") ||
         strstr(caller_path_name, "gralloc") ||
-        strstr(caller_path_name, "libion") ||
-        strstr(caller_path_name, "libdma_heap") ||
-        strstr(caller_path_name, "android.hardware.graphics")) {
-        return false;
-    }
-
-    // 2. NEVER hook Binder, IPC, audio, or media services
-    if (strstr(caller_path_name, "libbinder") ||
+        strstr(caller_path_name, "libbinder") ||
         strstr(caller_path_name, "libhwbinder") ||
         strstr(caller_path_name, "libhidlbase") ||
         strstr(caller_path_name, "libmedia") ||
         strstr(caller_path_name, "libaudioclient") ||
-        strstr(caller_path_name, "libstagefright")) {
-        return false;
-    }
-
-    // 3. NEVER hook ART and standard Java / Android runtime internals
-    if (strstr(caller_path_name, "libart") ||
+        strstr(caller_path_name, "libstagefright") ||
+        strstr(caller_path_name, "libart") ||
         strstr(caller_path_name, "libartbase") ||
         strstr(caller_path_name, "libopenjdk") ||
         strstr(caller_path_name, "libjavacore") ||
@@ -2365,7 +2373,7 @@ static bool libc_caller_filter(const char* caller_path_name, void* arg) {
         return false;
     }
 
-    // 4. NEVER hook third-party Xposed modules and our own DSO
+    // 3. NEVER hook third-party Xposed modules and our own DSO
     if (strstr(caller_path_name, "qauxv") ||
         strstr(caller_path_name, "moe.ono") ||
         strstr(caller_path_name, "lzlnb") ||
@@ -2378,12 +2386,53 @@ static bool libc_caller_filter(const char* caller_path_name, void* arg) {
         strstr(caller_path_name, "libxposed") ||
         strstr(caller_path_name, "bytebuddy") ||
         strstr(caller_path_name, "native-bypass") ||
-        strstr(caller_path_name, "qqbypass")) {
+        strstr(caller_path_name, "qqbypass") ||
+        strstr(caller_path_name, "libpine") ||
+        strstr(caller_path_name, "libsandhook")) {
         return false;
     }
 
-    // Hook all target Tencent security DSOs, business libraries, and the host QQ APK
-    return true;
+    // 4. MUST belong to Tencent / QQ or known security DSO
+    // (a) Located inside QQ's app package or data directories
+    if (strstr(caller_path_name, "com.tencent.mobileqq")) {
+        return true;
+    }
+    // (b) Or matching known Tencent security / scan / audit DSOs
+    if (strstr(caller_path_name, "libfekit") ||
+        strstr(caller_path_name, "libturing") ||
+        strstr(caller_path_name, "libqqdid") ||
+        strstr(caller_path_name, "libmsf") ||
+        strstr(caller_path_name, "libqsec") ||
+        strstr(caller_path_name, "libsec") ||
+        strstr(caller_path_name, "libtears") ||
+        strstr(caller_path_name, "libbeacon") ||
+        strstr(caller_path_name, "libwtlogin") ||
+        strstr(caller_path_name, "libmsaoaidsec") ||
+        strstr(caller_path_name, "libqzone_check") ||
+        strstr(caller_path_name, "libdexloader") ||
+        strstr(caller_path_name, "libtsmqqsc") ||
+        strstr(caller_path_name, "libbugly") ||
+        strstr(caller_path_name, "libcuckoo") ||
+        strstr(caller_path_name, "libwarbler") ||
+        strstr(caller_path_name, "libqq_la") ||
+        strstr(caller_path_name, "libtencentloc") ||
+        strstr(caller_path_name, "libandroid_desensitization") ||
+        strstr(caller_path_name, "libqqPerfNativeTool") ||
+        strstr(caller_path_name, "librmonitor") ||
+        strstr(caller_path_name, "libqimei") ||
+        strstr(caller_path_name, "libkcsdk") ||
+        strstr(caller_path_name, "libnativefilescan") ||
+        strstr(caller_path_name, "libunusedcodecheck") ||
+        strstr(caller_path_name, "libthreadsuspend") ||
+        strstr(caller_path_name, "libmatrix") ||
+        strstr(caller_path_name, "liblogcathook") ||
+        strstr(caller_path_name, "libwechat") ||
+        strstr(caller_path_name, "libtmsdk")) {
+        return true;
+    }
+
+    // Reject all other unknown callers (system / OS components)
+    return false;
 }
 
 #define HOOK_PARTIAL_LIBC(sym, fake_func) \

@@ -130,10 +130,9 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
             // Layer 7: QQ 9.3.50 detection-point completion (real risk/kick targets)
             QQ950PatchHook.hook(lpparam);
 
-            // Layer 8: QAuxv (QNotified) & Third-party module (moe.ono / cnm) compatibility
+            // Layer 8: QAuxv (QNotified) compatibility
             if (isMainProcess) {
                 io.github.xalsace.qqbypass.hooks.QAuxvCompatHook.hook(lpparam);
-                io.github.xalsace.qqbypass.hooks.ModuleCompatHook.hook(lpparam);
             }
 
             // Layer 9: Security Libraries & FEKit Censor Enhancement (ShadowHook, QQPerfTool, Desensitization, Dtc, fe.utils.a)
@@ -176,7 +175,6 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
             DynamicRootDetectionHook.hookLateStage(cl);
             SecurityLibrariesEnhanceHook.hookLateStage(cl);
             QAuxvCompatHook.hookLateStage(cl);
-            ModuleCompatHook.hookLateStage(cl);
         } catch (Throwable t) {
             logError("Error dispatching late-stage hooks: " + t.getMessage(), t);
         }
@@ -194,8 +192,6 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
                         if (param.thisObject instanceof android.app.Application) {
                             android.content.Context ctx = (android.content.Context) param.args[0];
                             if (ctx != null) {
-                                io.github.xalsace.qqbypass.hooks.ModuleCompatHook.setHostClassLoader(ctx.getClassLoader());
-                                io.github.xalsace.qqbypass.hooks.ModuleCompatHook.tryScanLoaders();
                                 dispatchLateStageHooks(ctx.getClassLoader());
                             }
                         }
@@ -216,11 +212,7 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
                         ClassLoader cl = (ClassLoader) param.thisObject;
                         if (cl != null) {
                             String clStr = cl.toString().toLowerCase();
-                            if (clStr.contains("moe.ono")) {
-                                io.github.xalsace.qqbypass.hooks.ModuleCompatHook.onModuleClassLoaderLoaded(cl);
-                                return;
-                            }
-                            if (clStr.contains("lzlnb") || clStr.contains("cnm") ||
+                            if (clStr.contains("moe.ono") || clStr.contains("lzlnb") || clStr.contains("cnm") ||
                                 clStr.contains("qauxv") || clStr.contains("org.lsposed") || clStr.contains("dexkit") ||
                                 clStr.contains("cn.jesse") || clStr.contains("lspatch")) {
                                 return;
