@@ -92,7 +92,10 @@ static bool is_caller_qa(void* return_address) {
     Dl_info info;
     if (dladdr(return_address, &info) && info.dli_fname) {
         const char* f = info.dli_fname;
-        if (strstr(f, "qauxv") || strstr(f, "qa_dyn_lib") || strstr(f, "libqauxv") || strstr(f, "io.github.qauxv")) {
+        if (strstr(f, "qauxv") || strstr(f, "qa_dyn_lib") || strstr(f, "libqauxv") || strstr(f, "io.github.qauxv") ||
+            strstr(f, "libmmkv") || strstr(f, "libjavacore") || strstr(f, "libopenjdk") ||
+            strstr(f, "libart") || strstr(f, "liblspd") || strstr(f, "libxposed") ||
+            strstr(f, "qqbypass") || strstr(f, "libnative-bypass") || strstr(f, "dexkit")) {
             return true;
         }
     }
@@ -101,6 +104,8 @@ static bool is_caller_qa(void* return_address) {
 
 static bool is_qa_private_path(const char* path) {
     if (!path || !path[0]) return false;
+    // CRITICAL: NEVER consider /data/app/ as a QA private hidden path
+    if (strstr(path, "/data/app/")) return false;
     return strcasestr(path, "qa_mmkv") != nullptr ||
            strcasestr(path, "tmp_qa_") != nullptr ||
            strcasestr(path, "qa_dyn_lib") != nullptr ||
@@ -108,7 +113,6 @@ static bool is_qa_private_path(const char* path) {
            strcasestr(path, "libqauxv") != nullptr ||
            strcasestr(path, "libqauxv-core0") != nullptr ||
            strcasestr(path, "libqauxv-core1") != nullptr ||
-           strcasestr(path, "io.github.qauxv") != nullptr ||
            strcasestr(path, "qnotified") != nullptr;
 }
 
@@ -142,6 +146,7 @@ bool is_sensitive_path(const char* path) {
         "bytehook", "native-bypass", "apatch", "fusehide", "simplehook",
         "libchecker", "shizuku", "vtools", "bin.mt", "bin.mt.plus", "bin.mt.termex",
         "thanos", "termux", "duckusb",
+        "/data/data/io.github.qauxv", "/data/user/0/io.github.qauxv",
         nullptr
     };
     for (int i = 0; hidden[i]; i++) {
@@ -152,14 +157,42 @@ bool is_sensitive_path(const char* path) {
 
 static inline bool is_security_hidden_path(const char* path, void* return_address) {
     if (!path) return false;
-    if (is_sensitive_path(path)) return true;
-    if (is_mt_private_path(path)) return true;
-    if (is_qa_private_path(path)) {
+
+    // 1. NEVER block installed APKs in /data/app/ (including QAuxiliary and system packages)
+    if (strstr(path, "/data/app/")) {
+        return false;
+    }
+
+    // 2. Sensitive root/xposed paths
+    if (is_sensitive_path(path)) {
         if (is_caller_qa(return_address)) {
             return false;
         }
         return true;
     }
+
+    // 3. MT Manager private paths
+    if (is_mt_private_path(path)) {
+        if (is_caller_qa(return_address)) {
+            return false;
+        }
+        return true;
+    }
+
+    // 4. QAuxiliary private files (qa_mmkv, tmp_qa_, qa_dyn_lib, qa_misc):
+    // Only block when called by Tencent security DSOs!
+    // QA itself, MMKV, and Java runtime MUST have full access!
+    // Directory scans (readdir/getdents64) already hide these from general scans!
+    if (is_qa_private_path(path)) {
+        if (is_caller_security_dso(return_address)) {
+            return true;
+        }
+        if (is_caller_qa(return_address)) {
+            return false;
+        }
+        return false;
+    }
+
     return false;
 }
 
@@ -986,7 +1019,7 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
 struct dl_iterate_cookie {
     int (*callback)(struct dl_phdr_info*, size_t, void*);
     void* data;
-    bool is_security;
+    void* caller_addr;
 };
 
 static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, void* data) {
@@ -1008,7 +1041,7 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
         };
         for (int i = 0; qa_mt_hidden[i]; i++) {
             if (strstr(info->dlpi_name, qa_mt_hidden[i])) {
-                if (!is_caller_qa(__builtin_return_address(0))) {
+                if (!is_caller_qa(cookie->caller_addr)) {
                     LOGD("Hidden QA/MT library in dl_iterate_phdr: %s", info->dlpi_name);
                     return 0;
                 }
@@ -1020,7 +1053,7 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
 
 static int fake_dl_iterate_phdr(int (*callback)(struct dl_phdr_info*, size_t, void*), void* data) {
     SAFE_BYTEHOOK_SCOPE();
-    dl_iterate_cookie cookie{callback, data, is_caller_security_dso(__builtin_return_address(0))};
+    dl_iterate_cookie cookie{callback, data, __builtin_return_address(0)};
     if (real_dl_iterate_phdr_ptr) return real_dl_iterate_phdr_ptr(dl_iterate_callback_wrapper, &cookie);
     if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_dl_iterate_phdr, dl_iterate_callback_wrapper, &cookie);
     return dl_iterate_phdr(dl_iterate_callback_wrapper, &cookie);

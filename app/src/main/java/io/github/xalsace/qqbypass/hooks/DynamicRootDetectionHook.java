@@ -1399,6 +1399,18 @@ public class DynamicRootDetectionHook {
 
     public static boolean isCallerQAuxv() {
         try {
+            DynamicXposedDetectionHook.bypassStackFilter.set(true);
+            String tName = Thread.currentThread().getName();
+            if (tName != null) {
+                String lt = tName.toLowerCase();
+                if (lt.contains("qauxv") || lt.contains("ioctl") || lt.contains("singleneuron")) {
+                    return true;
+                }
+            }
+            ClassLoader cl = Thread.currentThread().getContextClassLoader();
+            if (cl != null && cl.toString().toLowerCase().contains("qauxv")) {
+                return true;
+            }
             StackTraceElement[] stack = Thread.currentThread().getStackTrace();
             for (StackTraceElement elem : stack) {
                 String cls = elem.getClassName();
@@ -1413,12 +1425,19 @@ public class DynamicRootDetectionHook {
                     cls.startsWith("top.linl.") ||
                     cls.startsWith("net.bytebuddy.") ||
                     cls.startsWith("io.github.libxposed.") ||
-                    cls.startsWith("com.android.dx.")
+                    cls.startsWith("com.android.dx.") ||
+                    cls.startsWith("com.tencent.mmkv.") ||
+                    cls.startsWith("android.content.res.XResources") ||
+                    cls.startsWith("de.robv.android.xposed.") ||
+                    cls.startsWith("io.github.xalsace.qqbypass.")
                 )) {
                     return true;
                 }
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        } finally {
+            DynamicXposedDetectionHook.bypassStackFilter.set(false);
+        }
         return false;
     }
 
@@ -1487,6 +1506,12 @@ public class DynamicRootDetectionHook {
 
     public static boolean isSuspiciousPath(String path) {
         if (path == null) return false;
+
+        // NEVER block installed APKs in /data/app/ (including QAuxiliary and system packages)
+        if (path.contains("/data/app/")) {
+            return false;
+        }
+
         String lower = path.toLowerCase();
 
         // QAuxiliary storage and private directories: allow QAuxv, hide from ALL other callers in QQ

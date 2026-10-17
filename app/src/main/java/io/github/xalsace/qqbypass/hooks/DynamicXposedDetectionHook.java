@@ -327,6 +327,7 @@ public class DynamicXposedDetectionHook {
             HookUtils.hookMethod(Throwable.class, "getStackTrace", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerWhitelisted()) return;
                     Object res = param.getResult();
                     if (res instanceof StackTraceElement[]) {
                         StackTraceElement[] traces = (StackTraceElement[]) res;
@@ -341,6 +342,7 @@ public class DynamicXposedDetectionHook {
             HookUtils.hookMethod(Thread.class, "getStackTrace", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerWhitelisted()) return;
                     Object res = param.getResult();
                     if (res instanceof StackTraceElement[]) {
                         StackTraceElement[] traces = (StackTraceElement[]) res;
@@ -355,6 +357,7 @@ public class DynamicXposedDetectionHook {
             HookUtils.hookMethod(Thread.class, "getAllStackTraces", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (isCallerWhitelisted()) return;
                     Object res = param.getResult();
                     if (res instanceof java.util.Map) {
                         @SuppressWarnings("unchecked")
@@ -384,7 +387,7 @@ public class DynamicXposedDetectionHook {
         }
     }
 
-    private static final ThreadLocal<Boolean> bypassStackFilter = new ThreadLocal<Boolean>() {
+    public static final ThreadLocal<Boolean> bypassStackFilter = new ThreadLocal<Boolean>() {
         @Override
         protected Boolean initialValue() {
             return false;
@@ -447,7 +450,8 @@ public class DynamicXposedDetectionHook {
                     || cls.startsWith("io.github.libxposed.")
                     || cls.startsWith("bin.mt.")
                     || cls.startsWith("de.robv.android.xposed.")
-                    || cls.startsWith("org.lsposed.")) {
+                    || cls.startsWith("org.lsposed.")
+                    || cls.startsWith("com.tencent.mmkv.")) {
                     return true;
                 }
                 if (cls.startsWith("com.tencent.") || cls.startsWith("oicq.") || cls.startsWith("mqq.")) {
