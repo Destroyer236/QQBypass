@@ -2,11 +2,15 @@ package io.github.xalsace.qqbypass.hooks;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
+import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 import io.github.xalsace.qqbypass.detector.DexMethodData;
 
 import java.io.File;
+import java.net.NetworkInterface;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.lang.reflect.Member;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,6 +60,7 @@ public class DynamicRootDetectionHook {
         hookSystemProperties();
         hookSettingsSecureAndGlobal();
         hookProcessExecution();
+        hookNetworkInterfaces();
 
         // Gatherer SDK root detection hook
         hookGathererRootCheck(lpparam);
@@ -78,6 +83,37 @@ public class DynamicRootDetectionHook {
                 XposedEntry.log("Dynamic root detection hook failed: " + e.getMessage());
             }
         }).start();
+    }
+
+    private static void hookNetworkInterfaces() {
+        try {
+            XposedHelpers.findAndHookMethod(NetworkInterface.class, "getNetworkInterfaces", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.getResult() == null) return;
+                    @SuppressWarnings("unchecked")
+                    Enumeration<NetworkInterface> en = (Enumeration<NetworkInterface>) param.getResult();
+                    ArrayList<NetworkInterface> filtered = new ArrayList<>();
+                    while (en.hasMoreElements()) {
+                        NetworkInterface ni = en.nextElement();
+                        String name = ni.getName();
+                        if (name != null) {
+                            String lower = name.toLowerCase();
+                            if (lower.startsWith("tun") || lower.startsWith("ppp") ||
+                                lower.startsWith("p2p") || lower.startsWith("tap") ||
+                                lower.startsWith("dummy")) {
+                                continue;
+                            }
+                        }
+                        filtered.add(ni);
+                    }
+                    param.setResult(Collections.enumeration(filtered));
+                }
+            });
+            XposedEntry.log("NetworkInterface: Successfully hooked getNetworkInterfaces to filter virtual/VPN interfaces");
+        } catch (Throwable t) {
+            XposedEntry.log("NetworkInterface hook failed: " + t.getMessage());
+        }
     }
 
     private static void hookFileChecks() {

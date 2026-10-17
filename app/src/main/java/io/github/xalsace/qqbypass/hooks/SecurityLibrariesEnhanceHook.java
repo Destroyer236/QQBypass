@@ -217,7 +217,21 @@ public class SecurityLibrariesEnhanceHook {
                     }
                 });
 
-                // 9. dtcSendMessage: Allow normal sending of SSO reports with sanitized environment data
+                // 9. getMtpMode -> none & getLibraryList -> clean hash
+                HookUtils.hookAllMethods(clazz, "getMtpMode", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult("none");
+                    }
+                });
+                HookUtils.hookAllMethods(clazz, "getLibraryList", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult("12345678");
+                    }
+                });
+
+                // 10. dtcSendMessage: Allow normal sending of SSO reports with sanitized environment data
                 // Dtc's underlying payload has already been sanitized (clean accessibility, properties, plugins).
                 // Transparent transmission ensures the server receives valid heartbeat and security telemetry.
 
@@ -629,8 +643,18 @@ public class SecurityLibrariesEnhanceHook {
                                 "StatSvc.ReqForceOffline".equals(cmd) ||
                                 "MessageSvc.PushForceOffline".equals(cmd) ||
                                 (cmd != null && cmd.toLowerCase().contains("offlinepush"))) {
+                                StringBuilder details = new StringBuilder();
+                                try {
+                                    Object attrs = XposedHelpers.getObjectField(fromServiceMsg, "attributes");
+                                    if (attrs != null) details.append(" attrs=").append(attrs.toString());
+                                } catch (Throwable ignored) {}
+                                try {
+                                    String failMsg = (String) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailMsg");
+                                    if (!TextUtils.isEmpty(failMsg)) details.append(" failMsg=").append(failMsg);
+                                } catch (Throwable ignored) {}
+
                                 if (HookConfig.isKickInterceptEnabled()) {
-                                    XposedEntry.log("[MSFShield] Dropped MSF offline push packet: cmd=" + cmd);
+                                    XposedEntry.log("[MSFShield] Dropped MSF offline push packet: cmd=" + cmd + details.toString());
                                     if (param.method instanceof Method) {
                                         Class<?> ret = ((Method) param.method).getReturnType();
                                         if (ret == boolean.class) {
@@ -646,7 +670,7 @@ public class SecurityLibrariesEnhanceHook {
                                         param.setResult(true);
                                     }
                                 } else {
-                                    XposedEntry.log("[MSFDiagnostic] Observed MSF offline push packet: cmd=" + cmd);
+                                    XposedEntry.log("[MSFDiagnostic] Observed MSF offline push packet: cmd=" + cmd + details.toString());
                                 }
                             }
                         }

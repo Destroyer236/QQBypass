@@ -17,6 +17,7 @@ add_library(
     hooks/hook_libqsec.cpp
     hooks/hook_libmsfkernel.cpp
     hooks/hook_libturingmfa.cpp
+    hooks/hook_libqimei.cpp
     utils/log.cpp
 )
 

@@ -15,12 +15,21 @@
 #include <link.h>
 #include <dirent.h>
 #include <signal.h>
+#include <sys/utsname.h>
+#include <sys/vfs.h>
+#include <sys/statvfs.h>
+#include "hook_libqimei.h"
+
+#ifndef ST_RDONLY
+#define ST_RDONLY 1
+#endif
 
 namespace hook_libc {
 
 // 真实函数指针（支持 LSPosed inline hook backup 与 dlsym 回退）
 static FILE* (*real_fopen_ptr)(const char*, const char*) = nullptr;
 static char* (*real_fgets_ptr)(char*, int, FILE*) = nullptr;
+static char* (*real_fgets_chk_ptr)(char*, int, size_t, FILE*) = nullptr;
 static int (*real_open_ptr)(const char*, int, mode_t) = nullptr;
 static int (*real_openat_ptr)(int, const char*, int, mode_t) = nullptr;
 static int (*real_open_2_ptr)(const char*, int) = nullptr;
@@ -43,6 +52,16 @@ static int (*real_system_property_get_ptr)(const char*, char*) = nullptr;
 static const prop_info* (*real_system_property_find_ptr)(const char*) = nullptr;
 typedef void (*prop_read_cb_t)(void* cookie, const char* name, const char* value, uint32_t serial);
 static void (*real_system_property_read_callback_ptr)(const prop_info*, prop_read_cb_t, void*) = nullptr;
+static int (*real_system_property_read_ptr)(const prop_info*, char*, char*) = nullptr;
+static FILE* (*real_popen_ptr)(const char*, const char*) = nullptr;
+static int (*real_pclose_ptr)(FILE*) = nullptr;
+static int (*real_statfs_ptr)(const char*, struct statfs*) = nullptr;
+static int (*real_statfs64_ptr)(const char*, struct statfs64*) = nullptr;
+static int (*real_fstatfs_ptr)(int, struct statfs*) = nullptr;
+static int (*real_fstatfs64_ptr)(int, struct statfs64*) = nullptr;
+static int (*real_uname_ptr)(struct utsname*) = nullptr;
+static void* (*real_dlopen_ptr)(const char*, int) = nullptr;
+static void* (*real_android_dlopen_ext_ptr)(const char*, int, const void*) = nullptr;
 typedef long (*syscall_func_t)(long, void*, void*, void*, void*, void*, void*);
 static syscall_func_t real_syscall_ptr = nullptr;
 static int (*real_kill_ptr)(pid_t, int) = nullptr;
@@ -53,6 +72,7 @@ static int (*real_raise_ptr)(int) = nullptr;
 static void ensure_real_funcs() {
     if (!real_fopen_ptr) real_fopen_ptr = (FILE* (*)(const char*, const char*))dlsym(RTLD_DEFAULT, "fopen");
     if (!real_fgets_ptr) real_fgets_ptr = (char* (*)(char*, int, FILE*))dlsym(RTLD_DEFAULT, "fgets");
+    if (!real_fgets_chk_ptr) real_fgets_chk_ptr = (char* (*)(char*, int, size_t, FILE*))dlsym(RTLD_DEFAULT, "__fgets_chk");
     if (!real_open_ptr) real_open_ptr = (int (*)(const char*, int, mode_t))dlsym(RTLD_DEFAULT, "open");
     if (!real_openat_ptr) real_openat_ptr = (int (*)(int, const char*, int, mode_t))dlsym(RTLD_DEFAULT, "openat");
     if (!real_open_2_ptr) real_open_2_ptr = (int (*)(const char*, int))dlsym(RTLD_DEFAULT, "__open_2");
@@ -74,6 +94,16 @@ static void ensure_real_funcs() {
     if (!real_system_property_get_ptr) real_system_property_get_ptr = (int (*)(const char*, char*))dlsym(RTLD_DEFAULT, "__system_property_get");
     if (!real_system_property_find_ptr) real_system_property_find_ptr = (const prop_info* (*)(const char*))dlsym(RTLD_DEFAULT, "__system_property_find");
     if (!real_system_property_read_callback_ptr) real_system_property_read_callback_ptr = (void (*)(const prop_info*, prop_read_cb_t, void*))dlsym(RTLD_DEFAULT, "__system_property_read_callback");
+    if (!real_system_property_read_ptr) real_system_property_read_ptr = (int (*)(const prop_info*, char*, char*))dlsym(RTLD_DEFAULT, "__system_property_read");
+    if (!real_popen_ptr) real_popen_ptr = (FILE* (*)(const char*, const char*))dlsym(RTLD_DEFAULT, "popen");
+    if (!real_pclose_ptr) real_pclose_ptr = (int (*)(FILE*))dlsym(RTLD_DEFAULT, "pclose");
+    if (!real_statfs_ptr) real_statfs_ptr = (int (*)(const char*, struct statfs*))dlsym(RTLD_DEFAULT, "statfs");
+    if (!real_statfs64_ptr) real_statfs64_ptr = (int (*)(const char*, struct statfs64*))dlsym(RTLD_DEFAULT, "statfs64");
+    if (!real_fstatfs_ptr) real_fstatfs_ptr = (int (*)(int, struct statfs*))dlsym(RTLD_DEFAULT, "fstatfs");
+    if (!real_fstatfs64_ptr) real_fstatfs64_ptr = (int (*)(int, struct statfs64*))dlsym(RTLD_DEFAULT, "fstatfs64");
+    if (!real_uname_ptr) real_uname_ptr = (int (*)(struct utsname*))dlsym(RTLD_DEFAULT, "uname");
+    if (!real_dlopen_ptr) real_dlopen_ptr = (void* (*)(const char*, int))dlsym(RTLD_DEFAULT, "dlopen");
+    if (!real_android_dlopen_ext_ptr) real_android_dlopen_ext_ptr = (void* (*)(const char*, int, const void*))dlsym(RTLD_DEFAULT, "android_dlopen_ext");
     if (!real_syscall_ptr) real_syscall_ptr = (syscall_func_t)dlsym(RTLD_DEFAULT, "syscall");
     if (!real_kill_ptr) real_kill_ptr = (int (*)(pid_t, int))dlsym(RTLD_DEFAULT, "kill");
     if (!real_tkill_ptr) real_tkill_ptr = (int (*)(pid_t, int))dlsym(RTLD_DEFAULT, "tkill");
@@ -732,7 +762,7 @@ FILE* build_filtered_cgroup() {
 
 // ==================== 统一 Hook 实现 ====================
 
-static FILE* fake_fopen(const char* pathname, const char* mode) {
+FILE* fake_fopen(const char* pathname, const char* mode) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
 
@@ -837,7 +867,14 @@ static char* fake_fgets(char* s, int size, FILE* stream) {
     return result;
 }
 
-static int fake_open(const char* pathname, int flags, ...) {
+static char* fake_fgets_chk(char* s, int size, size_t buflen, FILE* stream) {
+    SAFE_BYTEHOOK_SCOPE();
+    (void)buflen;
+    if (real_fgets_chk_ptr) return real_fgets_chk_ptr(s, size, buflen, stream);
+    return fake_fgets(s, size, stream);
+}
+
+int fake_open(const char* pathname, int flags, ...) {
     SAFE_BYTEHOOK_SCOPE();
 
     mode_t mode = 0;
@@ -962,7 +999,7 @@ static int fake_open(const char* pathname, int flags, ...) {
     return (int)syscall(__NR_openat, AT_FDCWD, pathname, flags, mode);
 }
 
-static int fake_openat(int dirfd, const char* pathname, int flags, ...) {
+int fake_openat(int dirfd, const char* pathname, int flags, ...) {
     SAFE_BYTEHOOK_SCOPE();
 
     mode_t mode = 0;
@@ -1095,7 +1132,7 @@ static int fake_openat_2(int dirfd, const char* pathname, int flags) {
     return fake_openat(dirfd, pathname, flags, 0);
 }
 
-static DIR* fake_opendir(const char* name) {
+DIR* fake_opendir(const char* name) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
     if (is_security_hidden_path(name, __builtin_return_address(0))) {
@@ -1108,7 +1145,7 @@ static DIR* fake_opendir(const char* name) {
     return opendir(name);
 }
 
-static struct dirent* fake_readdir(DIR* dirp) {
+struct dirent* fake_readdir(DIR* dirp) {
     SAFE_BYTEHOOK_SCOPE();
     ensure_real_funcs();
     void* ret_addr = __builtin_return_address(0);
@@ -1334,7 +1371,10 @@ static int fake_dladdr(const void* addr, Dl_info* info) {
     if (result != 0 && info && info->dli_fname) {
         const char* hidden[] = {
             "libnative-bypass", "libbytehook", "xalsace",
-            "lsposed", "dexkit", "libdexkit", nullptr
+            "lsposed", "dexkit", "libdexkit",
+            "lspatch", "liblspatch", "libriru", "libzygisk",
+            "libapatch", "liball-jni", "moe.ono", "libcnm",
+            "substrate", "cydia", "xposed", nullptr
         };
         for (int i = 0; hidden[i]; i++) {
             if (strcasestr(info->dli_fname, hidden[i])) {
@@ -1395,7 +1435,10 @@ static int dl_iterate_callback_wrapper(struct dl_phdr_info* info, size_t size, v
     if (info && info->dlpi_name) {
         const char* hidden[] = {
             "libnative-bypass", "libbytehook", "xalsace",
-            "lsposed", "dexkit", "libdexkit", nullptr
+            "lsposed", "dexkit", "libdexkit",
+            "lspatch", "liblspatch", "libriru", "libzygisk",
+            "libapatch", "liball-jni", "moe.ono", "libcnm",
+            "substrate", "cydia", "xposed", nullptr
         };
         for (int i = 0; hidden[i]; i++) {
             if (strcasestr(info->dlpi_name, hidden[i])) {
@@ -1441,7 +1484,7 @@ static int fake_dl_iterate_phdr(int (*callback)(struct dl_phdr_info*, size_t, vo
     return dl_iterate_phdr(dl_iterate_callback_wrapper, &cookie);
 }
 
-static int fake_access(const char* pathname, int mode) {
+int fake_access(const char* pathname, int mode) {
     SAFE_BYTEHOOK_SCOPE();
     if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path access: %s", pathname);
@@ -1465,7 +1508,7 @@ static int fake_faccessat(int dirfd, const char* pathname, int mode, int flags) 
     return (int)syscall(__NR_faccessat, dirfd, pathname, mode, flags);
 }
 
-static int fake_stat(const char* pathname, struct stat* statbuf) {
+int fake_stat(const char* pathname, struct stat* statbuf) {
     SAFE_BYTEHOOK_SCOPE();
     if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path stat: %s", pathname);
@@ -1477,7 +1520,7 @@ static int fake_stat(const char* pathname, struct stat* statbuf) {
     return (int)syscall(__NR_newfstatat, AT_FDCWD, pathname, statbuf, 0);
 }
 
-static int fake_lstat(const char* pathname, struct stat* statbuf) {
+int fake_lstat(const char* pathname, struct stat* statbuf) {
     SAFE_BYTEHOOK_SCOPE();
     if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path lstat: %s", pathname);
@@ -1489,7 +1532,7 @@ static int fake_lstat(const char* pathname, struct stat* statbuf) {
     return (int)syscall(__NR_newfstatat, AT_FDCWD, pathname, statbuf, AT_SYMLINK_NOFOLLOW);
 }
 
-static int fake_fstatat(int dirfd, const char* pathname, struct stat* statbuf, int flags) {
+int fake_fstatat(int dirfd, const char* pathname, struct stat* statbuf, int flags) {
     SAFE_BYTEHOOK_SCOPE();
     if (is_security_hidden_path(pathname, __builtin_return_address(0))) {
         LOGD("Hidden path fstatat: %s", pathname);
@@ -1501,7 +1544,7 @@ static int fake_fstatat(int dirfd, const char* pathname, struct stat* statbuf, i
     return (int)syscall(__NR_newfstatat, dirfd, pathname, statbuf, flags);
 }
 
-static int fake_system_property_get(const char* name, char* value) {
+int fake_system_property_get(const char* name, char* value) {
     SAFE_BYTEHOOK_SCOPE();
     if (!name || !value) return 0;
 
@@ -1550,7 +1593,7 @@ static int fake_system_property_get(const char* name, char* value) {
     return __system_property_get(name, value);
 }
 
-static const prop_info* fake_system_property_find(const char* name) {
+const prop_info* fake_system_property_find(const char* name) {
     SAFE_BYTEHOOK_SCOPE();
     if (name) {
         if (is_sensitive_prop_name(name)) {
@@ -1603,6 +1646,202 @@ static void fake_system_property_read_callback(const prop_info* pi, void (*callb
         pfn_read_cb fn = (pfn_read_cb)dlsym(RTLD_DEFAULT, "__system_property_read_callback");
         if (fn) fn(pi, prop_read_callback_wrapper, &pcc);
     }
+}
+
+int fake_system_property_read(const prop_info* pi, char* name, char* value) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    int ret = 0;
+    if (real_system_property_read_ptr) {
+        ret = real_system_property_read_ptr(pi, name, value);
+    } else {
+        typedef int (*pfn_read)(const prop_info*, char*, char*);
+        pfn_read fn = (pfn_read)dlsym(RTLD_DEFAULT, "__system_property_read");
+        if (fn) ret = fn(pi, name, value);
+    }
+    if (ret > 0 && name && value) {
+        if (strcmp(name, "ro.debuggable") == 0) strcpy(value, "0");
+        else if (strcmp(name, "ro.secure") == 0) strcpy(value, "1");
+        else if (strcmp(name, "ro.build.tags") == 0) strcpy(value, "release-keys");
+        else if (strcmp(name, "ro.boot.flash.locked") == 0) strcpy(value, "1");
+        else if (strcmp(name, "ro.boot.vbmeta.device_state") == 0) strcpy(value, "locked");
+        else if (strcmp(name, "ro.boot.verifiedbootstate") == 0) strcpy(value, "green");
+        else if (strcmp(name, "persist.sys.adb.engineermode") == 0) strcpy(value, "0");
+        else if (strcmp(name, "sys.usb.config") == 0 || strcmp(name, "sys.usb.state") == 0 || strcmp(name, "persist.sys.usb.config") == 0) strcpy(value, "none");
+        else if (strcmp(name, "init.svc.adbd") == 0) strcpy(value, "stopped");
+        else if (is_sensitive_prop_name(name)) value[0] = '\0';
+    }
+    return ret;
+}
+
+FILE* fake_popen(const char* command, const char* type) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    if (command) {
+        if (strstr(command, "which su") || strstr(command, "which ksu") ||
+            strstr(command, "which magisk") || strstr(command, "which apatch") ||
+            strstr(command, "pm list packages") || strstr(command, "ls /data") ||
+            strstr(command, "busybox")) {
+            LOGI("fake_popen blocked command: %s", command);
+            errno = ENOENT;
+            return nullptr;
+        }
+        if (strstr(command, "getprop")) {
+            if (strstr(command, "ro.build.tags")) {
+                FILE* f = tmpfile();
+                if (f) { fputs("release-keys\n", f); rewind(f); return f; }
+            }
+            if (strstr(command, "ro.debuggable")) {
+                FILE* f = tmpfile();
+                if (f) { fputs("0\n", f); rewind(f); return f; }
+            }
+            if (strstr(command, "ro.secure")) {
+                FILE* f = tmpfile();
+                if (f) { fputs("1\n", f); rewind(f); return f; }
+            }
+            if (strstr(command, "sys.usb.config")) {
+                FILE* f = tmpfile();
+                if (f) { fputs("none\n", f); rewind(f); return f; }
+            }
+        }
+        if (strstr(command, "mount")) {
+            LOGI("fake_popen mount redirected");
+            return build_filtered_mounts();
+        }
+    }
+    if (real_popen_ptr) return real_popen_ptr(command, type);
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_popen, command, type);
+    return popen(command, type);
+}
+
+int fake_pclose(FILE* stream) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    if (real_pclose_ptr) {
+        int ret = real_pclose_ptr(stream);
+        if (ret == -1 && errno == ECHILD) {
+            fclose(stream);
+            return 0;
+        }
+        return ret;
+    }
+    if (g_bytehook_hooks_installed) return BYTEHOOK_CALL_PREV(fake_pclose, stream);
+    return pclose(stream);
+}
+
+int fake_statfs(const char* path, struct statfs* buf) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    int ret = 0;
+    if (real_statfs_ptr) ret = real_statfs_ptr(path, buf);
+    else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_statfs, path, buf);
+    else ret = statfs(path, buf);
+    if (ret == 0 && buf) {
+        if (buf->f_type == 0x794c7630) {
+            buf->f_type = 0xef53;
+        }
+        if (path && (strncmp(path, "/system", 7) == 0 || strncmp(path, "/vendor", 7) == 0)) {
+            buf->f_flags |= ST_RDONLY;
+        }
+    }
+    return ret;
+}
+
+static int fake_statfs64(const char* path, struct statfs64* buf) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    int ret = 0;
+    if (real_statfs64_ptr) ret = real_statfs64_ptr(path, buf);
+    else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_statfs64, path, buf);
+    else ret = statfs64(path, buf);
+    if (ret == 0 && buf) {
+        if (buf->f_type == 0x794c7630) {
+            buf->f_type = 0xef53;
+        }
+        if (path && (strncmp(path, "/system", 7) == 0 || strncmp(path, "/vendor", 7) == 0)) {
+            buf->f_flags |= ST_RDONLY;
+        }
+    }
+    return ret;
+}
+
+static int fake_fstatfs(int fd, struct statfs* buf) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    int ret = 0;
+    if (real_fstatfs_ptr) ret = real_fstatfs_ptr(fd, buf);
+    else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_fstatfs, fd, buf);
+    else ret = fstatfs(fd, buf);
+    if (ret == 0 && buf) {
+        if (buf->f_type == 0x794c7630) {
+            buf->f_type = 0xef53;
+        }
+    }
+    return ret;
+}
+
+static int fake_fstatfs64(int fd, struct statfs64* buf) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    int ret = 0;
+    if (real_fstatfs64_ptr) ret = real_fstatfs64_ptr(fd, buf);
+    else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_fstatfs64, fd, buf);
+    else ret = fstatfs64(fd, buf);
+    if (ret == 0 && buf) {
+        if (buf->f_type == 0x794c7630) {
+            buf->f_type = 0xef53;
+        }
+    }
+    return ret;
+}
+
+static int fake_uname(struct utsname* buf) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    int ret = 0;
+    if (real_uname_ptr) ret = real_uname_ptr(buf);
+    else if (g_bytehook_hooks_installed) ret = BYTEHOOK_CALL_PREV(fake_uname, buf);
+    else ret = uname(buf);
+    if (ret == 0 && buf) {
+        char* p = nullptr;
+        if ((p = strstr(buf->release, "-kernelsu")) != nullptr) *p = '\0';
+        if ((p = strstr(buf->release, "-ksu")) != nullptr) *p = '\0';
+        if ((p = strstr(buf->release, "-apatch")) != nullptr) *p = '\0';
+        if ((p = strstr(buf->release, "-dirty")) != nullptr) *p = '\0';
+        if ((p = strstr(buf->version, "kernelsu")) != nullptr) strncpy(p, "generic ", 8);
+        if ((p = strstr(buf->version, "apatch")) != nullptr) strncpy(p, "generic", 7);
+    }
+    return ret;
+}
+
+static void* fake_dlopen(const char* filename, int flags) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    void* handle = nullptr;
+    if (real_dlopen_ptr) handle = real_dlopen_ptr(filename, flags);
+    else if (g_bytehook_hooks_installed) handle = BYTEHOOK_CALL_PREV(fake_dlopen, filename, flags);
+    else handle = dlopen(filename, flags);
+    if (handle && filename && strstr(filename, "libqimei.so")) {
+        hook_libqimei::patch_libqimei_in_memory();
+    }
+    return handle;
+}
+
+static void* fake_android_dlopen_ext(const char* filename, int flags, const void* extinfo) {
+    SAFE_BYTEHOOK_SCOPE();
+    ensure_real_funcs();
+    void* handle = nullptr;
+    if (real_android_dlopen_ext_ptr) handle = real_android_dlopen_ext_ptr(filename, flags, extinfo);
+    else if (g_bytehook_hooks_installed) handle = BYTEHOOK_CALL_PREV(fake_android_dlopen_ext, filename, flags, extinfo);
+    else {
+        typedef void* (*pfn_ext)(const char*, int, const void*);
+        pfn_ext fn = (pfn_ext)dlsym(RTLD_DEFAULT, "android_dlopen_ext");
+        if (fn) handle = fn(filename, flags, extinfo);
+    }
+    if (handle && filename && strstr(filename, "libqimei.so")) {
+        hook_libqimei::patch_libqimei_in_memory();
+    }
+    return handle;
 }
 
 static bool is_anti_tamper_kill(pid_t tgid, pid_t tid, int sig, void* return_address) {
@@ -1957,6 +2196,7 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "readdir_r", (void*)fake_readdir_r, nullptr, nullptr);
     bytehook_hook_all(nullptr, "readdir64_r", (void*)fake_readdir64_r, nullptr, nullptr);
     bytehook_hook_all(nullptr, "fgets", (void*)fake_fgets, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "__fgets_chk", (void*)fake_fgets_chk, nullptr, nullptr);
     bytehook_hook_all(nullptr, "readlink", (void*)fake_readlink, nullptr, nullptr);
     bytehook_hook_all(nullptr, "readlinkat", (void*)fake_readlinkat, nullptr, nullptr);
     bytehook_hook_all(nullptr, "dladdr", (void*)fake_dladdr, nullptr, nullptr);
@@ -1978,6 +2218,16 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "__system_property_get", (void*)fake_system_property_get, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_find", (void*)fake_system_property_find, nullptr, nullptr);
     bytehook_hook_all(nullptr, "__system_property_read_callback", (void*)fake_system_property_read_callback, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "__system_property_read", (void*)fake_system_property_read, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "popen", (void*)fake_popen, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "pclose", (void*)fake_pclose, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "statfs", (void*)fake_statfs, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "statfs64", (void*)fake_statfs64, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "fstatfs", (void*)fake_fstatfs, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "fstatfs64", (void*)fake_fstatfs64, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "uname", (void*)fake_uname, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "dlopen", (void*)fake_dlopen, nullptr, nullptr);
+    bytehook_hook_all(nullptr, "android_dlopen_ext", (void*)fake_android_dlopen_ext, nullptr, nullptr);
 
     LOGI("libc hooks installed (filesystem, maps, mounts, syscalls, and properties)");
 }

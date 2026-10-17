@@ -13,6 +13,7 @@
 #include "hooks/hook_libqsec.h"
 #include "hooks/hook_libmsfkernel.h"
 #include "hooks/hook_libturingmfa.h"
+#include "hooks/hook_libqimei.h"
 
 /**
  * Native Bypass Module for QQ Enhanced Bypass (ByteHook Engine)
@@ -84,6 +85,7 @@ static void* install_hooks_thread(void* arg) {
     install_qsec_hooks();        // Anti-hook detection
     install_msfkernel_hooks();   // qimei36 fingerprint injection
     install_turingmfa_hooks();   // Multi-factor authentication & face verification
+    hook_libqimei::install_hooks(); // libqimei inline syscalls & imports
 
     // 5. libMSF hooks (signature verification bypass)
     hook_libmsf::install_hooks();
