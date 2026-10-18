@@ -11,8 +11,8 @@ public class HookConfig {
     public static ClassLoader classLoader;
 
     // Module version info & cache schema
-    public static final int MODULE_VERSION_CODE = 62;
-    public static final String MODULE_VERSION_NAME = "1.0.62";
+    public static final int MODULE_VERSION_CODE = 63;
+    public static final String MODULE_VERSION_NAME = "1.0.63";
     public static final int CACHE_SCHEMA_VERSION = 3;
 
     // Feature toggles
@@ -28,7 +28,7 @@ public class HookConfig {
     public static boolean ENABLE_QQ950_RISK_BLOCK = true;   // Tier 2: object-return risk blocks (NPE-caveat; disable if NPE appears)
 
     // Kick Interception feature toggle (打包时确定，无需动态开销)
-    public static final boolean ENABLE_KICK_INTERCEPT = false;
+    public static final boolean ENABLE_KICK_INTERCEPT = true;
 
     /**
      * 判断当前是否开启拦截下线功能。

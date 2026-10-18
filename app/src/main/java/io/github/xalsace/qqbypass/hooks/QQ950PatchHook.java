@@ -1382,51 +1382,54 @@ public class QQ950PatchHook {
                 XposedEntry.log("[KickShield] Hooked mqq.app.MainService$MyErrorHandler methods (switchable)");
             }
 
-            // 4. com.tencent.mobileqq.msf.sdk.h: Switchable kick consumption
-            Class<?> msfSdkHCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.msf.sdk.h", cl);
-            if (msfSdkHCls != null && sHookedKickClasses.add(msfSdkHCls)) {
-                HookUtils.hookAllMethods(msfSdkHCls, "e", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (param.args == null || param.args.length < 2 || param.args[1] == null) return;
-                        Object fromServiceMsg = param.args[1];
-                        int failCode = (Integer) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailCode");
-                        String uin = (String) XposedHelpers.callMethod(fromServiceMsg, "getUin");
-                        String cmd = (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd");
+            // 4. com.tencent.mobileqq.msf.sdk.g & com.tencent.mobileqq.msf.sdk.h: Switchable kick & token expired consumption
+            String[] msfDispatcherClasses = {"com.tencent.mobileqq.msf.sdk.g", "com.tencent.mobileqq.msf.sdk.h"};
+            for (final String msfClsName : msfDispatcherClasses) {
+                Class<?> msfCls = XposedHelpers.findClassIfExists(msfClsName, cl);
+                if (msfCls != null && sHookedKickClasses.add(msfCls)) {
+                    HookUtils.hookAllMethods(msfCls, "e", new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            if (param.args == null || param.args.length < 2 || param.args[1] == null) return;
+                            Object fromServiceMsg = param.args[1];
+                            int failCode = (Integer) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailCode");
+                            String uin = (String) XposedHelpers.callMethod(fromServiceMsg, "getUin");
+                            String cmd = (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd");
 
-                        boolean isKickFailCode = (failCode == 2001 ||
-                                                  failCode == 2011 ||
-                                                  failCode == 2012 ||
-                                                  failCode == 2013 ||
-                                                  failCode == 2014 ||
-                                                  failCode == 2008 ||
-                                                  failCode == 2009 ||
-                                                  failCode == 2903 || failCode == 3003);
+                            boolean isKickFailCode = (failCode == 2001 ||
+                                                      failCode == 2011 ||
+                                                      failCode == 2012 ||
+                                                      failCode == 2013 ||
+                                                      failCode == 2014 ||
+                                                      failCode == 2008 ||
+                                                      failCode == 2009 ||
+                                                      failCode == 2903 || failCode == 3003);
 
-                        boolean isKickCmd = "StatSvc.ReqMSFOffline".equals(cmd) ||
-                                            "StatSvc.ReqForceOffline".equals(cmd) ||
-                                            "MessageSvc.PushForceOffline".equals(cmd);
+                            boolean isKickCmd = "StatSvc.ReqMSFOffline".equals(cmd) ||
+                                                "StatSvc.ReqForceOffline".equals(cmd) ||
+                                                "MessageSvc.PushForceOffline".equals(cmd);
 
-                        if (isKickFailCode || isKickCmd) {
-                            io.github.xalsace.qqbypass.utils.ReportAuditManager.recordKickEvent(
-                                "msf.sdk.h.e", fromServiceMsg, "failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
+                            if (isKickFailCode || isKickCmd) {
+                                io.github.xalsace.qqbypass.utils.ReportAuditManager.recordKickEvent(
+                                    msfClsName + ".e", fromServiceMsg, "failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
 
-                            if (HookConfig.isKickInterceptEnabled()) {
-                                XposedEntry.log("[KickShield] msf.sdk.h.e consumed kick packet: failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
-                                param.setResult(true);
-                            } else {
-                                XposedEntry.log("[KickDiagnostic] msf.sdk.h.e kick signal received: failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
+                                if (HookConfig.isKickInterceptEnabled()) {
+                                    XposedEntry.log("[KickShield] " + msfClsName + ".e consumed kick packet: failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
+                                    param.setResult(true);
+                                } else {
+                                    XposedEntry.log("[KickDiagnostic] " + msfClsName + ".e kick signal received: failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
+                                }
                             }
                         }
-                    }
-                });
-                XposedEntry.log("[KickShield] Hooked com.tencent.mobileqq.msf.sdk.h.e (switchable)");
+                    });
+                    XposedEntry.log("[KickShield] Hooked " + msfClsName + ".e (switchable)");
+                }
             }
 
             // 5. com.tencent.mobileqq.msf.sdk.MsfSdkUtils: Prevent account token wipe during kick when enabled
             Class<?> msfSdkUtilsCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.msf.sdk.MsfSdkUtils", cl);
             if (msfSdkUtilsCls != null && sHookedKickClasses.add(msfSdkUtilsCls)) {
-                HookUtils.hookAllMethods(msfSdkUtilsCls, "updateSimpleAccount", new XC_MethodHook() {
+                XC_MethodHook accountWipeHook = new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (!HookConfig.isKickInterceptEnabled()) return;
@@ -1438,20 +1441,22 @@ public class QQ950PatchHook {
                                 for (StackTraceElement ste : stack) {
                                     String cn = ste.getClassName();
                                     String mn = ste.getMethodName();
-                                    if (cn.contains("MyErrorHandler") || cn.contains("Kick") || mn.contains("Kicked") || mn.contains("kicked") || mn.contains("Offline")) {
+                                    if (cn.contains("MyErrorHandler") || cn.contains("Kick") || mn.contains("Kicked") || mn.contains("kicked") || mn.contains("Offline") || cn.contains("msf.sdk") || mn.contains("onUserTokenExpired") || mn.contains("TokenExpired")) {
                                         fromKick = true;
                                         break;
                                     }
                                 }
                                 if (fromKick) {
-                                    XposedEntry.log("[KickShield] Protected user token against wipe in updateSimpleAccount(uin=" + param.args[0] + ", isLogined=false)");
+                                    XposedEntry.log("[KickShield] Protected user token against wipe in " + param.method.getName() + "(uin=" + param.args[0] + ", isLogined=false)");
                                     param.setResult(null);
                                 }
                             }
                         }
                     }
-                });
-                XposedEntry.log("[KickShield] Hooked MsfSdkUtils.updateSimpleAccount for token protection (switchable)");
+                };
+                HookUtils.hookAllMethods(msfSdkUtilsCls, "updateSimpleAccount", accountWipeHook);
+                HookUtils.hookAllMethods(msfSdkUtilsCls, "updateSimpleAccountNotCreate", accountWipeHook);
+                XposedEntry.log("[KickShield] Hooked MsfSdkUtils.updateSimpleAccount & updateSimpleAccountNotCreate for token protection (switchable)");
             }
         } catch (Throwable t) {
             XposedEntry.log("[KickShield] Failed to hook kick shield/diagnostics: " + t.getMessage());
