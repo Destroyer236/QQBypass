@@ -48,12 +48,15 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
         // the cheap universal framework hooks.
         boolean isMainProcess = lpparam.packageName.equals(lpparam.processName);
         boolean isMsfProcess = (lpparam.processName != null && lpparam.processName.endsWith(":MSF"));
+        boolean isOpenSdkProcess = (lpparam.processName != null && lpparam.processName.endsWith(":openSdk"));
         DexKitDetector.setEnabled(isMainProcess && HookConfig.ENABLE_DEXKIT);
         log("DexKit enabled for this process: " + (isMainProcess && HookConfig.ENABLE_DEXKIT));
 
         // Subprocess isolation: :tool (webview/captcha), :peak, :picture, etc. only need
-        // lightweight environment spoofing. Never run heavy mass-reflection or classloader hooks here!
-        if (!isMainProcess && !isMsfProcess) {
+        // lightweight environment spoofing.
+        // :openSdk runs Face Recognition & MFA (IdentificationFragmentActivity, MainAuthActivity)
+        // and requires full QQ950PatchHook, SecurityLibrariesEnhanceHook, and ClassLoader hooks!
+        if (!isMainProcess && !isMsfProcess && !isOpenSdkProcess) {
             try {
                 UnifiedHookCoordinator.initialize(lpparam);
                 DynamicRootDetectionHook.hook(lpparam);

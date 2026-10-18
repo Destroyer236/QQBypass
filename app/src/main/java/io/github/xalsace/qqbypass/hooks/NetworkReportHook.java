@@ -32,7 +32,11 @@ public class NetworkReportHook {
     private static final String[] SAFE_WHITELIST = {
         "trpc.o3.ecdh_access.",
         "trpc.o3.full_social_lock_punish.",
-        "trpc.o3.mobile_security."
+        "trpc.o3.mobile_security.",
+        "Heartbeat.",
+        "StatSvc.",
+        "MessageSvc.",
+        "RegPrxySvc."
     };
 
     // Targeted block: only pure telemetry and security report commands
