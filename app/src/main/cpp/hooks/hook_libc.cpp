@@ -138,7 +138,14 @@ static bool is_caller_security_dso(void* return_address) {
             strcasestr(f, "libmatrix") || strcasestr(f, "liblogcathook") ||
             strcasestr(f, "libcuckoo") || strcasestr(f, "libwarbler") ||
             strcasestr(f, "libqq_la") || strcasestr(f, "libtencentloc") ||
-            strcasestr(f, "libwechat") || strcasestr(f, "libtmsdk")) {
+            strcasestr(f, "libwechat") || strcasestr(f, "libtmsdk") ||
+            strcasestr(f, "ckguard") || strcasestr(f, "ckeygenerator") ||
+            strcasestr(f, "ckey") || strcasestr(f, "libckguard") ||
+            strcasestr(f, "libckeygenerator") || strcasestr(f, "huiyan") ||
+            strcasestr(f, "ytcommonliveness") || strcasestr(f, "ytliveness") ||
+            strcasestr(f, "hardcoder") || strcasestr(f, "cuckoo") ||
+            strcasestr(f, "trim_process") || strcasestr(f, "avcodec") ||
+            (strstr(f, "ZRes/online") && (strstr(f, ".res") || strstr(f, ".so")))) {
             return true;
         }
     }
@@ -1909,6 +1916,12 @@ static void* fake_dlopen(const char* filename, int flags) {
             s_cached_cnm = handle;
         } else if (filename && strstr(filename, "liball-jni")) {
             s_cached_all_jni = handle;
+        } else if (filename && (strstr(filename, ".res") || strstr(filename, "ZRes/online") ||
+                                strstr(filename, "ckguard") || strstr(filename, "ckeygenerator") ||
+                                strstr(filename, "DownloadProxy") || strstr(filename, "TPCore") ||
+                                strstr(filename, "QzoneVideoPlugin") || strstr(filename, "huiyan") ||
+                                strstr(filename, "hardcoder"))) {
+            LOGI("[HiddenExecLoader] Dynamic disguised executable/library loaded: %s (handle=%p)", filename, handle);
         }
     } else if (filename) {
         if (strstr(filename, "libqauxv-core0") && s_cached_qauxv_core0) {
@@ -1943,6 +1956,12 @@ static void* fake_android_dlopen_ext(const char* filename, int flags, const void
             s_cached_cnm = handle;
         } else if (filename && strstr(filename, "liball-jni")) {
             s_cached_all_jni = handle;
+        } else if (filename && (strstr(filename, ".res") || strstr(filename, "ZRes/online") ||
+                                strstr(filename, "ckguard") || strstr(filename, "ckeygenerator") ||
+                                strstr(filename, "DownloadProxy") || strstr(filename, "TPCore") ||
+                                strstr(filename, "QzoneVideoPlugin") || strstr(filename, "huiyan") ||
+                                strstr(filename, "hardcoder"))) {
+            LOGI("[HiddenExecLoader] Dynamic disguised executable/library loaded via ext: %s (handle=%p)", filename, handle);
         }
     } else if (filename) {
         if (strstr(filename, "libqauxv-core0") && s_cached_qauxv_core0) {
@@ -2427,7 +2446,24 @@ static bool libc_caller_filter(const char* caller_path_name, void* arg) {
         strstr(caller_path_name, "libmatrix") ||
         strstr(caller_path_name, "liblogcathook") ||
         strstr(caller_path_name, "libwechat") ||
-        strstr(caller_path_name, "libtmsdk")) {
+        strstr(caller_path_name, "libtmsdk") ||
+        strstr(caller_path_name, "ckguard") ||
+        strstr(caller_path_name, "ckeygenerator") ||
+        strstr(caller_path_name, "ckey") ||
+        strstr(caller_path_name, "libckguard") ||
+        strstr(caller_path_name, "libckeygenerator") ||
+        strstr(caller_path_name, "DownloadProxy") ||
+        strstr(caller_path_name, "TPCore") ||
+        strstr(caller_path_name, "tencent-avif") ||
+        strstr(caller_path_name, "AVCodec") ||
+        strstr(caller_path_name, "b0c04a") ||
+        strstr(caller_path_name, "trim_process") ||
+        strstr(caller_path_name, "huiyan") ||
+        strstr(caller_path_name, "YTCommonLiveness") ||
+        strstr(caller_path_name, "YTLiveness") ||
+        strstr(caller_path_name, "hardcoder") ||
+        strstr(caller_path_name, "ZRes") ||
+        strstr(caller_path_name, ".res")) {
         return true;
     }
 
