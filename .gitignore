@@ -58,3 +58,7 @@ module_maps_*.txt
 # Termux local build script
 build-termux.sh
 
+# Temporary analysis files
+*.dex
+jadx_*/
+

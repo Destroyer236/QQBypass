@@ -497,6 +497,10 @@ public class DynamicXposedDetectionHook {
             || lower.contains("kernelsu")
             || lower.contains("saurik.substrate")
             || lower.contains("frida")
+            || lower.contains("cydia")
+            || lower.contains("substrate")
+            || lower.contains("sukisu")
+            || lower.contains("ksunext")
             || lower.startsWith("io.github.xalsace.")
             || lower.startsWith("org.luckypray.dexkit.");
     }

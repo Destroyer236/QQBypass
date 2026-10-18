@@ -801,18 +801,138 @@ public class DynamicRootDetectionHook {
                 HookUtils.hookAllMethods(android.content.pm.PackageManager.class, "checkSignatures", checkSignaturesHook);
             }
 
-            // Hook QQ 内部 PackageUtil.isAppInstalled，防止 Bugly 等探测
+            // Hook QQ 内部 PackageUtil 全套探测函数，彻底封堵 Bugly 及风控反查
             Class<?> pkgUtilClass = de.robv.android.xposed.XposedHelpers.findClassIfExists(
                 "com.tencent.mobileqq.utils.PackageUtil", lpparam.classLoader);
             if (pkgUtilClass != null) {
+                // 1. isAppInstalled(Context, String) -> false
                 HookUtils.hookAllMethods(pkgUtilClass, "isAppInstalled", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
                             String pkg = (String) param.args[1];
-                            if (isCallerQAuxv()) {
-                                return;
+                            if (isCallerQAuxv()) return;
+                            if (isSuspiciousPackage(pkg)) {
+                                param.setResult(false);
                             }
+                        }
+                    }
+                });
+
+                // 2. checkAppInstalled(Context, String) -> "0"
+                HookUtils.hookAllMethods(pkgUtilClass, "checkAppInstalled", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                            String pkg = (String) param.args[1];
+                            if (isCallerQAuxv()) return;
+                            if (isSuspiciousPackage(pkg)) {
+                                param.setResult("0");
+                            }
+                        }
+                    }
+                });
+
+                // 3. checkAppInstalledBatch(Context, String) -> 仅净化敏感包对应槽位，保留正常包结果
+                HookUtils.hookAllMethods(pkgUtilClass, "checkAppInstalledBatch", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        if (isCallerQAuxv()) return;
+                        if (param.args != null && param.args.length > 1 && param.args[1] instanceof String && param.getResult() instanceof String) {
+                            String req = (String) param.args[1];
+                            String res = (String) param.getResult();
+                            String[] reqParts = req.split("\\|");
+                            String[] resParts = res.split("\\|", -1);
+                            boolean modified = false;
+                            for (int i = 0; i < reqParts.length; i++) {
+                                if (isSuspiciousPackage(reqParts[i].trim())) {
+                                    if (i < resParts.length) {
+                                        resParts[i] = "0";
+                                        modified = true;
+                                    }
+                                }
+                            }
+                            if (modified) {
+                                StringBuilder sb = new StringBuilder();
+                                for (int i = 0; i < resParts.length; i++) {
+                                    if (i > 0) sb.append("|");
+                                    sb.append(resParts[i]);
+                                }
+                                param.setResult(sb.toString());
+                            }
+                        }
+                    }
+                });
+
+                // 4. isAppInstalledBatch(Context, String) -> 仅净化敏感包对应槽位
+                HookUtils.hookAllMethods(pkgUtilClass, "isAppInstalledBatch", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        if (isCallerQAuxv()) return;
+                        if (param.args != null && param.args.length > 1 && param.args[1] instanceof String && param.getResult() instanceof String) {
+                            String req = (String) param.args[1];
+                            String res = (String) param.getResult();
+                            String[] reqParts = req.split("\\|");
+                            String[] resParts = res.split("\\|", -1);
+                            boolean modified = false;
+                            for (int i = 0; i < reqParts.length; i++) {
+                                if (isSuspiciousPackage(reqParts[i].trim())) {
+                                    if (i < resParts.length) {
+                                        resParts[i] = "0";
+                                        modified = true;
+                                    }
+                                }
+                            }
+                            if (modified) {
+                                StringBuilder sb = new StringBuilder();
+                                for (int i = 0; i < resParts.length; i++) {
+                                    if (i > 0) sb.append("|");
+                                    sb.append(resParts[i]);
+                                }
+                                param.setResult(sb.toString());
+                            }
+                        }
+                    }
+                });
+
+                // 5. getAppsVerionCodeBatch(Context, String) -> 仅净化敏感包对应槽位
+                HookUtils.hookAllMethods(pkgUtilClass, "getAppsVerionCodeBatch", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        if (isCallerQAuxv()) return;
+                        if (param.args != null && param.args.length > 1 && param.args[1] instanceof String && param.getResult() instanceof String) {
+                            String req = (String) param.args[1];
+                            String res = (String) param.getResult();
+                            String[] reqParts = req.split("\\|");
+                            String[] resParts = res.split("\\|", -1);
+                            boolean modified = false;
+                            for (int i = 0; i < reqParts.length; i++) {
+                                if (isSuspiciousPackage(reqParts[i].trim())) {
+                                    if (i < resParts.length) {
+                                        resParts[i] = "0";
+                                        modified = true;
+                                    }
+                                }
+                            }
+                            if (modified) {
+                                StringBuilder sb = new StringBuilder();
+                                for (int i = 0; i < resParts.length; i++) {
+                                    if (i > 0) sb.append("|");
+                                    sb.append(resParts[i]);
+                                }
+                                param.setResult(sb.toString());
+                            }
+                        }
+                    }
+                });
+
+                // 6. verifyInstalledApp(Context, String, String) -> false
+                HookUtils.hookAllMethods(pkgUtilClass, "verifyInstalledApp", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length > 1 && param.args[1] instanceof String) {
+                            String pkg = (String) param.args[1];
+                            if (isCallerQAuxv()) return;
                             if (isSuspiciousPackage(pkg)) {
                                 param.setResult(false);
                             }
@@ -1928,6 +2048,8 @@ public class DynamicRootDetectionHook {
             || lower.contains("applisto") || lower.contains("kingroot")
             || lower.contains("kinguser") || lower.contains("oneclickroot")
             || lower.contains("rootgenius") || lower.contains("shuame")
-            || lower.contains("termux") || lower.contains(".hook");
+            || lower.contains("termux") || lower.contains(".hook")
+            || lower.contains("substrate") || lower.contains("cydia")
+            || lower.contains("sukisu") || lower.contains("ksunext");
     }
 }

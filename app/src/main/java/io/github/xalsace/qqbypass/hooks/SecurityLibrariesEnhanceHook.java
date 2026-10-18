@@ -232,11 +232,38 @@ public class SecurityLibrariesEnhanceHook {
                     }
                 });
 
-                // 10. dtcSendMessage: Allow normal sending of SSO reports with sanitized environment data
+                // 10. checkRiskPermission -> 0
+                HookUtils.hookAllMethods(clazz, "checkRiskPermission", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(0);
+                    }
+                });
+
+                // 11. dtcSendMessage: Allow normal sending of SSO reports with sanitized environment data
                 // Dtc's underlying payload has already been sanitized (clean accessibility, properties, plugins).
                 // Transparent transmission ensures the server receives valid heartbeat and security telemetry.
 
                 XposedEntry.log("[FEKitCensor] Successfully neutralized com.tencent.mobileqq.dt.app.Dtc");
+            }
+        });
+
+        final String dtHCls = "com.tencent.mobileqq.dt.app.h";
+        hookSafe(cl, dtHCls, new ClassHookCallback() {
+            @Override
+            public void onClassFound(Class<?> clazz) {
+                XC_MethodHook emptyListHook = new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(new java.util.ArrayList<>());
+                    }
+                };
+                for (Method m : clazz.getDeclaredMethods()) {
+                    if (List.class.isAssignableFrom(m.getReturnType())) {
+                        XposedBridge.hookMethod(m, emptyListHook);
+                    }
+                }
+                XposedEntry.log("[FEKitCensor] Successfully neutralized com.tencent.mobileqq.dt.app.h");
             }
         });
     }

@@ -278,6 +278,7 @@ bool is_sensitive_path(const char* path) {
         "init.svc.microvirtd", "config.prop", "/.android",
         "/data/data/io.github.qauxv", "/data/user/0/io.github.qauxv",
         "mountify", "tricky_store", "metamodule", "ksud", "zygisksu",
+        "cydia", "substrate", "sukisu", "ksunext", "de.robv.android.xposed.installer",
         nullptr
     };
     for (int i = 0; hidden[i]; i++) {
@@ -508,6 +509,7 @@ FILE* build_filtered_maps() {
         "moe.ono", "ono_mmkv", "ono_hcb_",
         "lzlnb", "libcnm", "liball-jni", "cnm0",
         "sesearchcache", "kc.dat", ".se",
+        "cydia", "sukisu", "ksunext", "libpine", "libsandhook", "libepic", "libyahfa",
         nullptr
     };
 

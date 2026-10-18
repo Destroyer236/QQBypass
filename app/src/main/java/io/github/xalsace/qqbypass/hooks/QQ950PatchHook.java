@@ -453,7 +453,8 @@ public class QQ950PatchHook {
         final String[] sensitivePkgKeywords = {
             "xposed", "lsposed", "magisk", "topjohnwu", "weishu", "bmax", "apatch", "frida",
             "edxposed", "sandhook", "taichi", "riru", "zygisk", "fake", "location", "mock",
-            "turing", "xalsace", "qqbypass", "qauxv", "moe.ono", "lzlnb", "cnm"
+            "turing", "xalsace", "qqbypass", "qauxv", "moe.ono", "lzlnb", "cnm",
+            "substrate", "cydia", "sukisu", "ksunext"
         };
 
         // 1. PandoraEx InstalledAppListMonitor
@@ -517,19 +518,16 @@ public class QQ950PatchHook {
             }
         });
 
-        // 2. PackageUtil
+        // 2. PackageUtil (isAppInstalled, checkAppInstalled, checkAppInstalledBatch, isAppInstalledBatch, getAppsVerionCodeBatch, verifyInstalledApp)
         final String pkgUtilCls = "com.tencent.mobileqq.utils.PackageUtil";
         hookSafe(pkgUtilCls, "isAppInstalled", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 if (DynamicRootDetectionHook.isCallerQAuxv()) return;
                 if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
-                    String pkg = ((String) p.args[1]).toLowerCase();
-                    for (String kw : sensitivePkgKeywords) {
-                        if (pkg.contains(kw)) {
-                            p.setResult(false);
-                            return;
-                        }
+                    String pkg = (String) p.args[1];
+                    if (DynamicRootDetectionHook.isSuspiciousPackage(pkg)) {
+                        p.setResult(false);
                     }
                 }
             }
@@ -540,12 +538,9 @@ public class QQ950PatchHook {
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 if (DynamicRootDetectionHook.isCallerQAuxv()) return;
                 if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
-                    String pkg = ((String) p.args[1]).toLowerCase();
-                    for (String kw : sensitivePkgKeywords) {
-                        if (pkg.contains(kw)) {
-                            p.setResult("0");
-                            return;
-                        }
+                    String pkg = (String) p.args[1];
+                    if (DynamicRootDetectionHook.isSuspiciousPackage(pkg)) {
+                        p.setResult("0");
                     }
                 }
             }
@@ -555,19 +550,100 @@ public class QQ950PatchHook {
             @Override
             protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                 if (DynamicRootDetectionHook.isCallerQAuxv()) return;
-                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
-                    String req = ((String) p.args[1]).toLowerCase();
-                    for (String kw : sensitivePkgKeywords) {
-                        if (req.contains(kw)) {
-                            String[] parts = ((String) p.args[1]).split("\\|");
-                            StringBuilder sb = new StringBuilder();
-                            for (int i = 0; i < parts.length; i++) {
-                                if (i > 0) sb.append("|");
-                                sb.append("0");
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String && p.getResult() instanceof String) {
+                    String req = (String) p.args[1];
+                    String res = (String) p.getResult();
+                    String[] reqParts = req.split("\\|");
+                    String[] resParts = res.split("\\|", -1);
+                    boolean modified = false;
+                    for (int i = 0; i < reqParts.length; i++) {
+                        if (DynamicRootDetectionHook.isSuspiciousPackage(reqParts[i].trim())) {
+                            if (i < resParts.length) {
+                                resParts[i] = "0";
+                                modified = true;
                             }
-                            p.setResult(sb.toString());
-                            return;
                         }
+                    }
+                    if (modified) {
+                        StringBuilder sb = new StringBuilder();
+                        for (int i = 0; i < resParts.length; i++) {
+                            if (i > 0) sb.append("|");
+                            sb.append(resParts[i]);
+                        }
+                        p.setResult(sb.toString());
+                    }
+                }
+            }
+        });
+
+        hookSafe(pkgUtilCls, "isAppInstalledBatch", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String && p.getResult() instanceof String) {
+                    String req = (String) p.args[1];
+                    String res = (String) p.getResult();
+                    String[] reqParts = req.split("\\|");
+                    String[] resParts = res.split("\\|", -1);
+                    boolean modified = false;
+                    for (int i = 0; i < reqParts.length; i++) {
+                        if (DynamicRootDetectionHook.isSuspiciousPackage(reqParts[i].trim())) {
+                            if (i < resParts.length) {
+                                resParts[i] = "0";
+                                modified = true;
+                            }
+                        }
+                    }
+                    if (modified) {
+                        StringBuilder sb = new StringBuilder();
+                        for (int i = 0; i < resParts.length; i++) {
+                            if (i > 0) sb.append("|");
+                            sb.append(resParts[i]);
+                        }
+                        p.setResult(sb.toString());
+                    }
+                }
+            }
+        });
+
+        hookSafe(pkgUtilCls, "getAppsVerionCodeBatch", lpparam, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String && p.getResult() instanceof String) {
+                    String req = (String) p.args[1];
+                    String res = (String) p.getResult();
+                    String[] reqParts = req.split("\\|");
+                    String[] resParts = res.split("\\|", -1);
+                    boolean modified = false;
+                    for (int i = 0; i < reqParts.length; i++) {
+                        if (DynamicRootDetectionHook.isSuspiciousPackage(reqParts[i].trim())) {
+                            if (i < resParts.length) {
+                                resParts[i] = "0";
+                                modified = true;
+                            }
+                        }
+                    }
+                    if (modified) {
+                        StringBuilder sb = new StringBuilder();
+                        for (int i = 0; i < resParts.length; i++) {
+                            if (i > 0) sb.append("|");
+                            sb.append(resParts[i]);
+                        }
+                        p.setResult(sb.toString());
+                    }
+                }
+            }
+        });
+
+        hookSafe(pkgUtilCls, "verifyInstalledApp", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
+                    String pkg = (String) p.args[1];
+                    if (DynamicRootDetectionHook.isSuspiciousPackage(pkg)) {
+                        p.setResult(false);
                     }
                 }
             }
@@ -575,12 +651,15 @@ public class QQ950PatchHook {
     }
 
     /**
-     * Dtc (Device Telemetry Center) Defense:
+     * Dtc (Device Telemetry Center) & Obfuscated Environment Censors:
      * - isAbnormalConfig -> false
      * - isDebugVersion -> false
      * - checkAppInstalled -> sanitize
+     * - checkRiskPermission -> sanitize
      * - getAccessibility* -> sanitize
      * - getNetworkInterfaceNames -> "wlan0,rmnet_data0"
+     * - com.tencent.mobileqq.fe.utils.a -> neutralize ClassLoader & dexElements scanner
+     * - com.tencent.mobileqq.dt.app.h -> neutralize suspicious CA certificate scanner
      */
     private static void hookDtcTelemetry(XC_LoadPackage.LoadPackageParam lpparam) {
         final String dtcCls = "com.tencent.mobileqq.dt.app.Dtc";
@@ -595,6 +674,30 @@ public class QQ950PatchHook {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 p.setResult(false);
+            }
+        });
+        hookSafe(dtcCls, "checkAppInstalled", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
+                if (p.args != null && p.args.length > 0 && p.args[0] instanceof String) {
+                    String pkg = (String) p.args[0];
+                    if (DynamicRootDetectionHook.isSuspiciousPackage(pkg)) {
+                        p.setResult(false);
+                    }
+                }
+            }
+        });
+        hookSafe(dtcCls, "checkRiskPermission", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                if (DynamicRootDetectionHook.isCallerQAuxv()) return;
+                if (p.args != null && p.args.length > 1 && p.args[1] instanceof String) {
+                    String pkg = (String) p.args[1];
+                    if (DynamicRootDetectionHook.isSuspiciousPackage(pkg)) {
+                        p.setResult(0);
+                    }
+                }
             }
         });
         hookSafe("com.tencent.util.AppSetting", "isDebugVersion", lpparam, new XC_MethodHook() {
@@ -625,6 +728,28 @@ public class QQ950PatchHook {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 p.setResult("");
+            }
+        });
+
+        // Neutralize com.tencent.mobileqq.fe.utils.a (Obfuscated XOR 0x55 ClassLoader & dexElements scanner)
+        final String feUtilsA = "com.tencent.mobileqq.fe.utils.a";
+        XC_MethodHook falseHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+            }
+        };
+        hookSafe(feUtilsA, "g", lpparam, falseHook);
+        hookSafe(feUtilsA, "a", lpparam, falseHook);
+        hookSafe(feUtilsA, "b", lpparam, falseHook);
+        hookSafe(feUtilsA, "f", lpparam, falseHook);
+
+        // Neutralize com.tencent.mobileqq.dt.app.h (Suspicious CA Certificate detector)
+        final String dtHCls = "com.tencent.mobileqq.dt.app.h";
+        hookSafe(dtHCls, "b", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(new java.util.ArrayList<>());
             }
         });
     }
@@ -1034,6 +1159,9 @@ public class QQ950PatchHook {
     private static final java.util.Set<Class<?>> sHookedKickClasses =
         java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
+    private static final java.util.Set<Class<?>> sHookedFeUtilsAClasses =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     public static void hookLateStage(ClassLoader cl) {
         if (cl == null) return;
         try {
@@ -1044,8 +1172,47 @@ public class QQ950PatchHook {
             hookTuringRiskDetectWithClassLoader(cl);
             hookTuringDIDWithClassLoader(cl);
             hookO3SecurityAndTelemetryWithClassLoader(cl);
+            hookFeUtilsAWithClassLoader(cl);
         } catch (Throwable t) {
             XposedEntry.log("[LateStage] hookLateStage error: " + t.getMessage());
+        }
+    }
+
+    public static void hookFeUtilsAWithClassLoader(ClassLoader cl) {
+        if (cl == null) return;
+        try {
+            Class<?> feUtilsA = XposedHelpers.findClassIfExists("com.tencent.mobileqq.fe.utils.a", cl);
+            if (feUtilsA != null && sHookedFeUtilsAClasses.add(feUtilsA)) {
+                Method[] methods = feUtilsA.getDeclaredMethods();
+                for (Method m : methods) {
+                    Class<?> ret = m.getReturnType();
+                    if (ret == boolean.class) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                param.setResult(false);
+                            }
+                        });
+                    } else if (ret == String.class) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                param.setResult("");
+                            }
+                        });
+                    } else if (ret == int.class) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                param.setResult(0);
+                            }
+                        });
+                    }
+                }
+                XposedEntry.log("[FEKitCensor] Successfully neutralized com.tencent.mobileqq.fe.utils.a via LateStage");
+            }
+        } catch (Throwable t) {
+            XposedEntry.log("[FEKitCensor] Error hooking fe.utils.a in LateStage: " + t.getMessage());
         }
     }
 
