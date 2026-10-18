@@ -56,22 +56,24 @@ public class NetworkReportHook {
     };
 
     public static void hook(XC_LoadPackage.LoadPackageParam lpparam) {
-        XposedEntry.log("NetworkReportHook: Initializing targeted network telemetry and inspection hooks");
-        // Layer 0: Targeted ChannelManager report interception with synthetic 1000 ACK
-        if (HookConfig.ENABLE_NETWORK_INTERCEPT) {
-            hookChannelManager(lpparam);
-        }
+        XposedEntry.log("NetworkReportHook: Initializing targeted network telemetry, audit logging, and inspection hooks");
+        // Layer 0: ChannelManager report auditing & optional interception
+        hookChannelManager(lpparam);
 
-        // Layer 1-3: Deep network/packet interception. Strictly guarded by ENABLE_NETWORK_INTERCEPT.
-        // Disabled by default so business traffic (message sending/receiving) remains completely unimpeded.
-        if (HookConfig.ENABLE_NETWORK_INTERCEPT) {
-            // Layer 1: ChannelProxyExt fallback
-            hookChannelProxyExt(lpparam);
-            // Layer 2: MSFKernelBridge native packet choke point
-            hookMSFKernelBridge(lpparam);
-            // Layer 3: MsfCore SSO dispatcher
-            hookMsfCore(lpparam);
-        }
+        // Layer 1: ChannelProxyExt fallback auditing & optional interception
+        hookChannelProxyExt(lpparam);
+
+        // Layer 2: MSFKernelBridge native packet choke point auditing & optional interception
+        hookMSFKernelBridge(lpparam);
+
+        // Layer 3: MsfCore SSO dispatcher auditing & optional interception
+        hookMsfCore(lpparam);
+
+        // Layer 4: StatisticCollector performance & telemetry auditing
+        hookStatisticCollector(lpparam);
+
+        // Layer 5: ReportController business & security reporting auditing
+        hookReportController(lpparam);
 
         // Inspection checks (TuringFD /proc scanner neutralization)
         hookTuringFD(lpparam);
@@ -117,8 +119,8 @@ public class NetworkReportHook {
 
     /**
      * Layer 0: Hook ChannelManager.sendMessage directly.
-     * This intercepts before the proxy call and before checkMethod(this.mChannelProxy)
-     * anti-hook inspection runs.
+     * Audits all outgoing FEKit / C++ security messages, and selectively neutralizes
+     * when ENABLE_NETWORK_INTERCEPT is enabled.
      */
     private static void hookChannelManager(XC_LoadPackage.LoadPackageParam lpparam) {
         HookUtils.hookAllMethods("com.tencent.mobileqq.channel.ChannelManager", "sendMessage",
@@ -128,11 +130,19 @@ public class NetworkReportHook {
                     if (param.args == null || param.args.length < 1 || !(param.args[0] instanceof String)) return;
 
                     String command = (String) param.args[0];
-                    if (shouldBlock(command)) {
-                        long callbackId = 0L;
-                        if (param.args.length >= 3 && param.args[2] instanceof Number) {
-                            callbackId = ((Number) param.args[2]).longValue();
-                        }
+                    long callbackId = 0L;
+                    if (param.args.length >= 3 && param.args[2] instanceof Number) {
+                        callbackId = ((Number) param.args[2]).longValue();
+                    }
+                    int dataLen = 0;
+                    if (param.args.length >= 2 && param.args[1] instanceof byte[]) {
+                        dataLen = ((byte[]) param.args[1]).length;
+                    }
+
+                    // Always audit outgoing ChannelManager reports
+                    io.github.xalsace.qqbypass.utils.ReportAuditManager.recordChannelManager(command, callbackId, dataLen);
+
+                    if (HookConfig.ENABLE_NETWORK_INTERCEPT && shouldBlock(command)) {
                         injectNativeReceiveSuccess(lpparam.classLoader, command, callbackId);
                         param.setResult(null);
                         XposedEntry.log("Intercepted & fulfilled ChannelManager.sendMessage: "
@@ -156,18 +166,21 @@ public class NetworkReportHook {
                         if (param.args == null || param.args.length < 1 || !(param.args[0] instanceof String)) return;
 
                         String command = (String) param.args[0];
-                        if (shouldBlock(command)) {
+                        long callbackId = 0L;
+                        for (int i = param.args.length - 1; i >= 1; i--) {
+                            if (param.args[i] instanceof Number) {
+                                callbackId = ((Number) param.args[i]).longValue();
+                                break;
+                            }
+                        }
+
+                        // Always audit
+                        io.github.xalsace.qqbypass.utils.ReportAuditManager.recordReport("ChannelProxyExt", command, null, "callbackId=" + callbackId, 3);
+
+                        if (HookConfig.ENABLE_NETWORK_INTERCEPT && shouldBlock(command)) {
                             Class<?> returnType = ((java.lang.reflect.Method) param.method).getReturnType();
                             if (returnType.isPrimitive() && returnType != void.class) {
                                 return;
-                            }
-
-                            long callbackId = 0L;
-                            for (int i = param.args.length - 1; i >= 1; i--) {
-                                if (param.args[i] instanceof Number) {
-                                    callbackId = ((Number) param.args[i]).longValue();
-                                    break;
-                                }
                             }
 
                             injectNativeReceiveSuccess(lpparam.classLoader, command, callbackId);
@@ -193,11 +206,15 @@ public class NetworkReportHook {
                     Object adapter = param.args[0];
                     try {
                         String cmd = (String) XposedHelpers.callMethod(adapter, "getCmd");
-                        if (shouldBlock(cmd)) {
-                            int seq = 0;
-                            try {
-                                seq = ((Number) XposedHelpers.callMethod(adapter, "getSeq")).intValue();
-                            } catch (Throwable ignored) { }
+                        int seq = 0;
+                        try {
+                            seq = ((Number) XposedHelpers.callMethod(adapter, "getSeq")).intValue();
+                        } catch (Throwable ignored) { }
+
+                        // Always audit
+                        io.github.xalsace.qqbypass.utils.ReportAuditManager.recordReport("MSFKernelBridge", cmd, null, "seq=" + seq, 3);
+
+                        if (HookConfig.ENABLE_NETWORK_INTERCEPT && shouldBlock(cmd)) {
                             param.setResult(seq);
                             XposedEntry.log("Neutralized MSFKernelBridge.sendPacket: " + cmd + " (seq=" + seq + ")");
                         }
@@ -208,8 +225,7 @@ public class NetworkReportHook {
 
     /**
      * Layer 3: MsfCore.sendSsoMsg.
-     * Service layer SSO dispatcher. If the ToServiceMsg expects a response, synthesizes
-     * a clean FromServiceMsg with resultCode 1000 so the caller's future/callback resolves.
+     * Service layer SSO dispatcher. Audits all SSO outgoing traffic and optional interception.
      */
     private static void hookMsfCore(XC_LoadPackage.LoadPackageParam lpparam) {
         HookUtils.hookAllMethods("com.tencent.mobileqq.msf.core.MsfCore", "sendSsoMsg",
@@ -221,8 +237,21 @@ public class NetworkReportHook {
                     Object toServiceMsg = param.args[0];
                     Object cmdObj = XposedHelpers.callMethod(toServiceMsg, "getServiceCmd");
                     String command = cmdObj == null ? null : cmdObj.toString();
+                    String uin = "";
+                    int ssoSeq = 0;
+                    boolean needResp = false;
+                    try {
+                        uin = (String) XposedHelpers.callMethod(toServiceMsg, "getUin");
+                        ssoSeq = (int) XposedHelpers.callMethod(toServiceMsg, "getRequestSsoSeq");
+                        needResp = (boolean) XposedHelpers.callMethod(toServiceMsg, "isNeedResp");
+                    } catch (Throwable ignored) {}
 
-                    if (shouldBlock(command)) {
+                    // Always audit outgoing SSO messages (excluding Heartbeat.Alive to prevent log flood)
+                    if (command != null && !command.startsWith("Heartbeat.")) {
+                        io.github.xalsace.qqbypass.utils.ReportAuditManager.recordMsfSso(command, uin, ssoSeq, needResp);
+                    }
+
+                    if (HookConfig.ENABLE_NETWORK_INTERCEPT && shouldBlock(command)) {
                         // Check if it's a FEKit security message with security callback id
                         try {
                             Object cbObj = XposedHelpers.callMethod(toServiceMsg, "getAttribute", "attr_key_security_callback_id");
@@ -234,10 +263,7 @@ public class NetworkReportHook {
 
                         // If caller needs a response, synthesize FromServiceMsg
                         try {
-                            boolean needResp = (boolean) XposedHelpers.callMethod(toServiceMsg, "isNeedResp");
                             if (needResp) {
-                                String uin = (String) XposedHelpers.callMethod(toServiceMsg, "getUin");
-                                int ssoSeq = (int) XposedHelpers.callMethod(toServiceMsg, "getRequestSsoSeq");
                                 int appSeq = (int) XposedHelpers.callMethod(toServiceMsg, "getAppSeq");
                                 int appId = (int) XposedHelpers.callMethod(toServiceMsg, "getAppId");
                                 Object msfCmd = XposedHelpers.callMethod(toServiceMsg, "getMsfCommand");
@@ -263,24 +289,61 @@ public class NetworkReportHook {
 
                         Class<?> returnType = ((java.lang.reflect.Method) param.method).getReturnType();
                         if (returnType == int.class) {
-                            int seq = 0;
-                            try {
-                                seq = (int) XposedHelpers.callMethod(toServiceMsg, "getRequestSsoSeq");
-                            } catch (Throwable ignored) { }
-                            param.setResult(seq);
+                            param.setResult(ssoSeq);
                             XposedEntry.log("Neutralized MsfCore: " + command);
                         } else if (returnType == long.class) {
-                            long seq = 0L;
-                            try {
-                                seq = ((Number) XposedHelpers.callMethod(toServiceMsg, "getRequestSsoSeq")).longValue();
-                            } catch (Throwable ignored) { }
-                            param.setResult(seq);
+                            param.setResult((long) ssoSeq);
                             XposedEntry.log("Neutralized MsfCore: " + command);
                         } else if (returnType == void.class) {
                             param.setResult(null);
                             XposedEntry.log("Neutralized MsfCore: " + command);
                         }
                     }
+                }
+            });
+    }
+
+    /**
+     * Layer 4: StatisticCollector performance & error report auditing.
+     */
+    private static void hookStatisticCollector(XC_LoadPackage.LoadPackageParam lpparam) {
+        HookUtils.hookAllMethods("com.tencent.mobileqq.statistics.StatisticCollector", "collectPerformance",
+            new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args == null || param.args.length < 2) return;
+                    String uin = param.args[0] != null ? param.args[0].toString() : "";
+                    String tagName = param.args[1] != null ? param.args[1].toString() : "";
+                    boolean success = param.args.length > 2 && param.args[2] instanceof Boolean ? (Boolean) param.args[2] : true;
+                    long duration = param.args.length > 3 && param.args[3] instanceof Number ? ((Number) param.args[3]).longValue() : 0L;
+                    long size = param.args.length > 4 && param.args[4] instanceof Number ? ((Number) param.args[4]).longValue() : 0L;
+                    @SuppressWarnings("unchecked")
+                    java.util.Map<String, String> params = param.args.length > 5 && param.args[5] instanceof java.util.Map ? (java.util.Map<String, String>) param.args[5] : null;
+                    String res = param.args.length > 6 && param.args[6] != null ? param.args[6].toString() : "";
+                    io.github.xalsace.qqbypass.utils.ReportAuditManager.recordStatisticCollector(uin, tagName, success, duration, size, params, res);
+                }
+            });
+    }
+
+    /**
+     * Layer 5: ReportController business & security reporting auditing.
+     */
+    private static void hookReportController(XC_LoadPackage.LoadPackageParam lpparam) {
+        HookUtils.hookAllMethods("com.tencent.mobileqq.statistics.ReportController", "b",
+            new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args == null || param.args.length < 5) return;
+                    String tag = param.args[1] != null ? param.args[1].toString() : "";
+                    String subTag = param.args[2] != null ? param.args[2].toString() : "";
+                    String opType = param.args.length > 5 && param.args[5] != null ? param.args[5].toString() : "";
+                    String opName = param.args.length > 6 && param.args[6] != null ? param.args[6].toString() : "";
+                    int res = param.args.length > 7 && param.args[7] instanceof Number ? ((Number) param.args[7]).intValue() : 0;
+                    String r2 = param.args.length > 8 && param.args[8] != null ? param.args[8].toString() : "";
+                    String r3 = param.args.length > 9 && param.args[9] != null ? param.args[9].toString() : "";
+                    String r4 = param.args.length > 10 && param.args[10] != null ? param.args[10].toString() : "";
+                    String r5 = param.args.length > 11 && param.args[11] != null ? param.args[11].toString() : "";
+                    io.github.xalsace.qqbypass.utils.ReportAuditManager.recordReportController(tag, subTag, opType, opName, res, r2, r3, r4, r5);
                 }
             });
     }

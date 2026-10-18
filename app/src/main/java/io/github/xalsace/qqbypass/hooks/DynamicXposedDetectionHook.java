@@ -922,25 +922,65 @@ public class DynamicXposedDetectionHook {
             XposedEntry.log("Failed to hook QLog: " + t.getMessage());
         }
 
-        // Sanitize CrashReport.putUserData
-        try {
-            Class<?> crashReportCls = de.robv.android.xposed.XposedHelpers.findClassIfExists(
-                "com.tencent.bugly.crashreport.CrashReport", lpparam.classLoader);
-            if (crashReportCls != null) {
-                HookUtils.hookAllMethods(crashReportCls, "putUserData", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (param.args != null) {
-                            for (Object arg : param.args) {
-                                if (arg instanceof String && containsSensitiveLog((String) arg)) {
-                                    param.setResult(null);
-                                    return;
+        // Sanitize CrashReport.putUserData and catch exception reports
+        String[] crashClasses = {
+            "com.tencent.bugly.crashreport.CrashReport",
+            "com.tencent.feedback.eup.CrashReport"
+        };
+        for (String crashClassName : crashClasses) {
+            try {
+                Class<?> crashReportCls = de.robv.android.xposed.XposedHelpers.findClassIfExists(
+                    crashClassName, lpparam.classLoader);
+                if (crashReportCls != null) {
+                    HookUtils.hookAllMethods(crashReportCls, "putUserData", new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            if (param.args != null) {
+                                for (Object arg : param.args) {
+                                    if (arg instanceof String && containsSensitiveLog((String) arg)) {
+                                        param.setResult(null);
+                                        return;
+                                    }
                                 }
                             }
                         }
+                    });
+
+                    XC_MethodHook exceptionHook = new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            if (param.args == null || param.args.length == 0) return;
+                            Throwable ex = null;
+                            String msg = "";
+                            for (Object arg : param.args) {
+                                if (arg instanceof Throwable) {
+                                    ex = (Throwable) arg;
+                                } else if (arg instanceof String && msg.isEmpty()) {
+                                    msg = (String) arg;
+                                }
+                            }
+                            if (ex != null || !msg.isEmpty()) {
+                                boolean suppressed = io.github.xalsace.qqbypass.utils.ReportAuditManager.recordAndSanitizeException(
+                                    crashClassName, ex, msg);
+                                if (suppressed) {
+                                    Class<?> ret = param.method instanceof java.lang.reflect.Method ?
+                                        ((java.lang.reflect.Method) param.method).getReturnType() : void.class;
+                                    if (ret == boolean.class) {
+                                        param.setResult(true);
+                                    } else {
+                                        param.setResult(null);
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    for (String m : new String[]{"postCatchedException", "postException", "handleCatchException"}) {
+                        HookUtils.hookAllMethods(crashReportCls, m, exceptionHook);
                     }
-                });
-            }
-        } catch (Throwable ignored) {}
+                    XposedEntry.log("[CrashReport] Installed exception sanitization on " + crashClassName);
+                }
+            } catch (Throwable ignored) {}
+        }
     }
 }

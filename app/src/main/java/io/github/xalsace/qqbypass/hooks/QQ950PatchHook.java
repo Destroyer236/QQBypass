@@ -1229,6 +1229,8 @@ public class QQ950PatchHook {
                         XposedBridge.hookMethod(m, new XC_MethodHook() {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                io.github.xalsace.qqbypass.utils.ReportAuditManager.recordKickEvent(
+                                    "NTKickProcessor." + param.method.getName(), null, param.args != null ? java.util.Arrays.toString(param.args) : "null");
                                 if (HookConfig.isKickInterceptEnabled()) {
                                     XposedEntry.log("[KickShield] Intercepted NTKickProcessor." + param.method.getName());
                                     param.setResult(null);
@@ -1269,6 +1271,8 @@ public class QQ950PatchHook {
                 XC_MethodHook kickApiHook = new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        io.github.xalsace.qqbypass.utils.ReportAuditManager.recordKickEvent(
+                            "KickApiImpl." + param.method.getName(), null, param.args != null ? java.util.Arrays.toString(param.args) : "null");
                         if (HookConfig.isKickInterceptEnabled()) {
                             XposedEntry.log("[KickShield] Suppressed KickApiImpl." + param.method.getName());
                             param.setResult(null);
@@ -1304,11 +1308,15 @@ public class QQ950PatchHook {
                 HookUtils.hookAllMethods(myErrorHandlerCls, "onUserTokenExpired", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        Object fromServiceMsg = param.args != null && param.args.length > 1 ? param.args[1] : null;
+                        Object fromServiceMsg = param.args != null && param.args.length > 1 ? param.args[1] : (param.args != null && param.args.length > 0 ? param.args[0] : null);
                         String uin = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getUin") : "";
                         String cmd = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd") : "";
                         Object ssoErr = fromServiceMsg != null ? XposedHelpers.callMethod(fromServiceMsg, "getAttribute", "attr_sso_error_code", 0) : 0;
                         String failMsg = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getBusinessFailMsg") : "";
+
+                        // Deep Kick Decoding Audit
+                        io.github.xalsace.qqbypass.utils.ReportAuditManager.recordKickEvent(
+                            "MyErrorHandler.onUserTokenExpired", fromServiceMsg, "ssoErr=" + ssoErr + ", failMsg=" + failMsg);
 
                         if (HookConfig.isKickInterceptEnabled()) {
                             XposedEntry.log("[KickShield] Suppressed onUserTokenExpired! uin=" + uin + ", cmd=" + cmd);
@@ -1324,9 +1332,14 @@ public class QQ950PatchHook {
                     HookUtils.hookAllMethods(myErrorHandlerCls, km, new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            Object fromServiceMsg = param.args != null && param.args.length > 1 ? param.args[1] : null;
+                            Object fromServiceMsg = param.args != null && param.args.length > 1 ? param.args[1] : (param.args != null && param.args.length > 0 ? param.args[0] : null);
                             String uin = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getUin") : "";
                             String cmd = fromServiceMsg != null ? (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd") : "";
+
+                            // Deep Kick Decoding Audit
+                            io.github.xalsace.qqbypass.utils.ReportAuditManager.recordKickEvent(
+                                "MyErrorHandler." + param.method.getName(), fromServiceMsg, "cmd=" + cmd + ", uin=" + uin);
+
                             if (HookConfig.isKickInterceptEnabled()) {
                                 XposedEntry.log("[KickShield] Suppressed MyErrorHandler." + param.method.getName() + "! uin=" + uin);
                                 param.setResult(null);
@@ -1351,6 +1364,11 @@ public class QQ950PatchHook {
                                 }
                             }
                         }
+
+                        // Deep Kick Decoding Audit
+                        io.github.xalsace.qqbypass.utils.ReportAuditManager.recordKickEvent(
+                            "MyErrorHandler.popupNotification", null, "action=" + action + ", uin=" + uin + ", reason=" + reason);
+
                         if (HookConfig.isKickInterceptEnabled()) {
                             XposedEntry.log("[KickShield] Suppressed popupNotification: action=" + action + ", uin=" + uin);
                             param.setResult(null);
@@ -1390,6 +1408,9 @@ public class QQ950PatchHook {
                                             "MessageSvc.PushForceOffline".equals(cmd);
 
                         if (isKickFailCode || isKickCmd) {
+                            io.github.xalsace.qqbypass.utils.ReportAuditManager.recordKickEvent(
+                                "msf.sdk.h.e", fromServiceMsg, "failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
+
                             if (HookConfig.isKickInterceptEnabled()) {
                                 XposedEntry.log("[KickShield] msf.sdk.h.e consumed kick packet: failCode=" + failCode + ", cmd=" + cmd + ", uin=" + uin);
                                 param.setResult(true);

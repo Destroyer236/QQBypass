@@ -42,6 +42,7 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
 
         // Initialize configuration
         HookConfig.init(lpparam);
+        io.github.xalsace.qqbypass.utils.ReportAuditManager.setProcessName(lpparam.processName);
 
         // Process gate: DexKit parses the whole ~112MB APK. QQ runs
         // several processes (main, :MSF, ...). Subprocesses keep
@@ -53,12 +54,13 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
         log("DexKit enabled for this process: " + (isMainProcess && HookConfig.ENABLE_DEXKIT));
 
         // Subprocess isolation: :tool (webview/captcha), :peak, :picture, etc. only need
-        // lightweight environment spoofing.
+        // lightweight environment spoofing and network auditing.
         // :openSdk runs Face Recognition & MFA (IdentificationFragmentActivity, MainAuthActivity)
         // and requires full QQ950PatchHook, SecurityLibrariesEnhanceHook, and ClassLoader hooks!
         if (!isMainProcess && !isMsfProcess && !isOpenSdkProcess) {
             try {
                 UnifiedHookCoordinator.initialize(lpparam);
+                NetworkReportHook.hook(lpparam);
                 DynamicRootDetectionHook.hook(lpparam);
                 DynamicXposedDetectionHook.hook(lpparam);
                 DynamicDeviceInfoHook.hook(lpparam);

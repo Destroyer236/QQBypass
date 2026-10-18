@@ -404,11 +404,27 @@ public class DynamicRootDetectionHook {
                                     }
                                 }
                             }
+
+                            // Audit normalized Beacon report
+                            String eventCode = null;
+                            try {
+                                eventCode = (String) de.robv.android.xposed.XposedHelpers.callMethod(event, "getCode");
+                            } catch (Throwable ignored) {}
+                            boolean isSuccess = true;
+                            try {
+                                isSuccess = (boolean) de.robv.android.xposed.XposedHelpers.callMethod(event, "isSuccess");
+                            } catch (Throwable ignored) {}
+                            String appKey = null;
+                            try {
+                                appKey = (String) de.robv.android.xposed.XposedHelpers.callMethod(event, "getAppKey");
+                            } catch (Throwable ignored) {}
+
+                            io.github.xalsace.qqbypass.utils.ReportAuditManager.recordBeacon(eventCode, isSuccess, params, appKey);
                         } catch (Throwable ignored) {}
                     }
                 }
             });
-            XposedEntry.log("[BeaconReport] Installed transparent data normalization on BeaconReport.report");
+            XposedEntry.log("[BeaconReport] Installed transparent data normalization & audit on BeaconReport.report");
         } catch (Throwable t) {
             XposedEntry.log("[BeaconReport] Failed to hook BeaconReport: " + t.getMessage());
         }

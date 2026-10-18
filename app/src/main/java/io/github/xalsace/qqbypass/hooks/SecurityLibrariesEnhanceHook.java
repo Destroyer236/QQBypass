@@ -240,9 +240,18 @@ public class SecurityLibrariesEnhanceHook {
                     }
                 });
 
-                // 11. dtcSendMessage: Allow normal sending of SSO reports with sanitized environment data
-                // Dtc's underlying payload has already been sanitized (clean accessibility, properties, plugins).
-                // Transparent transmission ensures the server receives valid heartbeat and security telemetry.
+                // 11. dtcSendMessage: Allow normal sending of SSO reports with sanitized environment data & audit
+                HookUtils.hookAllMethods(clazz, "dtcSendMessage", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length > 0) {
+                            String cmd = String.valueOf(param.args[0]);
+                            byte[] data = param.args.length > 1 && param.args[1] instanceof byte[] ? (byte[]) param.args[1] : null;
+                            long cbId = param.args.length > 2 && param.args[2] instanceof Number ? ((Number) param.args[2]).longValue() : 0L;
+                            io.github.xalsace.qqbypass.utils.ReportAuditManager.recordReport("Dtc", cmd, null, "cbId=" + cbId + ", dataLen=" + (data != null ? data.length : 0), 3);
+                        }
+                    }
+                });
 
                 XposedEntry.log("[FEKitCensor] Successfully neutralized com.tencent.mobileqq.dt.app.Dtc");
             }
