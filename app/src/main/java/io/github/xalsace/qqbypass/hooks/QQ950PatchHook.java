@@ -1470,12 +1470,17 @@ public class QQ950PatchHook {
         }
     }
 
+    private static final java.util.concurrent.atomic.AtomicBoolean sOtvrmInitLock = new java.util.concurrent.atomic.AtomicBoolean(false);
+
     private static void ensureOtvrmInitialized(Object otvrm, ClassLoader cl, android.content.Context fallbackContext) {
         if (otvrm == null) return;
+        if (!sOtvrmInitLock.compareAndSet(false, true)) {
+            return;
+        }
         try {
-            Object h = null;
+            boolean g = false;
             try {
-                h = XposedHelpers.getObjectField(otvrm, "h");
+                g = XposedHelpers.getBooleanField(otvrm, "g");
             } catch (Throwable ignored) {}
 
             Object b = null;
@@ -1483,42 +1488,51 @@ public class QQ950PatchHook {
                 b = XposedHelpers.getObjectField(otvrm, "b");
             } catch (Throwable ignored) {}
 
-            if (h == null || b == null) {
-                XposedEntry.log("[FacePatch] OTVRM uninitialized (h=" + (h != null) + ", b=" + (b != null) + "), repairing state...");
-                android.content.Context ctx = fallbackContext;
-                if (ctx == null) {
+            if (g && b != null) {
+                return;
+            }
+
+            Object h = null;
+            try {
+                h = XposedHelpers.getObjectField(otvrm, "h");
+            } catch (Throwable ignored) {}
+
+            XposedEntry.log("[FacePatch] OTVRM uninitialized (g=" + g + ", b=" + (b != null) + "), repairing state...");
+            android.content.Context ctx = fallbackContext;
+            if (ctx == null) {
+                try {
+                    ctx = (android.content.Context) XposedHelpers.callStaticMethod(
+                        XposedHelpers.findClass("android.app.ActivityThread", null),
+                        "currentApplication");
+                } catch (Throwable ignored) {}
+            }
+            Class<?> builderCls = XposedHelpers.findClassIfExists("com.tencent.turingcam.TuringFaceBuilder", cl);
+            if (builderCls != null) {
+                Object builder = XposedHelpers.callStaticMethod(builderCls, "build");
+                if (ctx != null) {
                     try {
-                        ctx = (android.content.Context) XposedHelpers.callStaticMethod(
-                            XposedHelpers.findClass("android.app.ActivityThread", null),
-                            "currentApplication");
+                        XposedHelpers.callMethod(builder, "setContext", ctx);
                     } catch (Throwable ignored) {}
                 }
-                Class<?> builderCls = XposedHelpers.findClassIfExists("com.tencent.turingcam.TuringFaceBuilder", cl);
-                if (builderCls != null) {
-                    Object builder = XposedHelpers.callStaticMethod(builderCls, "build");
-                    if (ctx != null) {
-                        try {
-                            XposedHelpers.callMethod(builder, "setContext", ctx);
-                        } catch (Throwable ignored) {}
-                    }
+                try {
+                    XposedHelpers.callMethod(builder, "setIsHardwareAcceleration", true);
+                } catch (Throwable ignored) {}
+                if (h == null) {
                     try {
-                        XposedHelpers.callMethod(builder, "setIsHardwareAcceleration", true);
+                        XposedHelpers.setObjectField(otvrm, "h", builder);
                     } catch (Throwable ignored) {}
-                    if (h == null) {
-                        try {
-                            XposedHelpers.setObjectField(otvrm, "h", builder);
-                        } catch (Throwable ignored) {}
-                    }
-                    if (b == null) {
-                        try {
-                            XposedHelpers.callMethod(otvrm, "a", builder);
-                        } catch (Throwable ignored) {}
-                    }
-                    XposedEntry.log("[FacePatch] OTVRM successfully initialized via fallback builder!");
                 }
+                if (b == null) {
+                    try {
+                        XposedHelpers.callMethod(otvrm, "a", builder);
+                    } catch (Throwable ignored) {}
+                }
+                XposedEntry.log("[FacePatch] OTVRM successfully initialized via fallback builder!");
             }
         } catch (Throwable t) {
             XposedEntry.log("[FacePatch] Error in ensureOtvrmInitialized: " + t.getMessage());
+        } finally {
+            sOtvrmInitLock.set(false);
         }
     }
 
@@ -1670,28 +1684,13 @@ public class QQ950PatchHook {
             HookUtils.hookAllMethods(otvrmClass, "a", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.thisObject != null) {
-                        try {
-                            android.content.Context ctx = null;
-                            if (param.args != null) {
-                                for (Object arg : param.args) {
-                                    if (arg instanceof android.content.Context) {
-                                        ctx = (android.content.Context) arg;
-                                        break;
-                                    } else if (arg != null) {
-                                        try {
-                                            Object possibleCtx = XposedHelpers.callMethod(arg, "getContext");
-                                            if (possibleCtx instanceof android.content.Context) {
-                                                ctx = (android.content.Context) possibleCtx;
-                                                break;
-                                            }
-                                        } catch (Throwable ignored) {}
-                                    }
-                                }
-                            }
-                            ensureOtvrmInitialized(param.thisObject, cl, ctx);
-                        } catch (Throwable t) {
-                            XposedEntry.log("[FacePatch] Error in OTVRM.a pre-check: " + t.getMessage());
+                    if (param.args != null && param.args.length == 1 && param.args[0] == null) {
+                        Class<?> builderCls = XposedHelpers.findClassIfExists("com.tencent.turingcam.TuringFaceBuilder", cl);
+                        if (builderCls != null) {
+                            try {
+                                Object builder = XposedHelpers.callStaticMethod(builderCls, "build");
+                                param.args[0] = builder;
+                            } catch (Throwable ignored) {}
                         }
                     }
                 }
@@ -1767,26 +1766,8 @@ public class QQ950PatchHook {
             XposedEntry.log("[FacePatch] Hooked TuringSdkImp for face hardware status, sign, and defender start");
         }
 
-        // 2.1 Turing base class: com.tencent.could.huiyansdk.turing.b
-        final String turingBCls = "com.tencent.could.huiyansdk.turing.b";
-        Class<?> turingBClass = XposedHelpers.findClassIfExists(turingBCls, cl);
-        if (turingBClass != null && !sHookedFaceClasses.contains(turingBClass)) {
-            sHookedFaceClasses.add(turingBClass);
-            HookUtils.hookAllMethods(turingBClass, "a", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.method instanceof java.lang.reflect.Method) {
-                        java.lang.reflect.Method m = (java.lang.reflect.Method) param.method;
-                        if (m.getReturnType() == String.class && param.args != null && param.args.length == 2) {
-                            Object res = param.getResult();
-                            if (res == null || "".equals(res) || (res instanceof String && ((String) res).startsWith("error"))) {
-                                param.setResult(generateSafeTuringSignMsg());
-                            }
-                        }
-                    }
-                }
-            });
-        }
+        // 2.1 Turing base class: com.tencent.could.huiyansdk.turing.b is an abstract class.
+        // Its concrete implementation (TuringSdkImp) is hooked above to avoid "Cannot hook abstract methods".
 
         // 2.2 HuiYanAuthImp: argument null-safety for getSendResultRequest & getTuringActiveParam
         final String huiyanAuthImpCls = "com.tencent.could.huiyansdk.api.HuiYanAuthImp";
@@ -1807,22 +1788,32 @@ public class QQ950PatchHook {
                     try {
                         Class<?> fClass = XposedHelpers.findClassIfExists("com.tencent.could.huiyansdk.turing.f", cl);
                         if (fClass != null) {
-                            Object fSingleton = XposedHelpers.getStaticObjectField(fClass, "a");
-                            if (fSingleton != null) {
-                                Object fInstance = null;
+                            Object fInstance = null;
+                            Class<?> fHolderCls = XposedHelpers.findClassIfExists("com.tencent.could.huiyansdk.turing.f$a", cl);
+                            if (fHolderCls != null) {
                                 try {
-                                    fInstance = XposedHelpers.getObjectField(fSingleton, "a");
-                                } catch (Throwable ignored) {
-                                    fInstance = fSingleton;
+                                    fInstance = XposedHelpers.getStaticObjectField(fHolderCls, "a");
+                                } catch (Throwable ignored) {}
+                            }
+                            if (fInstance == null) {
+                                for (java.lang.reflect.Field field : fClass.getDeclaredFields()) {
+                                    if (java.lang.reflect.Modifier.isStatic(field.getModifiers()) && field.getType() == fClass) {
+                                        field.setAccessible(true);
+                                        fInstance = field.get(null);
+                                        break;
+                                    }
                                 }
-                                if (fInstance != null) {
-                                    Object g = XposedHelpers.getObjectField(fInstance, "g");
-                                    if (g == null) {
-                                        Class<?> impCls = XposedHelpers.findClassIfExists("com.tencent.could.huiyansdk.turingmodule.TuringSdkImp", cl);
-                                        if (impCls != null) {
-                                            XposedHelpers.setObjectField(fInstance, "g", impCls.newInstance());
-                                            XposedEntry.log("[FacePatch] Injected default TuringSdkImp into f.g");
-                                        }
+                            }
+                            if (fInstance != null) {
+                                Object g = null;
+                                try {
+                                    g = XposedHelpers.getObjectField(fInstance, "g");
+                                } catch (Throwable ignored) {}
+                                if (g == null) {
+                                    Class<?> impCls = XposedHelpers.findClassIfExists("com.tencent.could.huiyansdk.turingmodule.TuringSdkImp", cl);
+                                    if (impCls != null) {
+                                        XposedHelpers.setObjectField(fInstance, "g", impCls.newInstance());
+                                        XposedEntry.log("[FacePatch] Injected default TuringSdkImp into f.g");
                                     }
                                 }
                             }

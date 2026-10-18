@@ -115,9 +115,10 @@ public class HookUtils {
      */
     public static void hookAllConstructors(String className, XC_MethodHook callback) {
         try {
-            Class<?> clazz = XposedHelpers.findClass(className, HookConfig.getClassLoader());
-            XposedBridge.hookAllConstructors(clazz, callback);
-            log("Hooked all constructors: " + className);
+            Class<?> clazz = XposedHelpers.findClassIfExists(className, HookConfig.getClassLoader());
+            if (clazz != null && !clazz.isInterface() && !Modifier.isAbstract(clazz.getModifiers())) {
+                hookAllConstructors(clazz, callback);
+            }
         } catch (Throwable t) {
             if (HookConfig.VERBOSE_LOGGING) {
                 log("Failed to hook all constructors: " + className + " - " + t.getMessage());
@@ -126,7 +127,7 @@ public class HookUtils {
     }
 
     public static void hookAllConstructors(Class<?> clazz, XC_MethodHook callback) {
-        if (clazz == null) return;
+        if (clazz == null || clazz.isInterface() || Modifier.isAbstract(clazz.getModifiers())) return;
         try {
             XposedBridge.hookAllConstructors(clazz, callback);
             log("Hooked all constructors: " + clazz.getName());
