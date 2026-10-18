@@ -184,7 +184,12 @@ void install_qsec_hooks() {
         "libthreadsuspend.so", "libqqPerfNativeTool.so",
         "libcuckoo.so", "libwarbler.so", "libtsmqqsc.so",
         "libqq_la.so", "libqqdid.so", "libturingxq.so", "libturingmfa.so",
-        "libtencentloc.so", "libMMANDKSignature.so", "liblogcathook.so", nullptr
+        "libtencentloc.so", "libMMANDKSignature.so", "liblogcathook.so",
+        "libmqpintchk.so", "libckguard.so", "libckeygeneratorV2.so",
+        "libckeygenerator.so", "libmsfbootV2.so", "libMSFKernel.so",
+        "libsec.so", "libtears.so", "libYTCommonLiveness.so",
+        "libYTLiveness.so", "libhardcoder_new.so", "libgcloud.so",
+        "libtfd.so", nullptr
     };
     for (int i = 0; targets[i]; i++) {
         const char* target = targets[i];

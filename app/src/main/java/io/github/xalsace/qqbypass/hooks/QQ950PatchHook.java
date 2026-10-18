@@ -2670,6 +2670,56 @@ public class QQ950PatchHook {
             }
         });
 
+        // --- 2.1 SecUtil & SafeCheck Self-Verification Integrity Strike ---
+        final String secUtilCls = "com.tencent.mobileqq.utils.SecUtil";
+        hookSafe(secUtilCls, "check0DayRepack", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(false);
+                XposedEntry.log("[SelfVerifyPatch] SecUtil.check0DayRepack -> forced false (anti-repack bypass)");
+            }
+        });
+
+        hookSafe(secUtilCls, "getSign", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                byte[] officialBytes = android.util.Base64.decode(
+                    DynamicRootDetectionHook.OFFICIAL_QQ_SIGNATURE_B64,
+                    android.util.Base64.DEFAULT
+                );
+                p.setResult(officialBytes);
+                XposedEntry.log("[SelfVerifyPatch] SecUtil.getSign -> spoofed official signature bytes");
+            }
+        });
+
+        hookSafe(secUtilCls, "getSignatureHash", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult("A6B745BF24A2C277527716F6F36EB68D");
+                XposedEntry.log("[SelfVerifyPatch] SecUtil.getSignatureHash -> spoofed official MD5 A6B745BF24A2C277527716F6F36EB68D");
+            }
+        });
+
+        // SafeCheckUtilApiImpl: getFileMD5
+        final String safeCheckCls = "com.tencent.qqprotect.sfcfg.api.impl.SafeCheckUtilApiImpl";
+        hookSafe(safeCheckCls, "getFileMD5", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult(0);
+                XposedEntry.log("[SelfVerifyPatch] SafeCheckUtilApiImpl.getFileMD5 -> forced 0 (clean APK MD5)");
+            }
+        });
+
+        // Yuanbao launcher signature MD5 check
+        final String ybLauncherCls = "com.tencent.mobileqq.ad.yuanbao.launch.c";
+        hookSafe(ybLauncherCls, "c", lpparam, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                p.setResult("A6B745BF24A2C277527716F6F36EB68D");
+                XposedEntry.log("[SelfVerifyPatch] YuanbaoOpenSdkLauncher.c -> spoofed official MD5");
+            }
+        });
+
         // --- 3. txPttlib Audio Codec Telemetry ---
         final String statCollectorCls = "com.tencent.mobileqq.statistics.StatisticCollector";
         hookSafe(statCollectorCls, "collectPerformance", lpparam, new XC_MethodHook() {

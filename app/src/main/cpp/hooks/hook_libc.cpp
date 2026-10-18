@@ -145,6 +145,8 @@ static bool is_caller_security_dso(void* return_address) {
             strcasestr(f, "ytcommonliveness") || strcasestr(f, "ytliveness") ||
             strcasestr(f, "hardcoder") || strcasestr(f, "cuckoo") ||
             strcasestr(f, "trim_process") || strcasestr(f, "avcodec") ||
+            strcasestr(f, "mqpintchk") || strcasestr(f, "libmqpintchk") ||
+            strcasestr(f, "tfd") || strcasestr(f, "gcloud") ||
             (strstr(f, "ZRes/online") && (strstr(f, ".res") || strstr(f, ".so")))) {
             return true;
         }
@@ -2462,6 +2464,10 @@ static bool libc_caller_filter(const char* caller_path_name, void* arg) {
         strstr(caller_path_name, "YTCommonLiveness") ||
         strstr(caller_path_name, "YTLiveness") ||
         strstr(caller_path_name, "hardcoder") ||
+        strstr(caller_path_name, "mqpintchk") ||
+        strstr(caller_path_name, "libmqpintchk") ||
+        strstr(caller_path_name, "tfd") ||
+        strstr(caller_path_name, "gcloud") ||
         strstr(caller_path_name, "ZRes") ||
         strstr(caller_path_name, ".res")) {
         return true;

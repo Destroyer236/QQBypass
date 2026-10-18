@@ -49,3 +49,12 @@ fastlane/readme.md
 变更.md
 *.md.bak
 
+# Local process maps dumps and private analysis
+maps/
+*_maps_*.txt
+clean_maps_*.txt
+module_maps_*.txt
+
+# Termux local build script
+build-termux.sh
+

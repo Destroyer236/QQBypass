@@ -985,7 +985,7 @@ public class DynamicRootDetectionHook {
         }
     }
 
-    private static final String OFFICIAL_QQ_SIGNATURE_B64 =
+    public static final String OFFICIAL_QQ_SIGNATURE_B64 =
         "MIICUzCCAbygAwIBAgIES7sDYTANBgkqhkiG9w0BAQUFADBtMQ4wDAYDVQQGEwVDaGluYTEPMA0GA1UE" +
         "CAwG5YyX5LqsMQ8wDQYDVQQHDAbljJfkuqwxDzANBgNVBAoMBuiFvuiurzEbMBkGA1UECwwS5peg57q/" +
         "5Lia5Yqh57O757ufMQswCQYDVQQDEwJRUTAgFw0xMDA0MDYwOTQ4MTdaGA8yMjg0MDEyMDA5NDgxN1ow" +
