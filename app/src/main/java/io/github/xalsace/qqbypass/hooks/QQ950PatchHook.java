@@ -149,25 +149,21 @@ public class QQ950PatchHook {
 
     /**
      * Defend checkWTSig in com.tencent.mobileqq.msf.core.auth.k:
-     * When checkWTSig runs (k.h(ToServiceMsg)), in NT login mode it unconditionally
-     * triggers CODE_NO_LOGIN (2001) kick even though NT tickets are valid.
-     * We suppress this kick if the account has an active session.
+     * When checkWTSig runs (k.h(ToServiceMsg)), in NT login mode it may trigger
+     * k.a(ToServiceMsg, boolean) which dispatches CODE_NO_LOGIN (2001) kick.
+     * We surgically hook k.a(ToServiceMsg, boolean) to prevent CODE_NO_LOGIN,
+     * without swallowing k.h itself, ensuring message pipelines remain active.
      */
     private static void hookMsfCheckWTSig(XC_LoadPackage.LoadPackageParam lpparam) {
         final String cls = "com.tencent.mobileqq.msf.core.auth.k";
-        hookSafe(cls, "h", lpparam, new XC_MethodHook() {
+        hookSafe(cls, "a", lpparam, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                if (p.args != null && p.args.length > 0 && p.args[0] != null) {
+                if (p.args != null && p.args.length == 2 && p.args[0] != null && p.args[1] instanceof Boolean) {
                     Object req = p.args[0];
-                    try {
-                        String uin = (String) XposedHelpers.callMethod(req, "getUin");
-                        if (uin != null && !uin.isEmpty() && !"0".equals(uin)) {
-                            p.setResult(null);
-                            XposedEntry.log("[MSFPatch] Defended against checkWTSig kick for uin: " + uin);
-                        }
-                    } catch (Throwable t) {
-                        XposedEntry.log("[MSFPatch] Error checking checkWTSig ToServiceMsg: " + t.getMessage());
+                    if ("com.tencent.qphone.base.remote.ToServiceMsg".equals(req.getClass().getName())) {
+                        p.setResult(null);
+                        XposedEntry.log("[MSFPatch] Defended against checkWTSig CODE_NO_LOGIN kick in k.a");
                     }
                 }
             }
@@ -1283,16 +1279,19 @@ public class QQ950PatchHook {
                 HookUtils.hookAllMethods(kickApiImplCls, "shouldIgnoreNotifyMsfStatusChanged", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                        p.setResult(true);
+                        // CRITICAL: Must return false! Returning true prevents QQAppInterface.onMessageConnect
+                        // from notifying IKernelService.setOnMsfStatusChanged(KCONNECTED), stalling message sync
+                        // and permanently stranding the main conversation list in a 'Loading...' state.
+                        p.setResult(false);
                     }
                 });
                 HookUtils.hookAllMethods(kickApiImplCls, "getBeInterceptor", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                        p.setResult(true);
+                        p.setResult(false);
                     }
                 });
-                XposedEntry.log("[KickShield] Hooked KickApiImpl methods (switchable)");
+                XposedEntry.log("[KickShield] Hooked KickApiImpl methods (connection status protected)");
             }
 
             // 3. MainService$MyErrorHandler: Switchable kick event & popup suppression
@@ -1384,8 +1383,7 @@ public class QQ950PatchHook {
 
                         boolean isKickCmd = "StatSvc.ReqMSFOffline".equals(cmd) ||
                                             "StatSvc.ReqForceOffline".equals(cmd) ||
-                                            "MessageSvc.PushForceOffline".equals(cmd) ||
-                                            (cmd != null && cmd.contains("Offline"));
+                                            "MessageSvc.PushForceOffline".equals(cmd);
 
                         if (isKickFailCode || isKickCmd) {
                             if (HookConfig.isKickInterceptEnabled()) {

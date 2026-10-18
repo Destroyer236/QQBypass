@@ -690,8 +690,7 @@ public class SecurityLibrariesEnhanceHook {
                             String cmd = (String) XposedHelpers.callMethod(fromServiceMsg, "getServiceCmd");
                             if ("StatSvc.ReqMSFOffline".equals(cmd) ||
                                 "StatSvc.ReqForceOffline".equals(cmd) ||
-                                "MessageSvc.PushForceOffline".equals(cmd) ||
-                                (cmd != null && cmd.toLowerCase().contains("offlinepush"))) {
+                                "MessageSvc.PushForceOffline".equals(cmd)) {
                                 StringBuilder details = new StringBuilder();
                                 try {
                                     Object attrs = XposedHelpers.getObjectField(fromServiceMsg, "attributes");
